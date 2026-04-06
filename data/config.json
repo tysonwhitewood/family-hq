@@ -2,8 +2,14 @@
   "family": {
     "surname": "Whitewood",
     "members": [
-      {"name": "Tyson", "role": "husband"},
-      {"name": "Robyn", "role": "wife"}
+      {
+        "name": "Tyson",
+        "role": "husband"
+      },
+      {
+        "name": "Robyn",
+        "role": "wife"
+      }
     ]
   },
   "property": {
@@ -25,7 +31,7 @@
   },
   "investments": {
     "shares": [],
-    "notes": "Paper trading via stock screener — no live portfolio yet"
+    "notes": "Paper trading via stock screener \u2014 no live portfolio yet"
   },
   "homeschool": {
     "app_url": "https://guidepost.au",
@@ -35,5 +41,9 @@
     "google_calendar": false,
     "xero": false,
     "outlook": true
+  },
+  "discord": {
+    "channel_id": "1490644719829516469",
+    "webhook_url": "https://discord.com/api/webhooks/1490644757469335583/Nh3nXnMEOfeUjF0_qrMmX_hrs0_ctKplX2-YNdoI-IBtW3rlKgH1q77HSXpvi9yzCo6q"
   }
 }

@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Family HQ">
+<meta name="theme-color" content="#1B4332">
+<link rel="manifest" href="/manifest.json">
 <title>Family HQ — Whitewood</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -245,6 +250,53 @@ body {
 .filter-btn.active { background: #1B4332; color: #fff; border-color: #1B4332; }
 .green-text { color: #059669; font-weight: 600; }
 .red-text { color: #DC2626; font-weight: 600; }
+
+/* MOBILE BOTTOM NAV */
+.mobile-nav {
+  display: none;
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: #1B4332; z-index: 200;
+  padding: 0 0 env(safe-area-inset-bottom);
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.2);
+}
+.mobile-nav-items { display: flex; justify-content: space-around; }
+.mnav-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  padding: 10px 4px 8px; cursor: pointer; color: rgba(255,255,255,0.55);
+  font-size: 10px; font-weight: 500; gap: 3px; transition: color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.mnav-item.active { color: #D4A017; }
+.mnav-item .micon { font-size: 20px; line-height: 1; }
+
+/* RESPONSIVE */
+@media (max-width: 768px) {
+  .sidebar { display: none !important; }
+  .main { margin-left: 0 !important; padding-bottom: 70px; }
+  .mobile-nav { display: block; }
+  .page-body { padding: 16px 16px 20px; }
+  .topbar { padding: 0 16px; }
+  .stats-row { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat-card { padding: 14px 14px; }
+  .stat-card .s-value { font-size: 20px; }
+  .home-grid { grid-template-columns: 1fr; }
+  .prop-grid { grid-template-columns: 1fr; }
+  .prop-kv:nth-child(odd) { border-right: none; }
+  .chat-container { height: calc(100vh - 130px); }
+  .chat-messages { padding: 12px; }
+  .chat-input-row { padding: 10px 12px; }
+  .chat-suggestions { padding: 8px 12px; overflow-x: auto; flex-wrap: nowrap; }
+  .suggestion-chip { white-space: nowrap; flex-shrink: 0; }
+  .card-header { padding: 12px 14px; }
+  .birthday-row { padding: 12px 14px; }
+  .goal-row { padding: 10px 14px; }
+  .hs-action-row { padding: 12px 14px; }
+  .topbar-title { font-size: 14px; }
+  .page-title { font-size: 18px; }
+}
+@media (max-width: 400px) {
+  .stats-row { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
@@ -512,6 +564,27 @@ body {
 
 </div><!-- /main -->
 
+<!-- MOBILE BOTTOM NAV -->
+<nav class="mobile-nav">
+  <div class="mobile-nav-items">
+    <div class="mnav-item active" onclick="showPage('home',this)" data-page="home">
+      <span class="micon">🏠</span><span>Home</span>
+    </div>
+    <div class="mnav-item" onclick="showPage('chat',this);initChat()" data-page="chat">
+      <span class="micon">💬</span><span>Chat</span>
+    </div>
+    <div class="mnav-item" onclick="showPage('birthdays',this);loadBirthdays()" data-page="birthdays">
+      <span class="micon">🎂</span><span>Birthdays</span>
+    </div>
+    <div class="mnav-item" onclick="showPage('goals',this);loadGoals()" data-page="goals">
+      <span class="micon">🎯</span><span>Goals</span>
+    </div>
+    <div class="mnav-item" onclick="showPage('property',this);loadProperty()" data-page="property">
+      <span class="micon">🏡</span><span>Property</span>
+    </div>
+  </div>
+</nav>
+
 <!-- ADD GOAL MODAL -->
 <div id="goal-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:16px;width:480px;max-width:95vw;padding:28px">
@@ -584,8 +657,14 @@ function fmt(n) { return n ? '$' + Math.round(n).toLocaleString('en-AU') : '—'
 function showPage(name, el) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.mnav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
   if (el) el.classList.add('active');
+  // Sync mobile nav
+  document.querySelectorAll('.mnav-item').forEach(n => {
+    if (n.dataset.page === name) n.classList.add('active');
+  });
+  window.scrollTo(0, 0);
 }
 
 // ── HOME ──────────────────────────────────────────────────────────────────────

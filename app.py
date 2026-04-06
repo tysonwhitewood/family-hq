@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Family HQ — Whitewood Family Command Centre"""
-import base64, json, os, sqlite3, re
+import base64, json, os, sqlite3, re, urllib.request, urllib.parse
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, abort, g, Response
@@ -282,6 +282,23 @@ def dashboard():
         return send_file(html_path)
     return '<h1>Family HQ — dashboard.html not found</h1>', 404
 
+@app.route('/manifest.json')
+def manifest():
+    return send_file(ROOT / 'manifest.json', mimetype='application/manifest+json')
+
+@app.route('/icon-192.png')
+@app.route('/icon-512.png')
+def icon():
+    # Return a simple green SVG-based icon as PNG placeholder
+    # In production, replace with actual PNG icons
+    from flask import Response as R
+    size = 192 if '192' in request.path else 512
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 100 100">
+      <rect width="100" height="100" rx="20" fill="#1B4332"/>
+      <text x="50" y="65" font-size="55" text-anchor="middle" fill="#D4A017">🏡</text>
+    </svg>'''
+    return R(svg, mimetype='image/svg+xml')
+
 @app.route('/api/summary')
 def api_summary():
     """Morning briefing summary."""
@@ -476,6 +493,73 @@ Keep it under 200 words, warm and personal."""
         messages=[{'role': 'user', 'content': prompt}]
     )
     return jsonify({'briefing': response.content[0].text, 'date': today.isoformat()})
+
+
+# ── Discord Integration ───────────────────────────────────────────────────────
+
+def send_discord_webhook(message: str, username: str = 'Family HQ'):
+    """Send a message to the configured Discord channel via webhook."""
+    cfg = load_config()
+    webhook_url = cfg.get('discord', {}).get('webhook_url')
+    if not webhook_url:
+        return False
+    payload = json.dumps({'content': message, 'username': username}).encode()
+    req = urllib.request.Request(webhook_url, data=payload,
+                                  headers={'Content-Type': 'application/json'}, method='POST')
+    try:
+        urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception as e:
+        print(f'Discord webhook error: {e}')
+        return False
+
+@app.route('/api/discord/chat', methods=['POST'])
+def discord_chat():
+    """Handle a message from Discord — reply via webhook."""
+    if not ANTHROPIC_API_KEY:
+        return jsonify({'error': 'ANTHROPIC_API_KEY not configured'}), 503
+    data = request.get_json(force=True)
+    user_msg = (data.get('message') or '').strip()
+    author = data.get('author', 'Family')
+    if not user_msg:
+        return jsonify({'error': 'message required'}), 400
+
+    # Build context-aware chat
+    with get_db() as db:
+        history = [dict(r) for r in db.execute(
+            "SELECT role, content FROM chat_history ORDER BY id DESC LIMIT 10"
+        ).fetchall()]
+        history.reverse()
+
+    messages = [{'role': h['role'], 'content': h['content']} for h in history]
+    messages.append({'role': 'user', 'content': f'[{author}]: {user_msg}'})
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    response = client.messages.create(
+        model='claude-haiku-4-5-20251001',
+        max_tokens=800,
+        system=build_family_context(),
+        messages=messages
+    )
+    reply = response.content[0].text
+
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)',
+                   ('user', f'[{author}]: {user_msg}', now))
+        db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)',
+                   ('assistant', reply, now))
+
+    # Send reply to Discord
+    send_discord_webhook(reply)
+    return jsonify({'reply': reply})
+
+@app.route('/api/discord/webhook-test', methods=['POST'])
+def discord_webhook_test():
+    """Test the Discord webhook."""
+    ok = send_discord_webhook('✅ Family HQ Discord integration is working! You can now chat with me here.')
+    return jsonify({'ok': ok})
 
 
 if __name__ == '__main__':
