@@ -56,21 +56,21 @@ def init_db():
                 title TEXT NOT NULL,
                 description TEXT,
                 target_date TEXT,
-                status TEXT DEFAULT "active",
+                status TEXT DEFAULT 'active',
                 progress INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT (datetime("now"))
+                created_at TEXT
             );
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT,
                 content TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime("now"))
+                created_at TEXT
             );
             CREATE TABLE IF NOT EXISTS chat_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime("now"))
+                created_at TEXT
             );
             CREATE TABLE IF NOT EXISTS calendar_cache (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,13 +79,13 @@ def init_db():
                 title TEXT,
                 time_str TEXT,
                 all_day INTEGER DEFAULT 0,
-                fetched_at TEXT DEFAULT (datetime("now"))
+                fetched_at TEXT
             );
             CREATE TABLE IF NOT EXISTS property_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 estimated_value INTEGER,
                 note TEXT,
-                recorded_at TEXT DEFAULT (datetime("now"))
+                recorded_at TEXT
             );
         ''')
         # Seed default goals if empty
@@ -101,9 +101,10 @@ def init_db():
                 ('Social', 'Build family mission statement', 'Collaboratively draft the Whitewood family mission', '2026-09-01', 0),
                 ('Spiritual', 'Weekly family reflection', 'Regular family values conversations and goal reviews', '2026-12-31', 20),
             ]
+            now = datetime.now().isoformat()[:19]
             for capital, title, desc, target, progress in default_goals:
-                db.execute('INSERT INTO goals (capital, title, description, target_date, progress) VALUES (?,?,?,?,?)',
-                           (capital, title, desc, target, progress))
+                db.execute('INSERT INTO goals (capital, title, description, target_date, progress, created_at) VALUES (?,?,?,?,?,?)',
+                           (capital, title, desc, target, progress, now))
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -314,8 +315,8 @@ def api_property():
             cfg['property']['mortgage']['balance'] = data['mortgage_balance']
         if 'notes' in data:
             with get_db() as db:
-                db.execute('INSERT INTO property_log (estimated_value, note) VALUES (?,?)',
-                           (data.get('estimated_value'), data.get('notes', '')))
+                db.execute('INSERT INTO property_log (estimated_value, note, recorded_at) VALUES (?,?,?)',
+                           (data.get('estimated_value'), data.get('notes', ''), datetime.now().isoformat()[:19]))
         save_config(cfg)
         return jsonify({'ok': True})
     return jsonify(get_property_snapshot())
@@ -325,10 +326,11 @@ def api_goals():
     with get_db() as db:
         if request.method == 'POST':
             d = request.get_json(force=True)
+            now = datetime.now().isoformat()[:19]
             cur = db.execute(
-                'INSERT INTO goals (capital, title, description, target_date, progress) VALUES (?,?,?,?,?)',
+                'INSERT INTO goals (capital, title, description, target_date, progress, created_at) VALUES (?,?,?,?,?,?)',
                 (d.get('capital', 'Financial'), d.get('title', ''), d.get('description', ''),
-                 d.get('target_date'), d.get('progress', 0))
+                 d.get('target_date'), d.get('progress', 0), now)
             )
             row = db.execute('SELECT * FROM goals WHERE id=?', (cur.lastrowid,)).fetchone()
             return jsonify(dict(row)), 201
@@ -382,9 +384,10 @@ def api_chat():
     )
     reply = response.content[0].text
 
+    now = datetime.now().isoformat()[:19]
     with get_db() as db:
-        db.execute('INSERT INTO chat_history (role, content) VALUES (?,?)', ('user', user_msg))
-        db.execute('INSERT INTO chat_history (role, content) VALUES (?,?)', ('assistant', reply))
+        db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('user', user_msg, now))
+        db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('assistant', reply, now))
 
     return jsonify({'reply': reply, 'model': 'claude-haiku'})
 
@@ -409,8 +412,9 @@ def api_notes():
     with get_db() as db:
         if request.method == 'POST':
             d = request.get_json(force=True)
-            cur = db.execute('INSERT INTO notes (category, content) VALUES (?,?)',
-                             (d.get('category', 'general'), d.get('content', '')))
+            now = datetime.now().isoformat()[:19]
+            cur = db.execute('INSERT INTO notes (category, content, created_at) VALUES (?,?,?)',
+                             (d.get('category', 'general'), d.get('content', ''), now))
             row = db.execute('SELECT * FROM notes WHERE id=?', (cur.lastrowid,)).fetchone()
             return jsonify(dict(row)), 201
         rows = [dict(r) for r in db.execute(
