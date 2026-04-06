@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Family HQ — Whitewood</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  background: #F0F4F0;
+  color: #1a2e1a;
+  display: flex;
+  min-height: 100vh;
+  font-size: 14px;
+}
+
+/* SIDEBAR */
+.sidebar {
+  width: 220px;
+  background: #1B4332;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  height: 100vh;
+  z-index: 100;
+}
+.sidebar-brand {
+  padding: 22px 20px 18px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.brand-name { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: -0.5px; }
+.brand-name span { color: #D4A017; }
+.brand-sub { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 3px; }
+
+.nav-section { padding: 16px 12px 8px; }
+.nav-label { font-size: 10px; font-weight: 600; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.8px; padding: 0 8px; margin-bottom: 6px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 8px;
+  cursor: pointer; color: rgba(255,255,255,0.65); font-weight: 500;
+  transition: all 0.15s; margin-bottom: 3px; font-size: 13px;
+}
+.nav-item:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.nav-item.active { background: rgba(212,160,23,0.2); color: #D4A017; font-weight: 600; }
+.nav-icon { width: 18px; text-align: center; font-size: 15px; }
+.nav-badge { margin-left: auto; background: #D4A017; color: #1B4332; border-radius: 10px; padding: 2px 7px; font-size: 11px; font-weight: 700; }
+
+.sidebar-footer {
+  margin-top: auto; padding: 16px 20px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  font-size: 11px; color: rgba(255,255,255,0.35);
+}
+
+/* MAIN */
+.main { margin-left: 220px; flex: 1; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* TOP BAR */
+.topbar {
+  background: #fff; border-bottom: 1px solid #E5E7EB;
+  padding: 0 36px; display: flex; align-items: center;
+  height: 56px; position: sticky; top: 0; z-index: 50;
+}
+.topbar-title { font-size: 15px; font-weight: 600; color: #111; }
+.topbar-right { margin-left: auto; font-size: 12px; color: #9CA3AF; }
+
+.page-body { padding: 32px 36px; }
+.page-header { margin-bottom: 28px; }
+.page-title { font-size: 22px; font-weight: 700; color: #111; }
+.page-sub { font-size: 13px; color: #6B7280; margin-top: 5px; }
+
+/* STATS */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.stat-card {
+  background: #fff; border: 1px solid #E5E7EB; border-radius: 12px;
+  padding: 20px 20px; border-left: 3px solid #E5E7EB;
+}
+.stat-card.green { border-left-color: #1B4332; }
+.stat-card.gold { border-left-color: #D4A017; }
+.stat-card.red { border-left-color: #EF4444; }
+.stat-card.blue { border-left-color: #3B82F6; }
+.stat-card .s-label { font-size: 11px; color: #6B7280; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.stat-card .s-value { font-size: 26px; font-weight: 700; color: #111; line-height: 1; }
+.stat-card .s-sub { font-size: 11px; color: #9CA3AF; margin-top: 5px; }
+
+/* CARD */
+.card {
+  background: #fff; border: 1px solid #E5E7EB; border-radius: 12px;
+  margin-bottom: 20px; overflow: hidden;
+}
+.card-header {
+  padding: 16px 20px; border-bottom: 1px solid #F3F4F6;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.card-title { font-size: 14px; font-weight: 600; color: #111; }
+
+/* BIRTHDAY CARD */
+.birthday-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 20px; border-bottom: 1px solid #F9FAFB;
+}
+.birthday-row:last-child { border-bottom: none; }
+.bday-avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: #1B4332; color: #D4A017;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 16px; flex-shrink: 0;
+}
+.bday-name { font-weight: 600; font-size: 13px; color: #111; }
+.bday-meta { font-size: 11px; color: #6B7280; margin-top: 2px; }
+.bday-days {
+  margin-left: auto; text-align: right;
+}
+.days-badge {
+  font-size: 12px; font-weight: 700; padding: 3px 10px;
+  border-radius: 20px; white-space: nowrap;
+}
+.days-badge.urgent { background: #FEE2E2; color: #DC2626; }
+.days-badge.soon { background: #FEF3C7; color: #D97706; }
+.days-badge.coming { background: #DBEAFE; color: #2563EB; }
+
+/* GOALS */
+.capital-section { margin-bottom: 24px; }
+.capital-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 20px; background: #F9FAFB;
+  border-bottom: 1px solid #F3F4F6;
+}
+.capital-badge {
+  font-size: 11px; font-weight: 700; padding: 3px 10px;
+  border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.cap-Human { background: #D1FAE5; color: #065F46; }
+.cap-Intellectual { background: #DBEAFE; color: #1E40AF; }
+.cap-Social { background: #FCE7F3; color: #9D174D; }
+.cap-Spiritual { background: #EDE9FE; color: #5B21B6; }
+.cap-Financial { background: #FEF3C7; color: #92400E; }
+.goal-row {
+  padding: 14px 20px; border-bottom: 1px solid #F9FAFB;
+  display: flex; align-items: flex-start; gap: 14px;
+}
+.goal-row:last-child { border-bottom: none; }
+.goal-progress-wrap { flex: 1; }
+.goal-title { font-size: 13px; font-weight: 600; color: #111; margin-bottom: 3px; }
+.goal-desc { font-size: 11px; color: #6B7280; margin-bottom: 8px; }
+.progress-bar { height: 6px; background: #F3F4F6; border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 3px; background: #1B4332; transition: width 0.3s; }
+.progress-label { font-size: 10px; color: #9CA3AF; margin-top: 3px; display: flex; justify-content: space-between; }
+.goal-target { font-size: 11px; color: #9CA3AF; white-space: nowrap; }
+
+/* PROPERTY */
+.prop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.prop-kv { padding: 12px 20px; border-bottom: 1px solid #F9FAFB; display: flex; justify-content: space-between; align-items: center; }
+.prop-kv:nth-child(odd) { border-right: 1px solid #F9FAFB; }
+.pk { font-size: 12px; color: #6B7280; }
+.pv { font-size: 13px; font-weight: 600; color: #111; }
+.equity-positive { color: #059669; }
+.equity-negative { color: #DC2626; }
+
+/* CHAT */
+.chat-container { display: flex; flex-direction: column; height: calc(100vh - 200px); min-height: 400px; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 20px; }
+.chat-msg {
+  margin-bottom: 16px; display: flex; gap: 10px; align-items: flex-start;
+}
+.chat-msg.user { flex-direction: row-reverse; }
+.chat-avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700;
+}
+.chat-avatar.user { background: #1B4332; color: #D4A017; }
+.chat-avatar.assistant { background: #D4A017; color: #1B4332; }
+.chat-bubble {
+  max-width: 70%; padding: 10px 14px; border-radius: 12px;
+  font-size: 13px; line-height: 1.6; white-space: pre-wrap;
+}
+.chat-msg.user .chat-bubble { background: #1B4332; color: #fff; border-radius: 12px 12px 4px 12px; }
+.chat-msg.assistant .chat-bubble { background: #F9FAFB; color: #111; border: 1px solid #E5E7EB; border-radius: 12px 12px 12px 4px; }
+.chat-input-row {
+  padding: 16px 20px; border-top: 1px solid #E5E7EB; background: #fff;
+  display: flex; gap: 10px; align-items: center;
+}
+.chat-input {
+  flex: 1; padding: 10px 14px; border: 1.5px solid #E5E7EB; border-radius: 24px;
+  font-size: 13px; outline: none; font-family: inherit;
+}
+.chat-input:focus { border-color: #1B4332; }
+.chat-send-btn {
+  background: #1B4332; color: #D4A017; border: none;
+  width: 38px; height: 38px; border-radius: 50%;
+  font-size: 16px; cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.chat-send-btn:hover { background: #2D6A4F; }
+.chat-suggestions { padding: 12px 20px; display: flex; gap: 8px; flex-wrap: wrap; background: #fff; border-top: 1px solid #F3F4F6; }
+.suggestion-chip {
+  padding: 5px 12px; border: 1px solid #E5E7EB; border-radius: 20px;
+  font-size: 12px; cursor: pointer; color: #374151; background: #fff;
+  transition: all 0.1s;
+}
+.suggestion-chip:hover { background: #1B4332; color: #fff; border-color: #1B4332; }
+
+/* HOMESCHOOL */
+.hs-action-row { display: flex; gap: 10px; flex-wrap: wrap; padding: 16px 20px; }
+.hs-btn {
+  padding: 9px 18px; border-radius: 8px; font-weight: 600; font-size: 13px;
+  cursor: pointer; border: 1.5px solid #E5E7EB; background: #fff; color: #374151;
+  transition: all 0.15s;
+}
+.hs-btn:hover { border-color: #1B4332; color: #1B4332; }
+.hs-btn.primary { background: #1B4332; color: #fff; border-color: #1B4332; }
+.hs-btn.primary:hover { background: #2D6A4F; }
+.hs-btn.warning { background: #FEF3C7; color: #D97706; border-color: #FDE68A; }
+
+/* HOME PAGE */
+.home-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.briefing-text { font-size: 14px; color: #374151; line-height: 1.8; padding: 20px; white-space: pre-wrap; }
+
+/* SETTINGS */
+.integration-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px 20px; border-bottom: 1px solid #F9FAFB;
+}
+.integration-row:last-child { border-bottom: none; }
+.int-icon { font-size: 24px; flex-shrink: 0; }
+.int-name { font-size: 14px; font-weight: 600; color: #111; }
+.int-status { font-size: 12px; color: #6B7280; margin-top: 2px; }
+.int-btn {
+  margin-left: auto; padding: 7px 16px; border-radius: 8px;
+  font-size: 12px; font-weight: 600; cursor: pointer; border: none;
+}
+.int-btn.connected { background: #D1FAE5; color: #065F46; }
+.int-btn.connect { background: #1B4332; color: #fff; }
+
+/* GENERAL */
+.empty-state { text-align: center; padding: 40px 20px; color: #9CA3AF; font-size: 13px; }
+.filter-btn {
+  padding: 6px 14px; border-radius: 6px; border: 1px solid #E5E7EB;
+  background: #fff; font-size: 12px; cursor: pointer; color: #6B7280;
+  font-weight: 500; transition: all 0.12s;
+}
+.filter-btn.active { background: #1B4332; color: #fff; border-color: #1B4332; }
+.green-text { color: #059669; font-weight: 600; }
+.red-text { color: #DC2626; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-name">Family<span> HQ</span></div>
+    <div class="brand-sub">Whitewood Family</div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-label">Overview</div>
+    <div class="nav-item active" onclick="showPage('home',this)">
+      <span class="nav-icon">🏠</span> Home
+    </div>
+    <div class="nav-item" onclick="showPage('chat',this);initChat()">
+      <span class="nav-icon">💬</span> Family Chat
+    </div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-label">Life</div>
+    <div class="nav-item" onclick="showPage('birthdays',this);loadBirthdays()">
+      <span class="nav-icon">🎂</span> Birthdays
+      <span class="nav-badge" id="nb-bdays">…</span>
+    </div>
+    <div class="nav-item" onclick="showPage('calendar',this)">
+      <span class="nav-icon">📅</span> Calendar
+    </div>
+    <div class="nav-item" onclick="showPage('homeschool',this)">
+      <span class="nav-icon">🏫</span> Homeschool
+    </div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-label">Wealth</div>
+    <div class="nav-item" onclick="showPage('goals',this);loadGoals()">
+      <span class="nav-icon">🎯</span> Family Goals
+    </div>
+    <div class="nav-item" onclick="showPage('property',this);loadProperty()">
+      <span class="nav-icon">🏡</span> Property
+    </div>
+    <div class="nav-item" onclick="showPage('finance',this)">
+      <span class="nav-icon">💰</span> Finance
+    </div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-label">Settings</div>
+    <div class="nav-item" onclick="showPage('settings',this);loadSettings()">
+      <span class="nav-icon">⚙️</span> Integrations
+    </div>
+  </div>
+
+  <div class="sidebar-footer">
+    Based on James Hughes<br>"Family Wealth" framework
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+<!-- HOME -->
+<div class="page active" id="page-home">
+  <div class="topbar">
+    <div class="topbar-title">Good morning, Whitewood family</div>
+    <div class="topbar-right" id="home-date"></div>
+  </div>
+  <div class="page-body">
+    <div class="stats-row" id="home-stats"></div>
+    <div class="home-grid">
+      <div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🌅 Morning Briefing</div>
+            <button onclick="loadBriefing()" style="background:#1B4332;color:#fff;border:none;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Refresh</button>
+          </div>
+          <div id="briefing-content" class="briefing-text">Loading your morning briefing…</div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">🎂 Upcoming Birthdays</div></div>
+          <div id="home-birthdays"><div class="empty-state">Loading…</div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">🎯 Goals at a Glance</div></div>
+          <div id="home-goals" style="padding:16px 20px"><div class="empty-state">Loading…</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CHAT -->
+<div class="page" id="page-chat">
+  <div class="topbar"><div class="topbar-title">💬 Family Chat</div>
+    <button onclick="clearChat()" style="background:transparent;border:1px solid #E5E7EB;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer;margin-left:auto">Clear history</button>
+  </div>
+  <div class="chat-container">
+    <div class="chat-messages" id="chat-messages"></div>
+    <div class="chat-suggestions">
+      <button class="suggestion-chip" onclick="sendSuggestion(this)">What's on this week?</button>
+      <button class="suggestion-chip" onclick="sendSuggestion(this)">Who has a birthday coming up?</button>
+      <button class="suggestion-chip" onclick="sendSuggestion(this)">What's our net worth?</button>
+      <button class="suggestion-chip" onclick="sendSuggestion(this)">How are our goals tracking?</button>
+      <button class="suggestion-chip" onclick="sendSuggestion(this)">When is next mortgage repayment?</button>
+      <button class="suggestion-chip" onclick="sendSuggestion(this)">Suggest a gift for an upcoming birthday</button>
+    </div>
+    <div class="chat-input-row">
+      <input id="chat-input" class="chat-input" placeholder="Ask anything about your family, finances, goals…"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}">
+      <button class="chat-send-btn" onclick="sendChat()">➤</button>
+    </div>
+  </div>
+</div>
+
+<!-- BIRTHDAYS -->
+<div class="page" id="page-birthdays">
+  <div class="topbar"><div class="topbar-title">🎂 Birthdays</div></div>
+  <div class="page-body">
+    <div style="display:flex;gap:8px;margin-bottom:20px">
+      <button class="filter-btn active" onclick="setBdayFilter(30,this)">Next 30 days</button>
+      <button class="filter-btn" onclick="setBdayFilter(60,this)">Next 60 days</button>
+      <button class="filter-btn" onclick="setBdayFilter(90,this)">Next 90 days</button>
+      <button class="filter-btn" onclick="setBdayFilter(365,this)">All year</button>
+    </div>
+    <div class="card" id="birthday-list"><div class="empty-state">Loading…</div></div>
+  </div>
+</div>
+
+<!-- CALENDAR -->
+<div class="page" id="page-calendar">
+  <div class="topbar"><div class="topbar-title">📅 Calendar</div></div>
+  <div class="page-body">
+    <div class="card">
+      <div style="padding:40px;text-align:center;color:#6B7280">
+        <div style="font-size:40px;margin-bottom:16px">📅</div>
+        <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:8px">Google Calendar — Not Connected</div>
+        <p style="font-size:13px;max-width:400px;margin:0 auto 20px">Connect your Google Calendar to see Tyson and Robyn's schedule, upcoming events, and get "what's on this week" answers in the Family Chat.</p>
+        <button onclick="showPage('settings',document.querySelector('.nav-item:last-of-type'))" style="background:#1B4332;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:600;cursor:pointer">Connect in Settings →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- HOMESCHOOL -->
+<div class="page" id="page-homeschool">
+  <div class="topbar"><div class="topbar-title">🏫 Homeschool</div></div>
+  <div class="page-body">
+    <div class="stats-row">
+      <div class="stat-card green"><div class="s-label">App Status</div><div class="s-value" id="hs-status">—</div><div class="s-sub">guidepost.au</div></div>
+      <div class="stat-card gold"><div class="s-label">Today's Status</div><div class="s-value" id="hs-today">Normal Day</div><div class="s-sub">School day</div></div>
+    </div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><div class="card-title">⚡ Quick Actions</div></div>
+      <div class="hs-action-row">
+        <button class="hs-btn warning" onclick="hsDayOff()">🏖️ Day Off Today</button>
+        <button class="hs-btn" onclick="window.open('https://guidepost.au','_blank')">Open Guidepost →</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">💬 Ask about the kids</div></div>
+      <div style="padding:16px 20px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <button class="suggestion-chip" onclick="hsAsk('How are the kids tracking this week?')">How are the kids tracking?</button>
+          <button class="suggestion-chip" onclick="hsAsk('Plan next week\\'s homeschool schedule')">Plan next week</button>
+          <button class="suggestion-chip" onclick="hsAsk('What subjects need more attention?')">What needs attention?</button>
+        </div>
+        <div id="hs-chat-response" style="font-size:13px;color:#374151;line-height:1.7;min-height:40px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GOALS -->
+<div class="page" id="page-goals">
+  <div class="topbar"><div class="topbar-title">🎯 Family Goals</div>
+    <button onclick="showAddGoal()" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">+ Add Goal</button>
+  </div>
+  <div class="page-body">
+    <div style="background:#FEF3C7;border:1px solid #FDE68A;border-radius:12px;padding:14px 20px;margin-bottom:20px;font-size:13px;color:#92400E">
+      <strong>📖 Hughes Framework:</strong> Family wealth is built across 5 capitals — Human, Intellectual, Social, Spiritual, and Financial — in that order of importance. Financial capital listed last is intentional.
+    </div>
+    <div id="goals-container"><div class="empty-state">Loading…</div></div>
+  </div>
+</div>
+
+<!-- PROPERTY -->
+<div class="page" id="page-property">
+  <div class="topbar"><div class="topbar-title">🏡 Property & Investments</div></div>
+  <div class="page-body">
+    <div class="stats-row" id="property-stats"></div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <div class="card-title">8 Luca Court, Aratula QLD 4309</div>
+        <button onclick="showUpdateValue()" style="background:transparent;border:1px solid #E5E7EB;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer">Update Value</button>
+      </div>
+      <div class="prop-grid" id="property-grid"></div>
+    </div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><div class="card-title">📈 Share Portfolio</div></div>
+      <div style="padding:24px;text-align:center;color:#6B7280">
+        <div style="font-size:32px;margin-bottom:12px">📊</div>
+        <div style="font-size:14px;font-weight:600;color:#374151;margin-bottom:8px">Paper trading mode</div>
+        <p style="font-size:12px;max-width:360px;margin:0 auto">Running the stock screener in paper trading mode. Live portfolio will be added here once you make your first trade.</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">💡 Net Worth Snapshot</div></div>
+      <div id="networth-content" style="padding:20px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- FINANCE -->
+<div class="page" id="page-finance">
+  <div class="topbar"><div class="topbar-title">💰 Finance</div></div>
+  <div class="page-body">
+    <div class="card">
+      <div style="padding:40px;text-align:center;color:#6B7280">
+        <div style="font-size:40px;margin-bottom:16px">💰</div>
+        <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:8px">Xero — Not Connected</div>
+        <p style="font-size:13px;max-width:400px;margin:0 auto 20px">Connect Xero to see invoices sent, payments received, outstanding amounts, and get answers like "Did my invoice get paid?" in the Family Chat.</p>
+        <div style="background:#F9FAFB;border-radius:10px;padding:16px;text-align:left;max-width:400px;margin:0 auto 20px;font-size:12px;color:#374151">
+          <strong>Setup steps:</strong><br>
+          1. Go to developer.xero.com → My Apps → New App<br>
+          2. Set redirect URI: your-app-url/xero/callback<br>
+          3. Add Client ID + Secret to Coolify env vars:<br>
+          &nbsp;&nbsp;<code>XERO_CLIENT_ID</code> and <code>XERO_CLIENT_SECRET</code><br>
+          4. Restart and connect below
+        </div>
+        <button onclick="showPage('settings',null)" style="background:#1B4332;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:600;cursor:pointer">Connect in Settings →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS -->
+<div class="page" id="page-settings">
+  <div class="topbar"><div class="topbar-title">⚙️ Integrations & Settings</div></div>
+  <div class="page-body">
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><div class="card-title">Connected Services</div></div>
+      <div id="integrations-list"></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Setup Guides</div></div>
+      <div style="padding:20px;font-size:13px;color:#374151;line-height:1.8">
+        <strong>Google Calendar:</strong><br>
+        1. Go to <a href="https://console.cloud.google.com" target="_blank" style="color:#1B4332">console.cloud.google.com</a> → New Project<br>
+        2. Enable Google Calendar API<br>
+        3. Create OAuth 2.0 credentials, add redirect URI: <code>your-url/google/callback</code><br>
+        4. Add <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> to Coolify env vars<br><br>
+        <strong>Xero:</strong><br>
+        1. Go to <a href="https://developer.xero.com" target="_blank" style="color:#1B4332">developer.xero.com</a> → My Apps → New App<br>
+        2. Add redirect URI: <code>your-url/xero/callback</code><br>
+        3. Add <code>XERO_CLIENT_ID</code> and <code>XERO_CLIENT_SECRET</code> to Coolify env vars<br><br>
+        <strong>Note:</strong> The Family Chat already has full context about your property, birthdays, and goals — it works without these integrations connected.
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /main -->
+
+<!-- ADD GOAL MODAL -->
+<div id="goal-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:16px;width:480px;max-width:95vw;padding:28px">
+    <div style="font-size:16px;font-weight:700;margin-bottom:20px">Add Family Goal</div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">CAPITAL</div>
+      <select id="goal-capital" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+        <option value="Human">🧠 Human Capital</option>
+        <option value="Intellectual">📚 Intellectual Capital</option>
+        <option value="Social">🤝 Social Capital</option>
+        <option value="Spiritual">✨ Spiritual Capital</option>
+        <option value="Financial" selected>💰 Financial Capital</option>
+      </select>
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">GOAL</div>
+      <input id="goal-title" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="e.g. Pay down mortgage to $600k">
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">DESCRIPTION (optional)</div>
+      <textarea id="goal-desc" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px;resize:vertical;height:70px" placeholder="Add context or steps…"></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">TARGET DATE</div>
+        <input type="date" id="goal-date" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">PROGRESS %</div>
+        <input type="number" id="goal-progress" min="0" max="100" value="0" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button onclick="closeGoalModal()" style="background:#F3F4F6;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Cancel</button>
+      <button onclick="saveGoal()" style="background:#1B4332;color:#fff;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Save Goal</button>
+    </div>
+  </div>
+</div>
+
+<!-- UPDATE PROPERTY VALUE MODAL -->
+<div id="value-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:16px;width:380px;max-width:95vw;padding:28px">
+    <div style="font-size:16px;font-weight:700;margin-bottom:20px">Update Property Value</div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">ESTIMATED CURRENT VALUE</div>
+      <input type="number" id="prop-value" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="e.g. 950000">
+    </div>
+    <div style="margin-bottom:20px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">NOTE (optional)</div>
+      <input id="prop-note" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="e.g. Based on recent comparable sale">
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button onclick="closeValueModal()" style="background:#F3F4F6;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Cancel</button>
+      <button onclick="savePropertyValue()" style="background:#1B4332;color:#fff;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Update</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const CAPITALS = {
+  Human: { icon: '🧠', cls: 'cap-Human', desc: 'Growth, health, happiness of each family member' },
+  Intellectual: { icon: '📚', cls: 'cap-Intellectual', desc: 'Knowledge, skills and wisdom within the family' },
+  Social: { icon: '🤝', cls: 'cap-Social', desc: 'Relationships, networks, community' },
+  Spiritual: { icon: '✨', cls: 'cap-Spiritual', desc: 'Shared values, purpose and meaning' },
+  Financial: { icon: '💰', cls: 'cap-Financial', desc: 'Money and assets — intentionally listed last' },
+};
+
+function fmt(n) { return n ? '$' + Math.round(n).toLocaleString('en-AU') : '—'; }
+
+function showPage(name, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  if (el) el.classList.add('active');
+}
+
+// ── HOME ──────────────────────────────────────────────────────────────────────
+
+async function loadHome() {
+  const today = new Date();
+  document.getElementById('home-date').textContent = today.toLocaleDateString('en-AU', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+  try {
+    const s = await fetch('/api/summary').then(r => r.json());
+    const p = s.property;
+    const equity = p.estimated_value - p.mortgage_balance;
+    document.getElementById('home-stats').innerHTML = [
+      {cls:'green', label:'Property Equity', val: fmt(equity), sub: `${p.equity_pct}% of value`},
+      {cls:'gold', label:'Mortgage Balance', val: fmt(p.mortgage_balance), sub: `${p.rate}% interest only`},
+      {cls:'blue', label:'Active Goals', val: s.goals_active, sub: 'Across 5 capitals'},
+      {cls:'', label:'Birthdays Soon', val: s.birthdays_soon.length, sub: 'Next 14 days'},
+    ].map(x => `<div class="stat-card ${x.cls}"><div class="s-label">${x.label}</div><div class="s-value">${x.val}</div><div class="s-sub">${x.sub}</div></div>`).join('');
+
+    // Birthdays panel
+    const el = document.getElementById('home-birthdays');
+    if (s.birthdays_soon.length) {
+      el.innerHTML = s.birthdays_soon.slice(0,4).map(bdayRow).join('');
+    } else {
+      el.innerHTML = '<div class="empty-state">🎉 No birthdays in the next 14 days</div>';
+    }
+    document.getElementById('nb-bdays').textContent = s.birthdays_soon.length || '—';
+  } catch(e) {
+    document.getElementById('home-stats').innerHTML = '<div style="color:#9CA3AF;padding:20px">Could not load summary</div>';
+  }
+
+  loadHomeBriefing();
+  loadHomeGoals();
+}
+
+async function loadHomeBriefing() {
+  document.getElementById('briefing-content').textContent = 'Generating your morning briefing…';
+  try {
+    const data = await fetch('/api/briefing').then(r => r.json());
+    document.getElementById('briefing-content').textContent = data.briefing || data.error || 'Could not load briefing';
+  } catch(e) {
+    document.getElementById('briefing-content').textContent = 'Could not load briefing — check ANTHROPIC_API_KEY is configured.';
+  }
+}
+
+async function loadBriefing() { loadHomeBriefing(); }
+
+async function loadHomeGoals() {
+  try {
+    const goals = await fetch('/api/goals').then(r => r.json());
+    const active = goals.filter(g => g.status === 'active').slice(0, 5);
+    const el = document.getElementById('home-goals');
+    el.innerHTML = active.map(g => {
+      const cap = CAPITALS[g.capital] || CAPITALS.Financial;
+      return `<div style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span class="capital-badge ${cap.cls}" style="font-size:10px">${cap.icon} ${g.capital}</span>
+          <span style="font-size:12px;font-weight:600;color:#111;flex:1">${g.title}</span>
+          <span style="font-size:11px;color:#9CA3AF">${g.progress}%</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${g.progress}%"></div></div>
+      </div>`;
+    }).join('') || '<div style="font-size:13px;color:#9CA3AF">No active goals</div>';
+  } catch(e) {}
+}
+
+// ── BIRTHDAYS ─────────────────────────────────────────────────────────────────
+
+let bdayDays = 30;
+function setBdayFilter(days, btn) {
+  bdayDays = days;
+  document.querySelectorAll('#page-birthdays .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadBirthdays();
+}
+
+function bdayRow(b) {
+  const cls = b.days_until <= 7 ? 'urgent' : b.days_until <= 14 ? 'soon' : 'coming';
+  const daysText = b.days_until === 0 ? '🎉 Today!' : b.days_until === 1 ? 'Tomorrow' : `${b.days_until} days`;
+  return `<div class="birthday-row">
+    <div class="bday-avatar">${b.first[0]}</div>
+    <div>
+      <div class="bday-name">${b.name}</div>
+      <div class="bday-meta">${b.relationship} · Turning ${b.age_upcoming} · ${new Date(b.birthday_this_year).toLocaleDateString('en-AU',{day:'numeric',month:'long'})}</div>
+    </div>
+    <div class="bday-days">
+      <div class="days-badge ${cls}">${daysText}</div>
+    </div>
+  </div>`;
+}
+
+async function loadBirthdays() {
+  const el = document.getElementById('birthday-list');
+  el.innerHTML = '<div class="empty-state">Loading…</div>';
+  const data = await fetch(`/api/birthdays?days=${bdayDays}`).then(r => r.json()).catch(() => []);
+  if (!data.length) {
+    el.innerHTML = `<div class="empty-state">No birthdays in the next ${bdayDays} days</div>`;
+    return;
+  }
+  el.innerHTML = data.map(bdayRow).join('');
+}
+
+// ── GOALS ─────────────────────────────────────────────────────────────────────
+
+async function loadGoals() {
+  const goals = await fetch('/api/goals').then(r => r.json()).catch(() => []);
+  const active = goals.filter(g => g.status === 'active');
+  const grouped = {};
+  ['Human','Intellectual','Social','Spiritual','Financial'].forEach(c => {
+    grouped[c] = active.filter(g => g.capital === c);
+  });
+  const el = document.getElementById('goals-container');
+  el.innerHTML = Object.entries(grouped).map(([cap, gs]) => {
+    const info = CAPITALS[cap];
+    if (!gs.length) return `<div class="card" style="margin-bottom:12px">
+      <div class="capital-header">
+        <span class="capital-badge ${info.cls}">${info.icon} ${cap}</span>
+        <span style="font-size:12px;color:#9CA3AF;flex:1;margin-left:4px">${info.desc}</span>
+        <button onclick="addGoalFor('${cap}')" style="background:transparent;border:1px solid #E5E7EB;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;color:#6B7280">+ Goal</button>
+      </div>
+      <div style="padding:12px 20px;font-size:12px;color:#9CA3AF;font-style:italic">No ${cap.toLowerCase()} goals yet — add one</div>
+    </div>`;
+    return `<div class="card" style="margin-bottom:12px">
+      <div class="capital-header">
+        <span class="capital-badge ${info.cls}">${info.icon} ${cap}</span>
+        <span style="font-size:12px;color:#9CA3AF;flex:1;margin-left:4px">${info.desc}</span>
+        <button onclick="addGoalFor('${cap}')" style="background:transparent;border:1px solid #E5E7EB;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;color:#6B7280">+ Goal</button>
+      </div>
+      ${gs.map(g => `<div class="goal-row">
+        <div class="goal-progress-wrap">
+          <div class="goal-title">${g.title}</div>
+          ${g.description ? `<div class="goal-desc">${g.description}</div>` : ''}
+          <div class="progress-bar"><div class="progress-fill" style="width:${g.progress}%"></div></div>
+          <div class="progress-label"><span>${g.progress}% complete</span><span>${g.target_date ? 'Target: ' + g.target_date : ''}</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0">
+          <button onclick="updateProgress(${g.id},${g.progress})" style="font-size:11px;background:transparent;border:1px solid #E5E7EB;padding:3px 8px;border-radius:4px;cursor:pointer">✏️</button>
+          <button onclick="archiveGoal(${g.id})" style="font-size:11px;background:transparent;border:1px solid #E5E7EB;padding:3px 8px;border-radius:4px;cursor:pointer;color:#9CA3AF">✕</button>
+        </div>
+      </div>`).join('')}
+    </div>`;
+  }).join('');
+}
+
+let _goalCapital = 'Financial';
+function showAddGoal() { document.getElementById('goal-capital').value = 'Financial'; document.getElementById('goal-modal').style.display = 'flex'; }
+function addGoalFor(cap) { _goalCapital = cap; document.getElementById('goal-capital').value = cap; document.getElementById('goal-modal').style.display = 'flex'; }
+function closeGoalModal() { document.getElementById('goal-modal').style.display = 'none'; }
+
+async function saveGoal() {
+  const data = {
+    capital: document.getElementById('goal-capital').value,
+    title: document.getElementById('goal-title').value.trim(),
+    description: document.getElementById('goal-desc').value.trim(),
+    target_date: document.getElementById('goal-date').value || null,
+    progress: parseInt(document.getElementById('goal-progress').value) || 0,
+  };
+  if (!data.title) { alert('Please enter a goal title'); return; }
+  await fetch('/api/goals', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+  closeGoalModal();
+  document.getElementById('goal-title').value = '';
+  document.getElementById('goal-desc').value = '';
+  loadGoals();
+}
+
+async function updateProgress(id, current) {
+  const p = prompt('Update progress (0-100):', current);
+  if (p === null) return;
+  await fetch('/api/goals/' + id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({progress: parseInt(p)||0})});
+  loadGoals();
+}
+
+async function archiveGoal(id) {
+  if (!confirm('Archive this goal?')) return;
+  await fetch('/api/goals/' + id, {method:'DELETE'});
+  loadGoals();
+}
+
+// ── PROPERTY ──────────────────────────────────────────────────────────────────
+
+async function loadProperty() {
+  const p = await fetch('/api/property').then(r => r.json()).catch(() => ({}));
+  const equity = p.estimated_value - p.mortgage_balance;
+  document.getElementById('property-stats').innerHTML = [
+    {cls:'green', label:'Estimated Value', val: fmt(p.estimated_value), sub: p.estimated_value_updated ? 'Updated ' + p.estimated_value_updated : 'Purchase price'},
+    {cls:'', label:'Mortgage Balance', val: fmt(p.mortgage_balance), sub: `${p.rate}% interest only`},
+    {cls: equity >= 0 ? 'gold' : 'red', label:'Equity', val: fmt(equity), sub: `${p.equity_pct}% of value`},
+    {cls:'', label:'Annual Interest', val: fmt(p.annual_interest), sub: 'At current rate'},
+  ].map(x => `<div class="stat-card ${x.cls}"><div class="s-label">${x.label}</div><div class="s-value">${x.val}</div><div class="s-sub">${x.sub}</div></div>`).join('');
+
+  document.getElementById('property-grid').innerHTML = [
+    ['Address', p.address || '—'],
+    ['Purchase Price', fmt(p.purchase_price)],
+    ['Current Estimate', fmt(p.estimated_value)],
+    ['Capital Growth', p.estimated_value && p.purchase_price ? fmt(p.estimated_value - p.purchase_price) : '—'],
+    ['Lender', p.lender || '—'],
+    ['Loan Type', p.type || '—'],
+    ['Monthly Repayment', fmt(p.repayment)],
+    ['Next Due', p.next_due || '—'],
+  ].map(([k,v]) => `<div class="prop-kv"><span class="pk">${k}</span><span class="pv">${v}</span></div>`).join('');
+
+  document.getElementById('networth-content').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
+      <div><span style="color:#6B7280">Property value:</span> <strong>${fmt(p.estimated_value)}</strong></div>
+      <div><span style="color:#6B7280">Mortgage:</span> <strong class="red-text">-${fmt(p.mortgage_balance)}</strong></div>
+      <div><span style="color:#6B7280">Property equity:</span> <strong class="green-text">${fmt(equity)}</strong></div>
+      <div><span style="color:#6B7280">Share portfolio:</span> <strong style="color:#9CA3AF">Not yet live</strong></div>
+      <div style="grid-column:1/-1;padding-top:12px;border-top:1px solid #F3F4F6">
+        <span style="color:#6B7280">Estimated net worth:</span> <strong style="font-size:18px">${fmt(equity)}</strong>
+        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">(property equity only — shares, savings not included)</span>
+      </div>
+    </div>`;
+}
+
+function showUpdateValue() {
+  document.getElementById('value-modal').style.display = 'flex';
+  fetch('/api/property').then(r=>r.json()).then(p => {
+    document.getElementById('prop-value').value = p.estimated_value || '';
+  });
+}
+function closeValueModal() { document.getElementById('value-modal').style.display = 'none'; }
+async function savePropertyValue() {
+  const val = parseInt(document.getElementById('prop-value').value);
+  const note = document.getElementById('prop-note').value.trim();
+  if (!val) { alert('Enter a value'); return; }
+  await fetch('/api/property', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({estimated_value: val, notes: note})});
+  closeValueModal();
+  loadProperty();
+}
+
+// ── CHAT ──────────────────────────────────────────────────────────────────────
+
+let chatInit = false;
+async function initChat() {
+  if (chatInit) return;
+  chatInit = true;
+  const data = await fetch('/api/chat/history?limit=30').then(r=>r.json()).catch(()=>[]);
+  const el = document.getElementById('chat-messages');
+  if (!data.length) {
+    el.innerHTML = `<div style="text-align:center;padding:40px;color:#9CA3AF">
+      <div style="font-size:40px;margin-bottom:12px">💬</div>
+      <div style="font-size:14px;font-weight:600;color:#374151;margin-bottom:8px">Welcome to Family Chat</div>
+      <p style="font-size:13px;max-width:360px;margin:0 auto">Ask me anything about your birthdays, property, goals, finances, or what's on this week.</p>
+    </div>`;
+    return;
+  }
+  el.innerHTML = data.map(m => chatBubble(m.role, m.content)).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function chatBubble(role, content) {
+  const initials = role === 'user' ? 'TW' : 'AI';
+  return `<div class="chat-msg ${role}">
+    <div class="chat-avatar ${role}">${initials}</div>
+    <div class="chat-bubble">${escHtml(content)}</div>
+  </div>`;
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  const el = document.getElementById('chat-messages');
+  el.innerHTML += chatBubble('user', msg);
+  el.innerHTML += `<div class="chat-msg assistant" id="typing">
+    <div class="chat-avatar assistant">AI</div>
+    <div class="chat-bubble" style="color:#9CA3AF">Thinking…</div>
+  </div>`;
+  el.scrollTop = el.scrollHeight;
+  try {
+    const data = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({message: msg})
+    }).then(r => r.json());
+    document.getElementById('typing')?.remove();
+    el.innerHTML += chatBubble('assistant', data.reply || data.error || 'Sorry, I had trouble with that.');
+  } catch(e) {
+    document.getElementById('typing')?.remove();
+    el.innerHTML += chatBubble('assistant', 'Connection error — please try again.');
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
+function sendSuggestion(btn) {
+  document.getElementById('chat-input').value = btn.textContent;
+  sendChat();
+}
+
+async function clearChat() {
+  if (!confirm('Clear chat history?')) return;
+  await fetch('/api/chat/clear', {method:'POST'});
+  chatInit = false;
+  document.getElementById('chat-messages').innerHTML = '';
+  initChat();
+}
+
+// ── HOMESCHOOL ────────────────────────────────────────────────────────────────
+
+async function hsDayOff() {
+  document.getElementById('hs-today').textContent = 'Day Off';
+  document.getElementById('hs-chat-response').textContent = 'Day off recorded! The homeschool app will reflect this.';
+  // Note: API call to guidepost.au would go here once that API endpoint is confirmed
+}
+
+async function hsAsk(q) {
+  const el = document.getElementById('hs-chat-response');
+  el.textContent = 'Thinking…';
+  const data = await fetch('/api/chat', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({message: q})
+  }).then(r=>r.json()).catch(()=>({reply:'Could not connect'}));
+  el.textContent = data.reply || data.error;
+}
+
+document.getElementById('hs-status').textContent = '✅ Online';
+
+// ── SETTINGS ──────────────────────────────────────────────────────────────────
+
+async function loadSettings() {
+  const s = await fetch('/api/integrations/status').then(r=>r.json()).catch(()=>({}));
+  const integrations = [
+    {icon:'🤖', name:'Claude AI', key:'anthropic', desc:'Powers the Family Chat', connectUrl: null},
+    {icon:'📅', name:'Google Calendar', key:'google_calendar', desc:'See your week, upcoming events', connectUrl: '/google/auth'},
+    {icon:'💰', name:'Xero', key:'xero', desc:'Invoices, payments, cashflow', connectUrl: '/xero/auth'},
+    {icon:'📧', name:'Outlook Calendar', key:'outlook', desc:'Work calendar (already configured)', connectUrl: null},
+  ];
+  document.getElementById('integrations-list').innerHTML = integrations.map(i => {
+    const connected = s[i.key];
+    const btnHtml = connected
+      ? `<button class="int-btn connected">✓ Connected</button>`
+      : (i.connectUrl ? `<a href="${i.connectUrl}"><button class="int-btn connect">Connect</button></a>` : `<button class="int-btn" style="background:#F3F4F6;color:#9CA3AF" disabled>Setup required</button>`);
+    return `<div class="integration-row">
+      <div class="int-icon">${i.icon}</div>
+      <div><div class="int-name">${i.name}</div><div class="int-status">${i.desc}</div></div>
+      ${btnHtml}
+    </div>`;
+  }).join('');
+}
+
+function escHtml(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+loadHome();
+</script>
+</body>
+</html>

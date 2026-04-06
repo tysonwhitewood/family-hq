@@ -1,0 +1,39 @@
+{
+  "family": {
+    "surname": "Whitewood",
+    "members": [
+      {"name": "Tyson", "role": "husband"},
+      {"name": "Robyn", "role": "wife"}
+    ]
+  },
+  "property": {
+    "address": "8 Luca Court, Aratula QLD 4309",
+    "purchase_price": 880000,
+    "purchase_date": null,
+    "estimated_value": 880000,
+    "estimated_value_updated": null,
+    "mortgage": {
+      "balance": 758770.76,
+      "rate": 6.39,
+      "type": "Interest Only",
+      "repayment": 664.18,
+      "repayment_frequency": "monthly",
+      "next_due": "2026-05-01",
+      "lender": "Bank of Queensland",
+      "account_name": "Basic Var Inv Const"
+    }
+  },
+  "investments": {
+    "shares": [],
+    "notes": "Paper trading via stock screener — no live portfolio yet"
+  },
+  "homeschool": {
+    "app_url": "https://guidepost.au",
+    "api_url": "http://5.223.70.103:3000"
+  },
+  "integrations": {
+    "google_calendar": false,
+    "xero": false,
+    "outlook": true
+  }
+}
