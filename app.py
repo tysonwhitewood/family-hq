@@ -568,54 +568,57 @@ def discord_webhook_test():
 # ── Xero Integration ─────────────────────────────────────────────────────────
 
 TOKEN_DIR = DATA_DIR / 'tokens'
-_XERO_TOKEN_PATH = None  # set after DATA_DIR is available
+
+XERO_SCOPES = 'openid profile email accounting.transactions accounting.reports.read accounting.settings accounting.contacts offline_access'
+XERO_REDIRECT_URI = 'https://family.edencommercial.au/api/xero/callback'
+XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize'
+XERO_TOKEN_URL = 'https://identity.xero.com/connect/token'
 
 
 def _xero_token():
-    """Return a valid Xero access token dict, re-fetching if expired."""
+    """Return a valid Xero access token dict, refreshing if expired."""
     TOKEN_DIR.mkdir(exist_ok=True)
     token_path = TOKEN_DIR / 'xero_token.json'
 
-    if token_path.exists():
-        tok = json.loads(token_path.read_text())
-        if time.time() < tok.get('expires_at', 0) - 60:
-            return tok
+    if not token_path.exists():
+        raise ValueError('not_connected')
 
-    if not XERO_CLIENT_ID or not XERO_CLIENT_SECRET:
-        raise ValueError('XERO_CLIENT_ID / XERO_CLIENT_SECRET not configured')
+    tok = json.loads(token_path.read_text())
+
+    # Still valid
+    if time.time() < tok.get('expires_at', 0) - 60:
+        return tok
+
+    # Refresh using refresh_token
+    refresh_token = tok.get('refresh_token')
+    if not refresh_token:
+        token_path.unlink(missing_ok=True)
+        raise ValueError('not_connected')
 
     creds = base64.b64encode(f'{XERO_CLIENT_ID}:{XERO_CLIENT_SECRET}'.encode()).decode()
-    body = urllib.parse.urlencode({'grant_type': 'client_credentials'}).encode()
+    body = urllib.parse.urlencode({
+        'grant_type': 'refresh_token',
+        'refresh_token': refresh_token,
+    }).encode()
     req = urllib.request.Request(
-        'https://identity.xero.com/connect/token',
-        data=body,
+        XERO_TOKEN_URL, data=body,
         headers={'Authorization': f'Basic {creds}',
                  'Content-Type': 'application/x-www-form-urlencoded'},
         method='POST',
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
-            tok = json.loads(r.read())
+            new_tok = json.loads(r.read())
     except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        raise ValueError(f'Xero {e.code}: {body}')
+        err = e.read().decode('utf-8', errors='replace')
+        token_path.unlink(missing_ok=True)
+        raise ValueError(f'Refresh failed: {err}')
 
-    tok['expires_at'] = time.time() + tok.get('expires_in', 1800)
-
-    # Resolve tenant_id from /connections
-    conn_req = urllib.request.Request(
-        'https://api.xero.com/connections',
-        headers={'Authorization': f'Bearer {tok["access_token"]}',
-                 'Accept': 'application/json'},
-    )
-    with urllib.request.urlopen(conn_req, timeout=15) as r:
-        connections = json.loads(r.read())
-    if connections:
-        tok['tenant_id'] = connections[0]['tenantId']
-        tok['org_name'] = connections[0].get('tenantName', '')
-
-    token_path.write_text(json.dumps(tok))
-    return tok
+    new_tok['expires_at'] = time.time() + new_tok.get('expires_in', 1800)
+    new_tok['tenant_id'] = tok.get('tenant_id', '')
+    new_tok['org_name'] = tok.get('org_name', '')
+    token_path.write_text(json.dumps(new_tok))
+    return new_tok
 
 
 def _xero_get(path):
@@ -633,18 +636,84 @@ def _xero_get(path):
         return json.loads(r.read())
 
 
+@app.route('/api/xero/auth')
+def xero_auth():
+    """Redirect to Xero OAuth consent screen."""
+    import secrets as _secrets
+    state = _secrets.token_urlsafe(16)
+    params = urllib.parse.urlencode({
+        'response_type': 'code',
+        'client_id': XERO_CLIENT_ID,
+        'redirect_uri': XERO_REDIRECT_URI,
+        'scope': XERO_SCOPES,
+        'state': state,
+    })
+    from flask import redirect as _redirect
+    return _redirect(f'{XERO_AUTH_URL}?{params}')
+
+
+@app.route('/api/xero/callback')
+def xero_callback():
+    """Handle Xero OAuth callback, exchange code for tokens."""
+    code = request.args.get('code')
+    error = request.args.get('error')
+    if error or not code:
+        return f'<h2>Xero connection failed: {error or "no code"}</h2><a href="/">Back</a>', 400
+
+    creds = base64.b64encode(f'{XERO_CLIENT_ID}:{XERO_CLIENT_SECRET}'.encode()).decode()
+    body = urllib.parse.urlencode({
+        'grant_type': 'authorization_code',
+        'code': code,
+        'redirect_uri': XERO_REDIRECT_URI,
+    }).encode()
+    req = urllib.request.Request(
+        XERO_TOKEN_URL, data=body,
+        headers={'Authorization': f'Basic {creds}',
+                 'Content-Type': 'application/x-www-form-urlencoded'},
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            tok = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        err = e.read().decode('utf-8', errors='replace')
+        return f'<h2>Token exchange failed: {err}</h2><a href="/">Back</a>', 500
+
+    tok['expires_at'] = time.time() + tok.get('expires_in', 1800)
+
+    # Fetch tenant_id
+    try:
+        conn_req = urllib.request.Request(
+            'https://api.xero.com/connections',
+            headers={'Authorization': f'Bearer {tok["access_token"]}', 'Accept': 'application/json'},
+        )
+        with urllib.request.urlopen(conn_req, timeout=15) as r:
+            connections = json.loads(r.read())
+        if connections:
+            tok['tenant_id'] = connections[0]['tenantId']
+            tok['org_name'] = connections[0].get('tenantName', '')
+    except Exception:
+        pass
+
+    TOKEN_DIR.mkdir(exist_ok=True)
+    (TOKEN_DIR / 'xero_token.json').write_text(json.dumps(tok))
+    from flask import redirect as _redirect
+    return _redirect('/?xero=connected')
+
+
 @app.route('/api/xero/connect', methods=['POST'])
 def xero_connect():
-    """Trigger initial Xero authentication and store token."""
+    """Check connection status (token exists and valid)."""
     try:
         tok = _xero_token()
         return jsonify({
             'ok': True,
             'org': tok.get('org_name', ''),
             'tenant_id': tok.get('tenant_id', ''),
-            'expires_in': max(0, int(tok.get('expires_at', 0) - time.time())),
         })
-    except Exception as e:
+    except ValueError as e:
+        if 'not_connected' in str(e):
+            return jsonify({'ok': False, 'error': 'Not connected — use /api/xero/auth to connect'}), 401
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 

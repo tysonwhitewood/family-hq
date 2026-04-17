@@ -522,8 +522,7 @@ body {
         <div style="font-size:40px;margin-bottom:16px">💰</div>
         <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:8px">Xero — Not Connected</div>
         <p style="font-size:13px;max-width:400px;margin:0 auto 20px">Connect Xero to see bank accounts, transactions, and cashflow. Uses your Custom Connection — no login redirect needed.</p>
-        <button id="xero-connect-btn" onclick="connectXero()" style="background:#1B4332;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:600;cursor:pointer">Connect Xero →</button>
-        <div id="xero-connect-status" style="margin-top:12px;font-size:13px"></div>
+        <a href="/api/xero/auth"><button style="background:#1B4332;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:600;cursor:pointer">Connect Xero →</button></a>
       </div>
     </div>
   </div>
@@ -982,16 +981,14 @@ async function loadSettings() {
   const integrations = [
     {icon:'🤖', name:'Claude AI', key:'anthropic', desc:'Powers the Family Chat', connectUrl: null},
     {icon:'📅', name:'Google Calendar', key:'google_calendar', desc:'See your week, upcoming events', connectUrl: '/google/auth'},
-    {icon:'💰', name:'Xero', key:'xero', desc:'Invoices, payments, cashflow', connectUrl: 'xero-custom'},
+    {icon:'💰', name:'Xero', key:'xero', desc:'Invoices, payments, cashflow', connectUrl: '/api/xero/auth'},
     {icon:'📧', name:'Outlook Calendar', key:'outlook', desc:'Work calendar (already configured)', connectUrl: null},
   ];
   document.getElementById('integrations-list').innerHTML = integrations.map(i => {
     const connected = s[i.key];
     const btnHtml = connected
       ? `<button class="int-btn connected">✓ Connected</button>`
-      : (i.connectUrl === 'xero-custom'
-          ? `<button class="int-btn connect" onclick="connectXero()">Connect</button>`
-          : (i.connectUrl ? `<a href="${i.connectUrl}"><button class="int-btn connect">Connect</button></a>` : `<button class="int-btn" style="background:#F3F4F6;color:#9CA3AF" disabled>Setup required</button>`));
+      : (i.connectUrl ? `<a href="${i.connectUrl}"><button class="int-btn connect">Connect</button></a>` : `<button class="int-btn" style="background:#F3F4F6;color:#9CA3AF" disabled>Setup required</button>`);
     return `<div class="integration-row">
       <div class="int-icon">${i.icon}</div>
       <div><div class="int-name">${i.name}</div><div class="int-status">${i.desc}</div></div>
