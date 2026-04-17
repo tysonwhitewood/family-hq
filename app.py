@@ -12,7 +12,7 @@ DATA_DIR = ROOT / 'data'
 DB_PATH = DATA_DIR / 'family.db'
 CONFIG_PATH = DATA_DIR / 'config.json'
 BIRTHDAYS_PATH = DATA_DIR / 'Whitewood Family Birthdays.xlsx'
-PORT = int(os.environ.get('PORT', 8282))
+PORT = int(os.environ.get('PORT', 3000))
 
 USERNAME = os.environ.get('FAMILY_HQ_USER', 'family')
 PASSWORD = os.environ.get('FAMILY_HQ_PASS', 'Whitewood2026!')
