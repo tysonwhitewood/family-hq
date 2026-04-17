@@ -19,6 +19,7 @@ PASSWORD = os.environ.get('FAMILY_HQ_PASS', 'Whitewood2026!')
 _EXPECTED = base64.b64encode(f'{USERNAME}:{PASSWORD}'.encode()).decode()
 
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 XERO_CLIENT_ID = os.environ.get('XERO_CLIENT_ID', '')
@@ -37,6 +38,45 @@ def require_auth():
         return
     if not check_auth():
         return Response('Unauthorized', 401, {'WWW-Authenticate': 'Basic realm="Family HQ"'})
+
+
+# ── LLM helper (Anthropic → OpenRouter fallback) ─────────────────────────────
+
+def llm_available():
+    return bool(ANTHROPIC_API_KEY or OPENROUTER_API_KEY)
+
+def llm_chat(messages: list, system: str = '', max_tokens: int = 1024) -> str:
+    """Call Claude via Anthropic SDK, or fall back to OpenRouter free model."""
+    if ANTHROPIC_API_KEY:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        kwargs = dict(model='claude-haiku-4-5-20251001', max_tokens=max_tokens, messages=messages)
+        if system:
+            kwargs['system'] = system
+        response = client.messages.create(**kwargs)
+        return response.content[0].text
+
+    if OPENROUTER_API_KEY:
+        payload = json.dumps({
+            'model': 'meta-llama/llama-3.3-70b-instruct:free',
+            'messages': ([{'role': 'system', 'content': system}] if system else []) + messages,
+            'max_tokens': max_tokens,
+        }).encode()
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Authorization': f'Bearer {OPENROUTER_API_KEY}',
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://family.edencommercial.au',
+            },
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+            return data['choices'][0]['message']['content']
+
+    raise ValueError('No LLM configured — set ANTHROPIC_API_KEY or OPENROUTER_API_KEY')
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -375,8 +415,8 @@ def api_goal(gid):
 
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
-    if not ANTHROPIC_API_KEY:
-        return jsonify({'error': 'ANTHROPIC_API_KEY not configured'}), 503
+    if not llm_available():
+        return jsonify({'error': 'No AI configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in settings'}), 503
     data = request.get_json(force=True)
     user_msg = (data.get('message') or '').strip()
     if not user_msg:
@@ -391,22 +431,15 @@ def api_chat():
     messages = [{'role': h['role'], 'content': h['content']} for h in history]
     messages.append({'role': 'user', 'content': user_msg})
 
-    import anthropic
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    response = client.messages.create(
-        model='claude-haiku-4-5-20251001',
-        max_tokens=1024,
-        system=build_family_context(),
-        messages=messages
-    )
-    reply = response.content[0].text
+    reply = llm_chat(messages, system=build_family_context())
 
     now = datetime.now().isoformat()[:19]
     with get_db() as db:
         db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('user', user_msg, now))
         db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('assistant', reply, now))
 
-    return jsonify({'reply': reply, 'model': 'claude-haiku'})
+    model = 'claude-haiku' if ANTHROPIC_API_KEY else 'llama-3.3-70b (openrouter)'
+    return jsonify({'reply': reply, 'model': model})
 
 @app.route('/api/chat/history')
 def api_chat_history():
@@ -455,14 +488,14 @@ def api_integrations():
     return jsonify({
         'google_calendar': (token_dir / 'google_token.json').exists(),
         'xero': (token_dir / 'xero_token.json').exists(),
-        'anthropic': bool(ANTHROPIC_API_KEY),
+        'anthropic': llm_available(),
         'outlook': True,
     })
 
 @app.route('/api/briefing')
 def api_briefing():
-    """Generate a morning briefing using Claude."""
-    if not ANTHROPIC_API_KEY:
+    """Generate a morning briefing using Claude or OpenRouter."""
+    if not llm_available():
         return jsonify({'error': 'ANTHROPIC_API_KEY not configured'}), 503
     today = date.today()
     birthdays = load_birthdays(7)
@@ -485,14 +518,8 @@ Goals progress: {json.dumps([{'title': g['title'], 'progress': g['progress']} fo
 
 Keep it under 200 words, warm and personal."""
 
-    import anthropic
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    response = client.messages.create(
-        model='claude-haiku-4-5-20251001',
-        max_tokens=512,
-        messages=[{'role': 'user', 'content': prompt}]
-    )
-    return jsonify({'briefing': response.content[0].text, 'date': today.isoformat()})
+    briefing = llm_chat([{'role': 'user', 'content': prompt}], max_tokens=512)
+    return jsonify({'briefing': briefing, 'date': today.isoformat()})
 
 
 # ── Discord Integration ───────────────────────────────────────────────────────
