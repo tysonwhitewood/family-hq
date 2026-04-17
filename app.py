@@ -776,7 +776,9 @@ def xero_cashflow():
         return jsonify({'error': str(e)}), 500
 
 
+# Always initialise DB — runs under both gunicorn and direct invocation
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     print(f'Family HQ running on port {PORT}')
     app.run(host='0.0.0.0', port=PORT, debug=False)
