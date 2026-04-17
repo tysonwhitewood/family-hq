@@ -571,6 +571,9 @@ body {
     <div class="mnav-item" onclick="showPage('goals',this);loadGoals()" data-page="goals">
       <span class="micon">🎯</span><span>Goals</span>
     </div>
+    <div class="mnav-item" onclick="showPage('finance',this)" data-page="finance">
+      <span class="micon">💰</span><span>Finance</span>
+    </div>
     <div class="mnav-item" onclick="showPage('property',this);loadProperty()" data-page="property">
       <span class="micon">🏡</span><span>Property</span>
     </div>
@@ -636,6 +639,12 @@ body {
 </div>
 
 <script>
+// Auth helper — ensures all API calls include credentials (required on iOS/Safari)
+const _AUTH_HDR = { 'Authorization': 'Basic ' + btoa('family:Whitewood2026!') };
+function authFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ..._AUTH_HDR, ...(opts.headers || {}) } });
+}
+
 const CAPITALS = {
   Human: { icon: '🧠', cls: 'cap-Human', desc: 'Growth, health, happiness of each family member' },
   Intellectual: { icon: '📚', cls: 'cap-Intellectual', desc: 'Knowledge, skills and wisdom within the family' },
@@ -665,7 +674,7 @@ async function loadHome() {
   const today = new Date();
   document.getElementById('home-date').textContent = today.toLocaleDateString('en-AU', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
   try {
-    const s = await fetch('/api/summary').then(r => r.json());
+    const s = await authFetch('/api/summary').then(r => r.json());
     const p = s.property;
     const equity = p.estimated_value - p.mortgage_balance;
     document.getElementById('home-stats').innerHTML = [
@@ -694,7 +703,7 @@ async function loadHome() {
 async function loadHomeBriefing() {
   document.getElementById('briefing-content').textContent = 'Generating your morning briefing…';
   try {
-    const data = await fetch('/api/briefing').then(r => r.json());
+    const data = await authFetch('/api/briefing').then(r => r.json());
     document.getElementById('briefing-content').textContent = data.briefing || data.error || 'Could not load briefing';
   } catch(e) {
     document.getElementById('briefing-content').textContent = 'Could not load briefing — check ANTHROPIC_API_KEY is configured.';
@@ -705,7 +714,7 @@ async function loadBriefing() { loadHomeBriefing(); }
 
 async function loadHomeGoals() {
   try {
-    const goals = await fetch('/api/goals').then(r => r.json());
+    const goals = await authFetch('/api/goals').then(r => r.json());
     const active = goals.filter(g => g.status === 'active').slice(0, 5);
     const el = document.getElementById('home-goals');
     el.innerHTML = active.map(g => {
@@ -750,7 +759,7 @@ function bdayRow(b) {
 async function loadBirthdays() {
   const el = document.getElementById('birthday-list');
   el.innerHTML = '<div class="empty-state">Loading…</div>';
-  const data = await fetch(`/api/birthdays?days=${bdayDays}`).then(r => r.json()).catch(() => []);
+  const data = await authFetch(`/api/birthdays?days=${bdayDays}`).then(r => r.json()).catch(() => []);
   if (!data.length) {
     el.innerHTML = `<div class="empty-state">No birthdays in the next ${bdayDays} days</div>`;
     return;
@@ -814,7 +823,7 @@ async function saveGoal() {
     progress: parseInt(document.getElementById('goal-progress').value) || 0,
   };
   if (!data.title) { alert('Please enter a goal title'); return; }
-  await fetch('/api/goals', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+  await authFetch('/api/goals', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
   closeGoalModal();
   document.getElementById('goal-title').value = '';
   document.getElementById('goal-desc').value = '';
@@ -824,20 +833,20 @@ async function saveGoal() {
 async function updateProgress(id, current) {
   const p = prompt('Update progress (0-100):', current);
   if (p === null) return;
-  await fetch('/api/goals/' + id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({progress: parseInt(p)||0})});
+  await authFetch('/api/goals/' + id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({progress: parseInt(p)||0})});
   loadGoals();
 }
 
 async function archiveGoal(id) {
   if (!confirm('Archive this goal?')) return;
-  await fetch('/api/goals/' + id, {method:'DELETE'});
+  await authFetch('/api/goals/' + id, {method:'DELETE'});
   loadGoals();
 }
 
 // ── PROPERTY ──────────────────────────────────────────────────────────────────
 
 async function loadProperty() {
-  const p = await fetch('/api/property').then(r => r.json()).catch(() => ({}));
+  const p = await authFetch('/api/property').then(r => r.json()).catch(() => ({}));
   const equity = p.estimated_value - p.mortgage_balance;
   document.getElementById('property-stats').innerHTML = [
     {cls:'green', label:'Estimated Value', val: fmt(p.estimated_value), sub: p.estimated_value_updated ? 'Updated ' + p.estimated_value_updated : 'Purchase price'},
@@ -881,7 +890,7 @@ async function savePropertyValue() {
   const val = parseInt(document.getElementById('prop-value').value);
   const note = document.getElementById('prop-note').value.trim();
   if (!val) { alert('Enter a value'); return; }
-  await fetch('/api/property', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({estimated_value: val, notes: note})});
+  await authFetch('/api/property', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({estimated_value: val, notes: note})});
   closeValueModal();
   loadProperty();
 }
@@ -892,7 +901,7 @@ let chatInit = false;
 async function initChat() {
   if (chatInit) return;
   chatInit = true;
-  const data = await fetch('/api/chat/history?limit=30').then(r=>r.json()).catch(()=>[]);
+  const data = await authFetch('/api/chat/history?limit=30').then(r=>r.json()).catch(()=>[]);
   const el = document.getElementById('chat-messages');
   if (!data.length) {
     el.innerHTML = `<div style="text-align:center;padding:40px;color:#9CA3AF">
@@ -927,7 +936,7 @@ async function sendChat() {
   </div>`;
   el.scrollTop = el.scrollHeight;
   try {
-    const data = await fetch('/api/chat', {
+    const data = await authFetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({message: msg})
@@ -948,7 +957,7 @@ function sendSuggestion(btn) {
 
 async function clearChat() {
   if (!confirm('Clear chat history?')) return;
-  await fetch('/api/chat/clear', {method:'POST'});
+  await authFetch('/api/chat/clear', {method:'POST'});
   chatInit = false;
   document.getElementById('chat-messages').innerHTML = '';
   initChat();
@@ -965,7 +974,7 @@ async function hsDayOff() {
 async function hsAsk(q) {
   const el = document.getElementById('hs-chat-response');
   el.textContent = 'Thinking…';
-  const data = await fetch('/api/chat', {
+  const data = await authFetch('/api/chat', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({message: q})
   }).then(r=>r.json()).catch(()=>({reply:'Could not connect'}));
@@ -977,7 +986,7 @@ document.getElementById('hs-status').textContent = '✅ Online';
 // ── SETTINGS ──────────────────────────────────────────────────────────────────
 
 async function loadSettings() {
-  const s = await fetch('/api/integrations/status').then(r=>r.json()).catch(()=>({}));
+  const s = await authFetch('/api/integrations/status').then(r=>r.json()).catch(()=>({}));
   const integrations = [
     {icon:'🤖', name:'Claude AI', key:'anthropic', desc:'Powers the Family Chat', connectUrl: null},
     {icon:'📅', name:'Google Calendar', key:'google_calendar', desc:'See your week, upcoming events', connectUrl: '/google/auth'},
