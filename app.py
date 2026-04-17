@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Family HQ — Whitewood Family Command Centre"""
-import base64, json, os, sqlite3, re, urllib.request, urllib.parse
+import base64, json, os, sqlite3, re, time, urllib.request, urllib.parse
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, abort, g, Response
@@ -505,7 +505,10 @@ def send_discord_webhook(message: str, username: str = 'Family HQ'):
         return False
     payload = json.dumps({'content': message, 'username': username}).encode()
     req = urllib.request.Request(webhook_url, data=payload,
-                                  headers={'Content-Type': 'application/json'}, method='POST')
+                                  headers={
+                                      'Content-Type': 'application/json',
+                                      'User-Agent': 'DiscordBot (family-hq, 1.0)',
+                                  }, method='POST')
     try:
         urllib.request.urlopen(req, timeout=10)
         return True
@@ -560,6 +563,144 @@ def discord_webhook_test():
     """Test the Discord webhook."""
     ok = send_discord_webhook('✅ Family HQ Discord integration is working! You can now chat with me here.')
     return jsonify({'ok': ok})
+
+
+# ── Xero Integration ─────────────────────────────────────────────────────────
+
+TOKEN_DIR = DATA_DIR / 'tokens'
+_XERO_TOKEN_PATH = None  # set after DATA_DIR is available
+
+
+def _xero_token():
+    """Return a valid Xero access token dict, re-fetching if expired."""
+    TOKEN_DIR.mkdir(exist_ok=True)
+    token_path = TOKEN_DIR / 'xero_token.json'
+
+    if token_path.exists():
+        tok = json.loads(token_path.read_text())
+        if time.time() < tok.get('expires_at', 0) - 60:
+            return tok
+
+    if not XERO_CLIENT_ID or not XERO_CLIENT_SECRET:
+        raise ValueError('XERO_CLIENT_ID / XERO_CLIENT_SECRET not configured')
+
+    creds = base64.b64encode(f'{XERO_CLIENT_ID}:{XERO_CLIENT_SECRET}'.encode()).decode()
+    body = urllib.parse.urlencode({'grant_type': 'client_credentials'}).encode()
+    req = urllib.request.Request(
+        'https://identity.xero.com/connect/token',
+        data=body,
+        headers={'Authorization': f'Basic {creds}',
+                 'Content-Type': 'application/x-www-form-urlencoded'},
+        method='POST',
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        tok = json.loads(r.read())
+
+    tok['expires_at'] = time.time() + tok.get('expires_in', 1800)
+
+    # Resolve tenant_id from /connections
+    conn_req = urllib.request.Request(
+        'https://api.xero.com/connections',
+        headers={'Authorization': f'Bearer {tok["access_token"]}',
+                 'Accept': 'application/json'},
+    )
+    with urllib.request.urlopen(conn_req, timeout=15) as r:
+        connections = json.loads(r.read())
+    if connections:
+        tok['tenant_id'] = connections[0]['tenantId']
+        tok['org_name'] = connections[0].get('tenantName', '')
+
+    token_path.write_text(json.dumps(tok))
+    return tok
+
+
+def _xero_get(path):
+    """Authenticated GET to the Xero Accounting API v2."""
+    tok = _xero_token()
+    req = urllib.request.Request(
+        f'https://api.xero.com/api.xro/2.0/{path}',
+        headers={
+            'Authorization': f'Bearer {tok["access_token"]}',
+            'Xero-tenant-id': tok.get('tenant_id', ''),
+            'Accept': 'application/json',
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
+
+
+@app.route('/api/xero/connect', methods=['POST'])
+def xero_connect():
+    """Trigger initial Xero authentication and store token."""
+    try:
+        tok = _xero_token()
+        return jsonify({
+            'ok': True,
+            'org': tok.get('org_name', ''),
+            'tenant_id': tok.get('tenant_id', ''),
+            'expires_in': max(0, int(tok.get('expires_at', 0) - time.time())),
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/xero/accounts')
+def xero_accounts():
+    """List bank accounts with current balances."""
+    try:
+        data = _xero_get('Accounts?where=Type%3D%3D%22BANK%22')
+        accounts = [
+            {
+                'id': a['AccountID'],
+                'name': a['Name'],
+                'code': a.get('Code', ''),
+                'balance': a.get('Balance', 0),
+                'currency': a.get('CurrencyCode', 'AUD'),
+                'status': a.get('Status', ''),
+            }
+            for a in data.get('Accounts', [])
+        ]
+        return jsonify(accounts)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/xero/transactions')
+def xero_transactions():
+    """Recent bank transactions, optionally filtered by account_id and from date."""
+    account_id = request.args.get('account_id', '')
+    from_date = request.args.get('from', (date.today() - timedelta(days=30)).isoformat())
+    try:
+        where = urllib.parse.quote('Status=="AUTHORISED"')
+        path = f'BankTransactions?where={where}&fromDate={from_date}&order=Date+DESC'
+        data = _xero_get(path)
+        txns = []
+        for t in data.get('BankTransactions', []):
+            if account_id and t.get('BankAccount', {}).get('AccountID') != account_id:
+                continue
+            txns.append({
+                'date': t.get('DateString', ''),
+                'amount': t.get('Total', 0),
+                'type': t.get('Type', ''),
+                'ref': t.get('Reference', ''),
+                'contact': t.get('Contact', {}).get('Name', ''),
+                'account_id': t.get('BankAccount', {}).get('AccountID', ''),
+            })
+        return jsonify(txns[:100])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/xero/cashflow')
+def xero_cashflow():
+    """P&L report for the requested date range (default: last 90 days)."""
+    from_date = request.args.get('from', (date.today() - timedelta(days=90)).isoformat())
+    to_date = request.args.get('to', date.today().isoformat())
+    try:
+        data = _xero_get(f'Reports/ProfitAndLoss?fromDate={from_date}&toDate={to_date}')
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
