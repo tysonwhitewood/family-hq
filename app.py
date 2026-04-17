@@ -569,7 +569,7 @@ def discord_webhook_test():
 
 TOKEN_DIR = DATA_DIR / 'tokens'
 
-XERO_SCOPES = 'openid profile email accounting.transactions accounting.reports.read accounting.settings accounting.contacts offline_access'
+XERO_SCOPES = 'openid profile email accounting.transactions.read accounting.reports.read offline_access'
 XERO_REDIRECT_URI = 'https://family.edencommercial.au/api/xero/callback'
 XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize'
 XERO_TOKEN_URL = 'https://identity.xero.com/connect/token'
