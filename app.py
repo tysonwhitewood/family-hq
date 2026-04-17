@@ -593,8 +593,12 @@ def _xero_token():
                  'Content-Type': 'application/x-www-form-urlencoded'},
         method='POST',
     )
-    with urllib.request.urlopen(req, timeout=15) as r:
-        tok = json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            tok = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        raise ValueError(f'Xero {e.code}: {body}')
 
     tok['expires_at'] = time.time() + tok.get('expires_in', 1800)
 
