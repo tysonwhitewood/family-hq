@@ -521,16 +521,9 @@ body {
       <div style="padding:40px;text-align:center;color:#6B7280">
         <div style="font-size:40px;margin-bottom:16px">💰</div>
         <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:8px">Xero — Not Connected</div>
-        <p style="font-size:13px;max-width:400px;margin:0 auto 20px">Connect Xero to see invoices sent, payments received, outstanding amounts, and get answers like "Did my invoice get paid?" in the Family Chat.</p>
-        <div style="background:#F9FAFB;border-radius:10px;padding:16px;text-align:left;max-width:400px;margin:0 auto 20px;font-size:12px;color:#374151">
-          <strong>Setup steps:</strong><br>
-          1. Go to developer.xero.com → My Apps → New App<br>
-          2. Set redirect URI: your-app-url/xero/callback<br>
-          3. Add Client ID + Secret to Coolify env vars:<br>
-          &nbsp;&nbsp;<code>XERO_CLIENT_ID</code> and <code>XERO_CLIENT_SECRET</code><br>
-          4. Restart and connect below
-        </div>
-        <button onclick="showPage('settings',null)" style="background:#1B4332;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:600;cursor:pointer">Connect in Settings →</button>
+        <p style="font-size:13px;max-width:400px;margin:0 auto 20px">Connect Xero to see bank accounts, transactions, and cashflow. Uses your Custom Connection — no login redirect needed.</p>
+        <button id="xero-connect-btn" onclick="connectXero()" style="background:#1B4332;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:600;cursor:pointer">Connect Xero →</button>
+        <div id="xero-connect-status" style="margin-top:12px;font-size:13px"></div>
       </div>
     </div>
   </div>
@@ -989,14 +982,16 @@ async function loadSettings() {
   const integrations = [
     {icon:'🤖', name:'Claude AI', key:'anthropic', desc:'Powers the Family Chat', connectUrl: null},
     {icon:'📅', name:'Google Calendar', key:'google_calendar', desc:'See your week, upcoming events', connectUrl: '/google/auth'},
-    {icon:'💰', name:'Xero', key:'xero', desc:'Invoices, payments, cashflow', connectUrl: '/xero/auth'},
+    {icon:'💰', name:'Xero', key:'xero', desc:'Invoices, payments, cashflow', connectUrl: 'xero-custom'},
     {icon:'📧', name:'Outlook Calendar', key:'outlook', desc:'Work calendar (already configured)', connectUrl: null},
   ];
   document.getElementById('integrations-list').innerHTML = integrations.map(i => {
     const connected = s[i.key];
     const btnHtml = connected
       ? `<button class="int-btn connected">✓ Connected</button>`
-      : (i.connectUrl ? `<a href="${i.connectUrl}"><button class="int-btn connect">Connect</button></a>` : `<button class="int-btn" style="background:#F3F4F6;color:#9CA3AF" disabled>Setup required</button>`);
+      : (i.connectUrl === 'xero-custom'
+          ? `<button class="int-btn connect" onclick="connectXero()">Connect</button>`
+          : (i.connectUrl ? `<a href="${i.connectUrl}"><button class="int-btn connect">Connect</button></a>` : `<button class="int-btn" style="background:#F3F4F6;color:#9CA3AF" disabled>Setup required</button>`));
     return `<div class="integration-row">
       <div class="int-icon">${i.icon}</div>
       <div><div class="int-name">${i.name}</div><div class="int-status">${i.desc}</div></div>
@@ -1007,6 +1002,33 @@ async function loadSettings() {
 
 function escHtml(s) {
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── XERO ──────────────────────────────────────────────────────────────────────
+
+async function connectXero() {
+  const btn = document.getElementById('xero-connect-btn');
+  const status = document.getElementById('xero-connect-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+  if (status) status.innerHTML = '';
+  try {
+    const r = await fetch('/api/xero/connect', {
+      method: 'POST',
+      headers: { 'Authorization': 'Basic ' + btoa('family:Whitewood2026!') }
+    });
+    const d = await r.json();
+    if (d.ok) {
+      if (status) status.innerHTML = `<span style="color:#065F46">✓ Connected to ${d.org || 'Xero'}</span>`;
+      if (btn) { btn.textContent = '✓ Connected'; btn.style.background='#D1FAE5'; btn.style.color='#065F46'; }
+      setTimeout(() => loadSettings(), 1500);
+    } else {
+      if (status) status.innerHTML = `<span style="color:#DC2626">Error: ${d.error}</span>`;
+      if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+    }
+  } catch(e) {
+    if (status) status.innerHTML = `<span style="color:#DC2626">Connection failed</span>`;
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+  }
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
