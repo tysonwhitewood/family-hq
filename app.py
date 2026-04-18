@@ -532,7 +532,9 @@ def api_integrations():
     return jsonify({
         'google_calendar': (token_dir / 'google_token.json').exists(),
         'xero': (token_dir / 'xero_token.json').exists(),
-        'anthropic': llm_available(),
+        'anthropic': bool(ANTHROPIC_API_KEY),
+        'openrouter': bool(OPENROUTER_API_KEY),
+        'ai_ready': llm_available(),
         'outlook': True,
     })
 
@@ -540,7 +542,7 @@ def api_integrations():
 def api_briefing():
     """Generate a morning briefing using Claude or OpenRouter."""
     if not llm_available():
-        return jsonify({'error': 'ANTHROPIC_API_KEY not configured'}), 503
+        return jsonify({'error': 'AI not configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in Coolify'}), 503
     today = date.today()
     birthdays = load_birthdays(7)
     prop = get_property_snapshot()
@@ -661,7 +663,7 @@ def send_discord_webhook(message: str, username: str = 'Family HQ'):
 def discord_chat():
     """Handle a message from Discord — reply via webhook."""
     if not ANTHROPIC_API_KEY:
-        return jsonify({'error': 'ANTHROPIC_API_KEY not configured'}), 503
+        return jsonify({'error': 'AI not configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in Coolify'}), 503
     data = request.get_json(force=True)
     user_msg = (data.get('message') or '').strip()
     author = data.get('author', 'Family')
@@ -710,7 +712,7 @@ def discord_webhook_test():
 
 TOKEN_DIR = DATA_DIR / 'tokens'
 
-XERO_SCOPES = 'openid profile email offline_access accounting.transactions.read accounting.accounts.read accounting.settings.read'
+XERO_SCOPES = 'openid profile email offline_access'
 XERO_REDIRECT_URI = 'https://family.edencommercial.au/api/xero/callback'
 XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize'
 XERO_TOKEN_URL = 'https://identity.xero.com/connect/token'

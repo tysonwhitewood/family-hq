@@ -1149,8 +1149,11 @@ document.getElementById('hs-status').textContent = '✅ Online';
 
 async function loadSettings() {
   const s = await authFetch('/api/integrations/status').then(r=>r.json()).catch(()=>({}));
+  const aiStatus = s.ai_ready ? 'connected' : 'not-connected';
+  const aiLabel = s.anthropic ? 'Claude AI (Anthropic)' : s.openrouter ? 'AI via OpenRouter' : 'AI — Not configured';
+  const aiDesc = s.ai_ready ? 'Powers the Family Chat ✓' : 'Add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in Coolify';
   const integrations = [
-    {icon:'🤖', name:'Claude AI', key:'anthropic', desc:'Powers the Family Chat', connectUrl: null},
+    {icon:'🤖', name: aiLabel, key:'ai_ready', desc: aiDesc, connectUrl: null},
     {icon:'📅', name:'Google Calendar', key:'google_calendar', desc:'See your week, upcoming events', connectUrl: '/google/auth'},
     {icon:'💰', name:'Xero', key:'xero', desc:'Invoices, payments, cashflow', connectUrl: '/api/xero/auth'},
     {icon:'📧', name:'Outlook Calendar', key:'outlook', desc:'Work calendar (already configured)', connectUrl: null},
