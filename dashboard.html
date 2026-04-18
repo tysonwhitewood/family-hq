@@ -865,10 +865,11 @@ async function loadHome() {
 async function loadHomeBriefing() {
   document.getElementById('briefing-content').textContent = 'Generating your morning briefing…';
   try {
-    const data = await authFetch('/api/briefing').then(r => r.json());
+    const r = await authFetch('/api/briefing');
+    const data = await r.json();
     document.getElementById('briefing-content').textContent = data.briefing || data.error || 'Could not load briefing';
   } catch(e) {
-    document.getElementById('briefing-content').textContent = 'Could not load briefing — check ANTHROPIC_API_KEY is configured.';
+    document.getElementById('briefing-content').textContent = 'Could not load briefing — check OPENROUTER_API_KEY is set in Coolify.';
   }
 }
 
