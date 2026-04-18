@@ -127,7 +127,51 @@ def init_db():
                 note TEXT,
                 recorded_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS wishlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                category TEXT DEFAULT 'general',
+                estimated_cost INTEGER DEFAULT 0,
+                cost_range TEXT,
+                season TEXT DEFAULT 'anytime',
+                timing_note TEXT,
+                priority INTEGER DEFAULT 2,
+                status TEXT DEFAULT 'pending',
+                ai_note TEXT,
+                created_at TEXT
+            );
         ''')
+        # Seed wishlist if empty
+        wl_count = db.execute('SELECT COUNT(*) FROM wishlist').fetchone()[0]
+        if wl_count == 0:
+            now = datetime.now().isoformat()[:19]
+            wishlist_seed = [
+                ('Get James: clean up side wall, fill/extend road base', 'landscaping', 1200, '$800–$1,500', 'now', 'Can do any dry day — get it sorted before spring rush', 1),
+                ('Paint retaining wall', 'exterior', 600, '$400–$800', 'spring', 'Best in spring (Sep 2026) for adhesion — avoid extreme heat', 2),
+                ('Gardenia garden bed', 'garden', 450, '$300–$600', 'spring', 'Plant in Sep–Oct 2026 for best establishment before summer', 2),
+                ('Put in plants (general)', 'garden', 750, '$500–$1,000', 'spring', 'Spring planting window opens Sep 2026 — order now from nursery', 2),
+                ('Curtains', 'interior', 1400, '$800–$2,000', 'anytime', 'No seasonal constraint — check for EOFY sales June/July 2026', 3),
+                ('Fix up gas box', 'exterior', 300, '$200–$400', 'anytime', 'Licensed plumber required — book now, no seasonal constraint', 2),
+                ('Lay soil above retaining wall', 'landscaping', 600, '$400–$800', 'now', 'Do in autumn before winter rains compact the base', 1),
+                ('Lay top dress of soil (lawn)', 'garden', 400, '$300–$600', 'spring', 'Apply top dress in Sep 2026 ahead of spring growth burst', 2),
+                ('Built-in bookcase', 'interior', 2200, '$1,500–$3,000', 'anytime', 'Get quotes now — no seasonal constraint for interior work', 3),
+                ('Garden beds (build/establish)', 'garden', 900, '$600–$1,200', 'now', 'Build beds NOW so soil settles and is ready for spring planting', 1),
+                ('Extend walkway', 'exterior', 2000, '$1,500–$3,000', 'anytime', 'Dry weather ideal — current autumn window is perfect', 2),
+                ('Install side retaining wall', 'landscaping', 4500, '$3,000–$6,000', 'now', 'Get quotes ASAP — tradies book up 3 months ahead before spring', 1),
+                ('Install bed for water tank', 'landscaping', 600, '$400–$800', 'now', 'Must be done before tank delivery and irrigation install', 1),
+                ('Kids wall art', 'interior', 350, '$200–$500', 'anytime', 'No seasonal constraint', 3),
+                ('Foldaway bed (guest)', 'interior', 1200, '$800–$1,600', 'anytime', 'Check EOFY and Boxing Day sales for best price', 3),
+                ('Bedroom deck', 'exterior', 8000, '$5,000–$12,000', 'spring', 'Build in Sep–Oct 2026 so it is ready for summer — book builder now', 2),
+                ('Remove grass from out front', 'garden', 400, '$300–$600', 'now', 'Autumn is ideal — ground is soft and grass is slow-growing', 2),
+                ('Seed and grow grass (new areas)', 'garden', 300, '$200–$400', 'spring', 'Sow lawn seed in Sep 2026 for best germination rate', 1),
+                ('Aerate lawn (spring prep)', 'garden', 200, '$150–$300', 'now', 'Aerate in late autumn/early winter (now) so roots strengthen before spring', 1),
+                ('Install irrigation system', 'garden', 2000, '$1,500–$3,000', 'now', 'Install NOW — critical path before spring planting; pipes in ground before spring', 1),
+            ]
+            for title, cat, cost, cost_range, season, timing_note, priority in wishlist_seed:
+                db.execute(
+                    'INSERT INTO wishlist (title,category,estimated_cost,cost_range,season,timing_note,priority,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+                    (title, cat, cost, cost_range, season, timing_note, priority, 'pending', now)
+                )
         # Seed default goals if empty
         count = db.execute('SELECT COUNT(*) FROM goals').fetchone()[0]
         if count == 0:
@@ -520,6 +564,76 @@ Keep it under 200 words, warm and personal."""
 
     briefing = llm_chat([{'role': 'user', 'content': prompt}], max_tokens=512)
     return jsonify({'briefing': briefing, 'date': today.isoformat()})
+
+
+# ── Wishlist ──────────────────────────────────────────────────────────────────
+
+@app.route('/api/wishlist', methods=['GET', 'POST'])
+def api_wishlist():
+    with get_db() as db:
+        if request.method == 'POST':
+            d = request.get_json(force=True)
+            now = datetime.now().isoformat()[:19]
+            cur = db.execute(
+                'INSERT INTO wishlist (title,category,estimated_cost,cost_range,season,timing_note,priority,status,ai_note,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                (d.get('title',''), d.get('category','general'), int(d.get('estimated_cost',0) or 0),
+                 d.get('cost_range',''), d.get('season','anytime'), d.get('timing_note',''),
+                 int(d.get('priority',2)), d.get('status','pending'), d.get('ai_note',''), now)
+            )
+            row = db.execute('SELECT * FROM wishlist WHERE id=?', (cur.lastrowid,)).fetchone()
+            return jsonify(dict(row)), 201
+        rows = [dict(r) for r in db.execute(
+            'SELECT * FROM wishlist ORDER BY priority ASC, id ASC').fetchall()]
+        return jsonify(rows)
+
+@app.route('/api/wishlist/<int:wid>', methods=['PUT', 'DELETE'])
+def api_wishlist_item(wid):
+    with get_db() as db:
+        if request.method == 'DELETE':
+            db.execute('DELETE FROM wishlist WHERE id=?', (wid,))
+            return jsonify({'ok': True})
+        d = request.get_json(force=True)
+        fields, params = [], []
+        for col in ('title','category','estimated_cost','cost_range','season','timing_note','priority','status','ai_note'):
+            if col in d:
+                val = int(d[col]) if col in ('estimated_cost','priority') else d[col]
+                fields.append(f'{col}=?'); params.append(val)
+        if fields:
+            params.append(wid)
+            db.execute(f'UPDATE wishlist SET {",".join(fields)} WHERE id=?', params)
+        row = db.execute('SELECT * FROM wishlist WHERE id=?', (wid,)).fetchone()
+        return jsonify(dict(row))
+
+@app.route('/api/wishlist/ai-estimate', methods=['POST'])
+def api_wishlist_ai_estimate():
+    if not llm_available():
+        return jsonify({'error': 'No AI configured'}), 503
+    d = request.get_json(force=True)
+    item_title = (d.get('title') or '').strip()
+    if not item_title:
+        return jsonify({'error': 'title required'}), 400
+    prompt = f"""You are helping an Australian homeowner (southeast Queensland, subtropical climate) estimate a home improvement task.
+Task: "{item_title}"
+Today is April 2026. Spring starts September 2026.
+
+Respond in JSON only with these fields:
+- estimated_cost: integer (mid-range AUD estimate for 2026)
+- cost_range: string like "$X,XXX–$X,XXX"
+- season: one of "now", "spring", "winter", "anytime"
+- timing_note: one sentence of practical timing advice
+- ai_note: one sentence on what to watch out for or how to save money
+
+JSON only, no other text."""
+    try:
+        result = llm_chat([{'role': 'user', 'content': prompt}], max_tokens=256)
+        # Extract JSON from response
+        json_match = re.search(r'\{[^}]+\}', result, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            return jsonify(data)
+        return jsonify({'error': 'Could not parse AI response', 'raw': result}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 # ── Discord Integration ───────────────────────────────────────────────────────

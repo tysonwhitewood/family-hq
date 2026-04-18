@@ -251,6 +251,61 @@ body {
 .green-text { color: #059669; font-weight: 600; }
 .red-text { color: #DC2626; font-weight: 600; }
 
+/* WISHLIST */
+.wish-item {
+  padding: 14px 20px; border-bottom: 1px solid #F3F4F6;
+  display: flex; align-items: flex-start; gap: 14px;
+}
+.wish-item:last-child { border-bottom: none; }
+.wish-item.done { opacity: 0.5; }
+.wish-check {
+  width: 20px; height: 20px; border-radius: 50%; border: 2px solid #D1D5DB;
+  flex-shrink: 0; cursor: pointer; margin-top: 2px; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; font-size: 11px;
+}
+.wish-check.checked { background: #1B4332; border-color: #1B4332; color: #fff; }
+.wish-body { flex: 1; min-width: 0; }
+.wish-title { font-size: 13px; font-weight: 600; color: #111; margin-bottom: 4px; }
+.wish-timing { font-size: 11px; color: #6B7280; margin-bottom: 6px; line-height: 1.5; }
+.wish-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.season-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 10px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.season-now { background: #FEF3C7; color: #92400E; }
+.season-spring { background: #D1FAE5; color: #065F46; }
+.season-winter { background: #DBEAFE; color: #1E40AF; }
+.season-anytime { background: #F3F4F6; color: #6B7280; }
+.cat-badge {
+  font-size: 10px; padding: 2px 8px; border-radius: 10px;
+  background: #EDE9FE; color: #5B21B6; font-weight: 600;
+}
+.wish-cost { font-size: 15px; font-weight: 700; color: #1B4332; flex-shrink: 0; text-align: right; }
+.wish-cost-range { font-size: 10px; color: #9CA3AF; }
+.wish-actions { display: flex; gap: 4px; margin-top: 6px; }
+.wish-act-btn {
+  font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+  border: 1px solid #E5E7EB; background: #fff; color: #6B7280;
+}
+.wish-act-btn:hover { border-color: #1B4332; color: #1B4332; }
+.wish-filter-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+.cashflow-bar {
+  background: #1B4332; color: #fff; border-radius: 12px; padding: 16px 20px;
+  margin-bottom: 20px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+}
+.cf-item { text-align: center; }
+.cf-val { font-size: 22px; font-weight: 700; color: #D4A017; }
+.cf-lbl { font-size: 10px; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+.seasonal-alert {
+  background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 10px;
+  padding: 12px 16px; margin-bottom: 16px; font-size: 12px; color: #92400E;
+  display: flex; gap: 10px; align-items: flex-start;
+}
+@media (max-width: 768px) {
+  .cashflow-bar { gap: 12px; }
+  .cf-val { font-size: 18px; }
+}
+
 /* MOBILE BOTTOM NAV */
 .mobile-nav {
   display: none;
@@ -329,6 +384,9 @@ body {
     </div>
     <div class="nav-item" onclick="showPage('homeschool',this)">
       <span class="nav-icon">🏫</span> Homeschool
+    </div>
+    <div class="nav-item" onclick="showPage('wishlist',this);loadWishlist()">
+      <span class="nav-icon">🛒</span> Wishlist
     </div>
   </div>
 
@@ -554,7 +612,108 @@ body {
   </div>
 </div>
 
+<!-- WISHLIST -->
+<div class="page" id="page-wishlist">
+  <div class="topbar">
+    <div class="topbar-title">🛒 Home Wishlist</div>
+    <button onclick="showAddWishItem()" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">+ Add Item</button>
+  </div>
+  <div class="page-body">
+
+    <!-- Cash flow summary bar -->
+    <div class="cashflow-bar" id="wish-cashflow-bar">
+      <div class="cf-item"><div class="cf-val" id="cf-total">—</div><div class="cf-lbl">Total Wishlist</div></div>
+      <div class="cf-item"><div class="cf-val" id="cf-now">—</div><div class="cf-lbl">Do Now</div></div>
+      <div class="cf-item"><div class="cf-val" id="cf-spring">—</div><div class="cf-lbl">Spring 2026</div></div>
+      <div class="cf-item"><div class="cf-val" id="cf-done">—</div><div class="cf-lbl">Completed</div></div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:11px;color:rgba(255,255,255,0.6)">Save per month:</span>
+        <input type="number" id="cf-monthly" placeholder="e.g. 500" oninput="updateCashflow()"
+          style="width:90px;padding:6px 10px;border-radius:6px;border:none;font-size:13px;font-weight:700;background:rgba(255,255,255,0.15);color:#fff;outline:none" />
+        <span style="font-size:12px;color:#D4A017;font-weight:600" id="cf-runway">—</span>
+      </div>
+    </div>
+
+    <!-- Seasonal alert -->
+    <div class="seasonal-alert">
+      <span style="font-size:18px;flex-shrink:0">🌱</span>
+      <div><strong>Spring is ~5 months away (Sep 2026).</strong> Irrigation, garden beds, and soil preparation need to happen NOW to be ready. Book tradies early — they fill up before spring.</div>
+    </div>
+
+    <!-- Filter tabs -->
+    <div class="wish-filter-tabs">
+      <button class="filter-btn active" onclick="setWishFilter('all',this)">All</button>
+      <button class="filter-btn" onclick="setWishFilter('now',this)">🔥 Do Now</button>
+      <button class="filter-btn" onclick="setWishFilter('spring',this)">🌱 Spring</button>
+      <button class="filter-btn" onclick="setWishFilter('anytime',this)">⏳ Anytime</button>
+      <button class="filter-btn" onclick="setWishFilter('done',this)">✅ Done</button>
+    </div>
+
+    <!-- Wishlist -->
+    <div class="card" id="wishlist-container">
+      <div class="empty-state">Loading…</div>
+    </div>
+
+  </div>
+</div>
+
 </div><!-- /main -->
+
+<!-- ADD WISHLIST ITEM MODAL -->
+<div id="wish-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:16px;width:480px;max-width:95vw;padding:28px;max-height:90vh;overflow-y:auto">
+    <div style="font-size:16px;font-weight:700;margin-bottom:20px">Add Wishlist Item</div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">ITEM</div>
+      <input id="wish-title" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="e.g. New front garden beds">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">CATEGORY</div>
+        <select id="wish-cat" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+          <option value="garden">Garden</option>
+          <option value="landscaping">Landscaping</option>
+          <option value="exterior">Exterior</option>
+          <option value="interior">Interior</option>
+          <option value="general">General</option>
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">SEASON</div>
+        <select id="wish-season" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+          <option value="now">Do Now</option>
+          <option value="spring">Spring (Sep 2026)</option>
+          <option value="winter">Winter</option>
+          <option value="anytime" selected>Anytime</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">EST. COST ($)</div>
+        <input type="number" id="wish-cost" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="e.g. 1500">
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">COST RANGE</div>
+        <input id="wish-range" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="e.g. $1,000–$2,000">
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">TIMING NOTE</div>
+      <input id="wish-timing" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="e.g. Book before spring rush">
+    </div>
+    <div style="margin-bottom:8px">
+      <button onclick="getAiEstimate()" style="background:#F0F4F0;border:1.5px solid #1B4332;color:#1B4332;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;width:100%" id="ai-est-btn">
+        ✨ Get AI Cost Estimate & Timing Advice
+      </button>
+      <div id="ai-est-result" style="font-size:12px;color:#6B7280;margin-top:6px;line-height:1.5"></div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button onclick="closeWishModal()" style="background:#F3F4F6;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Cancel</button>
+      <button onclick="saveWishItem()" style="background:#1B4332;color:#fff;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Add to Wishlist</button>
+    </div>
+  </div>
+</div>
 
 <!-- MOBILE BOTTOM NAV -->
 <nav class="mobile-nav">
@@ -570,6 +729,9 @@ body {
     </div>
     <div class="mnav-item" onclick="showPage('goals',this);loadGoals()" data-page="goals">
       <span class="micon">🎯</span><span>Goals</span>
+    </div>
+    <div class="mnav-item" onclick="showPage('wishlist',this);loadWishlist()" data-page="wishlist">
+      <span class="micon">🛒</span><span>Wishlist</span>
     </div>
     <div class="mnav-item" onclick="showPage('finance',this)" data-page="finance">
       <span class="micon">💰</span><span>Finance</span>
@@ -1035,6 +1197,194 @@ async function connectXero() {
     if (status) status.innerHTML = `<span style="color:#DC2626">Connection failed</span>`;
     if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
   }
+}
+
+// ── WISHLIST ─────────────────────────────────────────────────────────────────
+
+let _wishFilter = 'all';
+let _wishItems = [];
+
+function fmtCost(n) { return n ? '$' + Number(n).toLocaleString('en-AU') : '—'; }
+
+const SEASON_LABELS = {
+  now: { cls: 'season-now', label: '🔥 Do Now' },
+  spring: { cls: 'season-spring', label: '🌱 Spring' },
+  winter: { cls: 'season-winter', label: '❄️ Winter' },
+  anytime: { cls: 'season-anytime', label: '⏳ Anytime' },
+};
+const CAT_LABELS = {
+  garden: 'Garden', landscaping: 'Landscaping', exterior: 'Exterior',
+  interior: 'Interior', general: 'General',
+};
+
+function setWishFilter(f, btn) {
+  _wishFilter = f;
+  document.querySelectorAll('#page-wishlist .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderWishlist();
+}
+
+async function loadWishlist() {
+  _wishItems = await authFetch('/api/wishlist').then(r => r.json()).catch(() => []);
+  renderWishlist();
+  updateCashflowBar();
+}
+
+function renderWishlist() {
+  const el = document.getElementById('wishlist-container');
+  let items = _wishItems;
+  if (_wishFilter === 'done') {
+    items = items.filter(i => i.status === 'done');
+  } else if (_wishFilter !== 'all') {
+    items = items.filter(i => i.status !== 'done' && i.season === _wishFilter);
+  } else {
+    items = items.filter(i => i.status !== 'done');
+  }
+  if (!items.length) {
+    el.innerHTML = '<div class="empty-state">No items in this view</div>';
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    const done = item.status === 'done';
+    const season = SEASON_LABELS[item.season] || SEASON_LABELS.anytime;
+    return `<div class="wish-item${done ? ' done' : ''}" id="wish-item-${item.id}">
+      <div class="wish-check${done ? ' checked' : ''}" onclick="toggleWishDone(${item.id},'${item.status}')">${done ? '✓' : ''}</div>
+      <div class="wish-body">
+        <div class="wish-title">${escHtml(item.title)}</div>
+        ${item.timing_note ? `<div class="wish-timing">${escHtml(item.timing_note)}</div>` : ''}
+        ${item.ai_note ? `<div class="wish-timing" style="color:#059669">💡 ${escHtml(item.ai_note)}</div>` : ''}
+        <div class="wish-badges">
+          <span class="season-badge ${season.cls}">${season.label}</span>
+          <span class="cat-badge">${CAT_LABELS[item.category] || item.category}</span>
+        </div>
+        <div class="wish-actions">
+          <button class="wish-act-btn" onclick="editWishCost(${item.id},${item.estimated_cost})">✏️ Edit cost</button>
+          <button class="wish-act-btn" onclick="deleteWishItem(${item.id})" style="color:#EF4444">✕ Remove</button>
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div class="wish-cost">${fmtCost(item.estimated_cost)}</div>
+        <div class="wish-cost-range">${escHtml(item.cost_range || '')}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function updateCashflowBar() {
+  const pending = _wishItems.filter(i => i.status !== 'done');
+  const done = _wishItems.filter(i => i.status === 'done');
+  const nowItems = pending.filter(i => i.season === 'now');
+  const springItems = pending.filter(i => i.season === 'spring');
+  const totalCost = pending.reduce((s, i) => s + (i.estimated_cost || 0), 0);
+  const nowCost = nowItems.reduce((s, i) => s + (i.estimated_cost || 0), 0);
+  const springCost = springItems.reduce((s, i) => s + (i.estimated_cost || 0), 0);
+  document.getElementById('cf-total').textContent = fmtCost(totalCost);
+  document.getElementById('cf-now').textContent = fmtCost(nowCost);
+  document.getElementById('cf-spring').textContent = fmtCost(springCost);
+  document.getElementById('cf-done').textContent = done.length + ' items';
+  updateCashflow();
+}
+
+function updateCashflow() {
+  const monthly = parseInt(document.getElementById('cf-monthly').value) || 0;
+  if (!monthly) { document.getElementById('cf-runway').textContent = ''; return; }
+  const pending = _wishItems.filter(i => i.status !== 'done');
+  const total = pending.reduce((s, i) => s + (i.estimated_cost || 0), 0);
+  const months = Math.ceil(total / monthly);
+  const runway = document.getElementById('cf-runway');
+  if (months <= 12) {
+    runway.textContent = `Funded in ~${months} months`;
+  } else {
+    runway.textContent = `~${(months/12).toFixed(1)} years to fund all`;
+  }
+}
+
+async function toggleWishDone(id, currentStatus) {
+  const newStatus = currentStatus === 'done' ? 'pending' : 'done';
+  await authFetch('/api/wishlist/' + id, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: newStatus})
+  });
+  const item = _wishItems.find(i => i.id === id);
+  if (item) item.status = newStatus;
+  renderWishlist();
+  updateCashflowBar();
+}
+
+async function editWishCost(id, current) {
+  const val = prompt('Update estimated cost ($):', current);
+  if (val === null) return;
+  const cost = parseInt(val) || 0;
+  await authFetch('/api/wishlist/' + id, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({estimated_cost: cost})
+  });
+  await loadWishlist();
+}
+
+async function deleteWishItem(id) {
+  if (!confirm('Remove this item from the wishlist?')) return;
+  await authFetch('/api/wishlist/' + id, {method: 'DELETE'});
+  _wishItems = _wishItems.filter(i => i.id !== id);
+  renderWishlist();
+  updateCashflowBar();
+}
+
+function showAddWishItem() {
+  document.getElementById('wish-modal').style.display = 'flex';
+  document.getElementById('wish-title').value = '';
+  document.getElementById('wish-cost').value = '';
+  document.getElementById('wish-range').value = '';
+  document.getElementById('wish-timing').value = '';
+  document.getElementById('ai-est-result').textContent = '';
+  document.getElementById('ai-est-btn').textContent = '✨ Get AI Cost Estimate & Timing Advice';
+  document.getElementById('ai-est-btn').disabled = false;
+}
+function closeWishModal() { document.getElementById('wish-modal').style.display = 'none'; }
+
+async function getAiEstimate() {
+  const title = document.getElementById('wish-title').value.trim();
+  if (!title) { alert('Enter an item name first'); return; }
+  const btn = document.getElementById('ai-est-btn');
+  const result = document.getElementById('ai-est-result');
+  btn.textContent = '⏳ Getting estimate…';
+  btn.disabled = true;
+  result.textContent = '';
+  try {
+    const data = await authFetch('/api/wishlist/ai-estimate', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({title})
+    }).then(r => r.json());
+    if (data.error) { result.textContent = 'Error: ' + data.error; return; }
+    if (data.estimated_cost) document.getElementById('wish-cost').value = data.estimated_cost;
+    if (data.cost_range) document.getElementById('wish-range').value = data.cost_range;
+    if (data.season) document.getElementById('wish-season').value = data.season;
+    if (data.timing_note) document.getElementById('wish-timing').value = data.timing_note;
+    result.innerHTML = `<span style="color:#059669">✓ ${data.cost_range || ''}</span>${data.ai_note ? ' — ' + escHtml(data.ai_note) : ''}`;
+  } catch(e) {
+    result.textContent = 'Could not get estimate';
+  } finally {
+    btn.textContent = '✨ Get AI Cost Estimate & Timing Advice';
+    btn.disabled = false;
+  }
+}
+
+async function saveWishItem() {
+  const title = document.getElementById('wish-title').value.trim();
+  if (!title) { alert('Enter an item name'); return; }
+  await authFetch('/api/wishlist', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      title,
+      category: document.getElementById('wish-cat').value,
+      season: document.getElementById('wish-season').value,
+      estimated_cost: parseInt(document.getElementById('wish-cost').value) || 0,
+      cost_range: document.getElementById('wish-range').value,
+      timing_note: document.getElementById('wish-timing').value,
+    })
+  });
+  closeWishModal();
+  loadWishlist();
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
