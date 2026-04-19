@@ -337,7 +337,8 @@ def load_birthdays(lookahead_days=60):
         return []
     wb = openpyxl.load_workbook(BIRTHDAYS_PATH, read_only=True, data_only=True)
     ws = wb.active
-    today = date.today()
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo('Australia/Brisbane')).date()
     results = []
     for row in ws.iter_rows(min_row=2, values_only=True):
         birth_date = row[0]
@@ -669,7 +670,8 @@ def api_briefing():
     """Generate a morning briefing using Claude or OpenRouter."""
     if not llm_available():
         return jsonify({'error': 'AI not configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in Coolify'}), 503
-    today = date.today()
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo('Australia/Brisbane')).date()
     birthdays = load_birthdays(7)
     prop = get_property_snapshot()
     with get_db() as db:
@@ -690,7 +692,10 @@ Goals progress: {json.dumps([{'title': g['title'], 'progress': g['progress']} fo
 
 Keep it under 200 words, warm and personal."""
 
-    briefing = llm_chat([{'role': 'user', 'content': prompt}], max_tokens=512)
+    try:
+        briefing = llm_chat([{'role': 'user', 'content': prompt}], max_tokens=512)
+    except Exception as e:
+        return jsonify({'error': f'AI request failed: {str(e)[:300]}'}), 500
     return jsonify({'briefing': briefing, 'date': today.isoformat()})
 
 
