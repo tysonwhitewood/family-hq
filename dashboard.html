@@ -412,6 +412,7 @@ body {
 
   <div class="sidebar-footer">
     Based on James Hughes<br>"Family Wealth" framework
+    <br><a href="/logout" style="color:rgba(255,255,255,0.4);font-size:11px;text-decoration:none;margin-top:8px;display:inline-block">Sign out</a>
   </div>
 </div>
 
@@ -801,10 +802,8 @@ body {
 </div>
 
 <script>
-// Auth helper — ensures all API calls include credentials (required on iOS/Safari)
-const _AUTH_HDR = { 'Authorization': 'Basic ' + btoa('family:Whitewood2026!') };
 function authFetch(url, opts = {}) {
-  return fetch(url, { ...opts, headers: { ..._AUTH_HDR, ...(opts.headers || {}) } });
+  return fetch(url, { ...opts, credentials: 'same-origin', headers: { ...(opts.headers || {}) } });
 }
 
 const CAPITALS = {
@@ -1186,7 +1185,7 @@ async function connectXero() {
   try {
     const r = await fetch('/api/xero/connect', {
       method: 'POST',
-      headers: { 'Authorization': 'Basic ' + btoa('family:Whitewood2026!') }
+      credentials: 'same-origin',
     });
     const d = await r.json();
     if (d.ok) {

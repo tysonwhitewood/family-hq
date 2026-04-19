@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Family HQ — Whitewood Family Command Centre"""
-import base64, json, os, sqlite3, re, time, urllib.request, urllib.parse
+import json, os, sqlite3, re, time, urllib.request, urllib.parse
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from flask import Flask, request, jsonify, send_file, abort, g, Response
+from flask import Flask, request, jsonify, send_file, abort, g, Response, redirect, url_for, render_template_string
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import openpyxl
 
 app = Flask(__name__)
@@ -16,7 +19,7 @@ PORT = int(os.environ.get('PORT', 3000))
 
 USERNAME = os.environ.get('FAMILY_HQ_USER', 'family')
 PASSWORD = os.environ.get('FAMILY_HQ_PASS', 'Whitewood2026!')
-_EXPECTED = base64.b64encode(f'{USERNAME}:{PASSWORD}'.encode()).decode()
+app.secret_key = os.environ.get('SECRET_KEY', f'family-hq-{USERNAME}-dev-key')
 
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
@@ -28,16 +31,117 @@ XERO_CLIENT_SECRET = os.environ.get('XERO_CLIENT_SECRET', '')
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
-def check_auth():
-    auth = request.headers.get('Authorization', '')
-    return auth.startswith('Basic ') and auth[6:] == _EXPECTED
+limiter = Limiter(get_remote_address, app=app, default_limits=[])
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+
+class _User(UserMixin):
+    def __init__(self, id):
+        self.id = id
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    if user_id == USERNAME:
+        return _User(user_id)
+    return None
+
+
+@login_manager.unauthorized_handler
+def _unauthorized():
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Authentication required'}), 401
+    return redirect(url_for('login', next=request.path))
+
+
+_LOGIN_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Family HQ — Sign In</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; display: flex; align-items: center; justify-content: center;
+           background: #0f2419; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .card { background: #fff; border-radius: 16px; padding: 40px 36px; width: 100%; max-width: 380px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.35); }
+    .logo { text-align: center; margin-bottom: 28px; }
+    .logo-icon { font-size: 40px; }
+    .logo h1 { color: #1B4332; font-size: 22px; font-weight: 700; margin-top: 8px; }
+    .logo p { color: #6b7280; font-size: 13px; margin-top: 4px; }
+    label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 5px; }
+    input[type=text], input[type=password] {
+      width: 100%; padding: 11px 14px; border: 1.5px solid #d1d5db; border-radius: 8px;
+      font-size: 15px; outline: none; transition: border-color .2s; margin-bottom: 18px; }
+    input:focus { border-color: #1B4332; }
+    .error { background: #FEF2F2; color: #DC2626; padding: 10px 14px; border-radius: 8px;
+             font-size: 13px; margin-bottom: 16px; border: 1px solid #FECACA; }
+    button { width: 100%; padding: 12px; background: #1B4332; color: #fff; border: none;
+             border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer;
+             transition: background .2s; }
+    button:hover { background: #145c2d; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <div class="logo-icon">🏡</div>
+      <h1>Family HQ</h1>
+      <p>Whitewood Family Command Centre</p>
+    </div>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username" autofocus required>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+
+@app.route('/login', methods=['GET', 'POST'])
+@limiter.limit('10 per minute')
+def login():
+    if current_user.is_authenticated:
+        return redirect('/')
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        if username == USERNAME and password == PASSWORD:
+            login_user(_User(username), remember=True)
+            next_url = request.args.get('next') or '/'
+            if not next_url.startswith('/'):
+                next_url = '/'
+            return redirect(next_url)
+        error = 'Invalid username or password'
+    return render_template_string(_LOGIN_TEMPLATE, error=error)
+
+
+@app.route('/logout')
+def logout():
+    logout_user()
+    return redirect('/login')
+
 
 @app.before_request
 def require_auth():
-    if request.path in ('/health',):
+    public = {'/health', '/login', '/logout'}
+    if request.path in public:
         return
-    if not check_auth():
-        return Response('Unauthorized', 401, {'WWW-Authenticate': 'Basic realm="Family HQ"'})
+    if request.path.startswith('/static/'):
+        return
+    if not current_user.is_authenticated:
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Authentication required'}), 401
+        return redirect(url_for('login', next=request.path))
 
 
 # ── LLM helper (Anthropic → OpenRouter fallback) ─────────────────────────────
@@ -662,7 +766,7 @@ def send_discord_webhook(message: str, username: str = 'Family HQ'):
 @app.route('/api/discord/chat', methods=['POST'])
 def discord_chat():
     """Handle a message from Discord — reply via webhook."""
-    if not ANTHROPIC_API_KEY:
+    if not llm_available():
         return jsonify({'error': 'AI not configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in Coolify'}), 503
     data = request.get_json(force=True)
     user_msg = (data.get('message') or '').strip()
@@ -680,15 +784,7 @@ def discord_chat():
     messages = [{'role': h['role'], 'content': h['content']} for h in history]
     messages.append({'role': 'user', 'content': f'[{author}]: {user_msg}'})
 
-    import anthropic
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    response = client.messages.create(
-        model='claude-haiku-4-5-20251001',
-        max_tokens=800,
-        system=build_family_context(),
-        messages=messages
-    )
-    reply = response.content[0].text
+    reply = llm_chat(messages, system=build_family_context(), max_tokens=800)
 
     now = datetime.now().isoformat()[:19]
     with get_db() as db:
