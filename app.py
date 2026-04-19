@@ -244,6 +244,28 @@ def init_db():
                 ai_note TEXT,
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS warranties (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product TEXT NOT NULL,
+                provider TEXT,
+                purchased_date TEXT,
+                expires_date TEXT,
+                coverage TEXT,
+                claim_info TEXT,
+                notes TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS insurances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                provider TEXT,
+                policy_number TEXT,
+                premium TEXT,
+                renewal_date TEXT,
+                coverage TEXT,
+                notes TEXT,
+                created_at TEXT
+            );
         ''')
         # Seed wishlist if empty
         wl_count = db.execute('SELECT COUNT(*) FROM wishlist').fetchone()[0]
@@ -740,6 +762,84 @@ JSON only, no other text."""
         return jsonify({'error': 'Could not parse AI response', 'raw': result}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ── Warranties ───────────────────────────────────────────────────────────────
+
+@app.route('/api/warranties', methods=['GET', 'POST'])
+@login_required
+def api_warranties():
+    with get_db() as db:
+        if request.method == 'POST':
+            d = request.get_json(force=True)
+            now = datetime.now().isoformat()[:19]
+            cur = db.execute(
+                'INSERT INTO warranties (product,provider,purchased_date,expires_date,coverage,claim_info,notes,created_at) VALUES (?,?,?,?,?,?,?,?)',
+                (d.get('product',''), d.get('provider',''), d.get('purchased_date',''),
+                 d.get('expires_date',''), d.get('coverage',''), d.get('claim_info',''),
+                 d.get('notes',''), now)
+            )
+            row = db.execute('SELECT * FROM warranties WHERE id=?', (cur.lastrowid,)).fetchone()
+            return jsonify(dict(row)), 201
+        rows = [dict(r) for r in db.execute('SELECT * FROM warranties ORDER BY expires_date ASC').fetchall()]
+        return jsonify(rows)
+
+@app.route('/api/warranties/<int:wid>', methods=['PUT', 'DELETE'])
+@login_required
+def api_warranty_item(wid):
+    with get_db() as db:
+        if request.method == 'DELETE':
+            db.execute('DELETE FROM warranties WHERE id=?', (wid,))
+            return jsonify({'ok': True})
+        d = request.get_json(force=True)
+        fields, params = [], []
+        for col in ('product','provider','purchased_date','expires_date','coverage','claim_info','notes'):
+            if col in d:
+                fields.append(f'{col}=?'); params.append(d[col])
+        if fields:
+            params.append(wid)
+            db.execute(f'UPDATE warranties SET {",".join(fields)} WHERE id=?', params)
+        row = db.execute('SELECT * FROM warranties WHERE id=?', (wid,)).fetchone()
+        return jsonify(dict(row))
+
+
+# ── Insurances ────────────────────────────────────────────────────────────────
+
+@app.route('/api/insurances', methods=['GET', 'POST'])
+@login_required
+def api_insurances():
+    with get_db() as db:
+        if request.method == 'POST':
+            d = request.get_json(force=True)
+            now = datetime.now().isoformat()[:19]
+            cur = db.execute(
+                'INSERT INTO insurances (type,provider,policy_number,premium,renewal_date,coverage,notes,created_at) VALUES (?,?,?,?,?,?,?,?)',
+                (d.get('type',''), d.get('provider',''), d.get('policy_number',''),
+                 d.get('premium',''), d.get('renewal_date',''), d.get('coverage',''),
+                 d.get('notes',''), now)
+            )
+            row = db.execute('SELECT * FROM insurances WHERE id=?', (cur.lastrowid,)).fetchone()
+            return jsonify(dict(row)), 201
+        rows = [dict(r) for r in db.execute('SELECT * FROM insurances ORDER BY type ASC').fetchall()]
+        return jsonify(rows)
+
+@app.route('/api/insurances/<int:iid>', methods=['PUT', 'DELETE'])
+@login_required
+def api_insurance_item(iid):
+    with get_db() as db:
+        if request.method == 'DELETE':
+            db.execute('DELETE FROM insurances WHERE id=?', (iid,))
+            return jsonify({'ok': True})
+        d = request.get_json(force=True)
+        fields, params = [], []
+        for col in ('type','provider','policy_number','premium','renewal_date','coverage','notes'):
+            if col in d:
+                fields.append(f'{col}=?'); params.append(d[col])
+        if fields:
+            params.append(iid)
+            db.execute(f'UPDATE insurances SET {",".join(fields)} WHERE id=?', params)
+        row = db.execute('SELECT * FROM insurances WHERE id=?', (iid,)).fetchone()
+        return jsonify(dict(row))
 
 
 # ── Discord Integration ───────────────────────────────────────────────────────
