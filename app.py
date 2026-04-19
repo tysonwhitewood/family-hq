@@ -266,6 +266,12 @@ def init_db():
                 notes TEXT,
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS briefing_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL UNIQUE,
+                briefing TEXT NOT NULL,
+                created_at TEXT
+            );
         ''')
         # Seed wishlist if empty
         wl_count = db.execute('SELECT COUNT(*) FROM wishlist').fetchone()[0]
@@ -667,11 +673,22 @@ def api_integrations():
 
 @app.route('/api/briefing')
 def api_briefing():
-    """Generate a morning briefing using Claude or OpenRouter."""
-    if not llm_available():
-        return jsonify({'error': 'AI not configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in Coolify'}), 503
+    """Generate a morning briefing using Claude or OpenRouter. Cached per day."""
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo('Australia/Brisbane')).date()
+    today_str = today.isoformat()
+
+    # Return cached briefing if already generated today
+    with get_db() as db:
+        cached = db.execute(
+            "SELECT briefing FROM briefing_cache WHERE date=?", (today_str,)
+        ).fetchone()
+    if cached:
+        return jsonify({'briefing': cached['briefing'], 'date': today_str, 'cached': True})
+
+    if not llm_available():
+        return jsonify({'error': 'AI not configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in Coolify'}), 503
+
     birthdays = load_birthdays(7)
     prop = get_property_snapshot()
     with get_db() as db:
@@ -696,7 +713,16 @@ Keep it under 200 words, warm and personal."""
         briefing = llm_chat([{'role': 'user', 'content': prompt}], max_tokens=512)
     except Exception as e:
         return jsonify({'error': f'AI request failed: {str(e)[:300]}'}), 500
-    return jsonify({'briefing': briefing, 'date': today.isoformat()})
+
+    # Cache for the day
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO briefing_cache (date, briefing, created_at) VALUES (?,?,?)",
+            (today_str, briefing, now)
+        )
+
+    return jsonify({'briefing': briefing, 'date': today_str})
 
 
 # ── Wishlist ──────────────────────────────────────────────────────────────────
