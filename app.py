@@ -288,9 +288,11 @@ def init_db():
                 db.execute(f'ALTER TABLE warranties ADD COLUMN {col_def[0]} {col_def[1]}')
             except Exception:
                 pass
-        # Seed warranties if empty
-        if db.execute('SELECT COUNT(*) FROM warranties').fetchone()[0] == 0:
-            now = datetime.now().isoformat()[:19]
+        # Back-fill standard_expires_date from expires_date for existing rows
+        db.execute('UPDATE warranties SET standard_expires_date = expires_date WHERE standard_expires_date IS NULL AND expires_date IS NOT NULL')
+        # Seed RYOBI warranties if not already present (check by model_number + serial)
+        now = datetime.now().isoformat()[:19]
+        if True:
             ryobi_warranties = [
                 ('RYOBI 18V ONE+ Inflator / Deflator', 'RYOBI', '#CIT1800G', '116172-09-2021', '2021-08-18', '2027-08-18', '2025-08-18', '2027-08-18', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
                 ('RYOBI 18V ONE+ 220mm Grass Edger', 'RYOBI', '#OED1850', '2201001267', '2022-03-22', '2028-03-22', '2026-03-22', '2028-03-22', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
@@ -303,10 +305,12 @@ def init_db():
                 ('RYOBI 1800W 2000psi Pressure Washer', 'RYOBI', '#RPW140-G', '2106005168', '2021-08-25', '2027-08-25', '2025-08-25', '2027-08-25', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
             ]
             for product, provider, model_number, serial_number, purchased_date, expires_date, standard_expires_date, extended_expires_date, coverage, claim_info in ryobi_warranties:
-                db.execute(
-                    'INSERT INTO warranties (product,provider,model_number,serial_number,purchased_date,expires_date,standard_expires_date,extended_expires_date,coverage,claim_info,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                    (product, provider, model_number, serial_number, purchased_date, expires_date, standard_expires_date, extended_expires_date, coverage, claim_info, now)
-                )
+                exists = db.execute('SELECT 1 FROM warranties WHERE model_number=? AND serial_number=?', (model_number, serial_number)).fetchone()
+                if not exists:
+                    db.execute(
+                        'INSERT INTO warranties (product,provider,model_number,serial_number,purchased_date,expires_date,standard_expires_date,extended_expires_date,coverage,claim_info,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                        (product, provider, model_number, serial_number, purchased_date, expires_date, standard_expires_date, extended_expires_date, coverage, claim_info, now)
+                    )
         # Seed wishlist if empty
         wl_count = db.execute('SELECT COUNT(*) FROM wishlist').fetchone()[0]
         if wl_count == 0:
