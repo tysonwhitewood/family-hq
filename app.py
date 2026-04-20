@@ -248,8 +248,12 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product TEXT NOT NULL,
                 provider TEXT,
+                model_number TEXT,
+                serial_number TEXT,
                 purchased_date TEXT,
                 expires_date TEXT,
+                standard_expires_date TEXT,
+                extended_expires_date TEXT,
                 coverage TEXT,
                 claim_info TEXT,
                 notes TEXT,
@@ -275,6 +279,34 @@ def init_db():
                 created_at TEXT
             );
         ''')
+        # Migrate warranties table: add new columns if missing
+        for col_def in [
+            ('model_number', 'TEXT'), ('serial_number', 'TEXT'),
+            ('standard_expires_date', 'TEXT'), ('extended_expires_date', 'TEXT'),
+        ]:
+            try:
+                db.execute(f'ALTER TABLE warranties ADD COLUMN {col_def[0]} {col_def[1]}')
+            except Exception:
+                pass
+        # Seed warranties if empty
+        if db.execute('SELECT COUNT(*) FROM warranties').fetchone()[0] == 0:
+            now = datetime.now().isoformat()[:19]
+            ryobi_warranties = [
+                ('RYOBI 18V ONE+ Inflator / Deflator', 'RYOBI', '#CIT1800G', '116172-09-2021', '2021-08-18', '2027-08-18', '2025-08-18', '2027-08-18', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
+                ('RYOBI 18V ONE+ 220mm Grass Edger', 'RYOBI', '#OED1850', '2201001267', '2022-03-22', '2028-03-22', '2026-03-22', '2028-03-22', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
+                ('RYOBI 18V ONE+ 25cm/30cm Line Trimmer', 'RYOBI', '#OLT1832', '2201004455', '2022-03-18', '2028-03-18', '2026-03-18', '2028-03-18', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
+                ('RYOBI 18V ONE+ 165mm Circular Saw', 'RYOBI', '#R18CS-0', '115279-31-2020', '2020-12-04', '2026-12-04', '2024-12-04', '2026-12-04', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
+                ('RYOBI 18V ONE+ Jigsaw', 'RYOBI', '#R16JS-0', '123752-45-2023', '2024-04-03', '2030-04-03', '2028-04-03', '2030-04-03', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
+                ('RYOBI 18V ONE+ Hammer Drill', 'RYOBI', '#R18PD3-0', '224193-07-2021', '2021-08-29', '2027-08-29', '2025-08-29', '2027-08-29', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
+                ('RYOBI 18V ONE+ HP BL Stick Vac', 'RYOBI', '#R18XSV9-FH3', '003486', '2023-09-11', '2029-09-11', '2027-09-11', '2029-09-11', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
+                ('RYOBI 18V ONE+ 4Ah Battery', 'RYOBI', '#RB1840C', '944640', '2024-08-30', '2027-08-30', '2027-08-30', None, 'Standard: 3yr', '1800 664 942 | ryobitools.com.au'),
+                ('RYOBI 1800W 2000psi Pressure Washer', 'RYOBI', '#RPW140-G', '2106005168', '2021-08-25', '2027-08-25', '2025-08-25', '2027-08-25', 'Standard: 4yr | Extended: 2yr', '1800 664 942 | ryobitools.com.au'),
+            ]
+            for product, provider, model_number, serial_number, purchased_date, expires_date, standard_expires_date, extended_expires_date, coverage, claim_info in ryobi_warranties:
+                db.execute(
+                    'INSERT INTO warranties (product,provider,model_number,serial_number,purchased_date,expires_date,standard_expires_date,extended_expires_date,coverage,claim_info,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                    (product, provider, model_number, serial_number, purchased_date, expires_date, standard_expires_date, extended_expires_date, coverage, claim_info, now)
+                )
         # Seed wishlist if empty
         wl_count = db.execute('SELECT COUNT(*) FROM wishlist').fetchone()[0]
         if wl_count == 0:
@@ -807,15 +839,46 @@ def api_warranties():
             d = request.get_json(force=True)
             now = datetime.now().isoformat()[:19]
             cur = db.execute(
-                'INSERT INTO warranties (product,provider,purchased_date,expires_date,coverage,claim_info,notes,created_at) VALUES (?,?,?,?,?,?,?,?)',
-                (d.get('product',''), d.get('provider',''), d.get('purchased_date',''),
-                 d.get('expires_date',''), d.get('coverage',''), d.get('claim_info',''),
-                 d.get('notes',''), now)
+                'INSERT INTO warranties (product,provider,model_number,serial_number,purchased_date,expires_date,standard_expires_date,extended_expires_date,coverage,claim_info,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                (d.get('product',''), d.get('provider',''), d.get('model_number',''),
+                 d.get('serial_number',''), d.get('purchased_date',''),
+                 d.get('expires_date',''), d.get('standard_expires_date',''),
+                 d.get('extended_expires_date','') or None,
+                 d.get('coverage',''), d.get('claim_info',''), d.get('notes',''), now)
             )
             row = db.execute('SELECT * FROM warranties WHERE id=?', (cur.lastrowid,)).fetchone()
             return jsonify(dict(row)), 201
         rows = [dict(r) for r in db.execute('SELECT * FROM warranties ORDER BY expires_date ASC').fetchall()]
         return jsonify(rows)
+
+@app.route('/api/warranties/alerts')
+@login_required
+def warranty_alerts():
+    today = date.today()
+    with get_db() as db:
+        rows = [dict(r) for r in db.execute(
+            'SELECT * FROM warranties WHERE expires_date >= ? ORDER BY expires_date ASC',
+            (today.isoformat(),)
+        ).fetchall()]
+    alerts = []
+    for w in rows:
+        exp = w['expires_date']
+        if not exp:
+            continue
+        days_left = (date.fromisoformat(exp) - today).days
+        months_left = days_left / 30.44
+        if months_left <= 3:
+            level = 3
+        elif months_left <= 6:
+            level = 6
+        elif months_left <= 9:
+            level = 9
+        elif months_left <= 12:
+            level = 12
+        else:
+            continue
+        alerts.append({**w, 'days_left': days_left, 'months_left': round(months_left, 1), 'alert_level': level})
+    return jsonify(alerts)
 
 @app.route('/api/warranties/<int:wid>', methods=['PUT', 'DELETE'])
 @login_required
@@ -826,7 +889,7 @@ def api_warranty_item(wid):
             return jsonify({'ok': True})
         d = request.get_json(force=True)
         fields, params = [], []
-        for col in ('product','provider','purchased_date','expires_date','coverage','claim_info','notes'):
+        for col in ('product','provider','model_number','serial_number','purchased_date','expires_date','standard_expires_date','extended_expires_date','coverage','claim_info','notes'):
             if col in d:
                 fields.append(f'{col}=?'); params.append(d[col])
         if fields:
