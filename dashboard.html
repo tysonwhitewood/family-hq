@@ -1509,7 +1509,7 @@ function renderInsTab(type) {
     <div style="border:1px solid #E5E7EB;border-radius:8px;padding:14px;margin-bottom:10px;position:relative">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div style="font-weight:600;font-size:14px">${i.provider || '—'}</div>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;align-items:center">
           ${i.renewal_date ? `<span style="font-size:11px;background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:10px">Renews ${i.renewal_date}</span>` : ''}
           <button onclick="deleteInsurance(${i.id})" style="background:none;border:none;color:#9CA3AF;cursor:pointer;font-size:16px;line-height:1">×</button>
         </div>
@@ -1518,6 +1518,13 @@ function renderInsTab(type) {
       ${i.premium ? `<div style="font-size:12px;color:#6B7280">Premium: ${i.premium}</div>` : ''}
       ${i.coverage ? `<div style="margin-top:8px"><div class="ins-field"><div class="label">Covers</div><div class="value" style="font-size:13px">${i.coverage}</div></div></div>` : ''}
       ${i.notes ? `<div style="font-size:12px;color:#6B7280;margin-top:6px;font-style:italic">${i.notes}</div>` : ''}
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        ${i.document_path ? `<a href="/api/documents/${i.document_path}" target="_blank" style="font-size:12px;color:#1B4332;background:#D1FAE5;padding:3px 10px;border-radius:6px;text-decoration:none">📄 View PDF</a>` : ''}
+        <label style="font-size:12px;color:#6B7280;cursor:pointer;padding:3px 10px;border:1px dashed #D1D5DB;border-radius:6px">
+          ${i.document_path ? 'Replace PDF' : '+ Upload PDF'}
+          <input type="file" accept=".pdf,.png,.jpg" style="display:none" onchange="uploadInsuranceDoc(${i.id}, this)">
+        </label>
+      </div>
     </div>`).join('');
 }
 
@@ -1577,6 +1584,13 @@ async function loadWarranties() {
       ${w.provider ? `<div style="font-size:12px;color:#6B7280">${w.provider}</div>` : ''}
       ${w.coverage ? `<div style="font-size:12px;color:#374151;margin-top:5px">${w.coverage}</div>` : ''}
       ${w.claim_info ? `<div style="font-size:11px;color:#6B7280;margin-top:4px">Claim: ${w.claim_info}</div>` : ''}
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        ${w.document_path ? `<a href="/api/documents/${w.document_path}" target="_blank" style="font-size:12px;color:#1B4332;background:#D1FAE5;padding:3px 10px;border-radius:6px;text-decoration:none">📄 View PDF</a>` : ''}
+        <label style="font-size:12px;color:#6B7280;cursor:pointer;padding:3px 10px;border:1px dashed #D1D5DB;border-radius:6px">
+          ${w.document_path ? 'Replace PDF' : '+ Upload PDF'}
+          <input type="file" accept=".pdf,.png,.jpg" style="display:none" onchange="uploadWarrantyDoc(${w.id}, this)">
+        </label>
+      </div>
     </div>`;
   }).join('');
 }
@@ -1607,6 +1621,21 @@ async function deleteWarranty(id) {
   if (!confirm('Delete this warranty?')) return;
   await authFetch(`/api/warranties/${id}`, { method: 'DELETE' });
   loadWarranties();
+}
+
+async function uploadWarrantyDoc(id, input) {
+  const file = input.files[0]; if (!file) return;
+  const fd = new FormData(); fd.append('file', file);
+  input.parentElement.textContent = 'Uploading…';
+  await authFetch(`/api/warranties/${id}/upload`, { method: 'POST', body: fd });
+  loadWarranties();
+}
+async function uploadInsuranceDoc(id, input) {
+  const file = input.files[0]; if (!file) return;
+  const fd = new FormData(); fd.append('file', file);
+  input.parentElement.textContent = 'Uploading…';
+  await authFetch(`/api/insurances/${id}/upload`, { method: 'POST', body: fd });
+  loadInsurances();
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────

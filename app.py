@@ -253,6 +253,7 @@ def init_db():
                 coverage TEXT,
                 claim_info TEXT,
                 notes TEXT,
+                document_path TEXT,
                 created_at TEXT
             );
             CREATE TABLE IF NOT EXISTS insurances (
@@ -264,6 +265,7 @@ def init_db():
                 renewal_date TEXT,
                 coverage TEXT,
                 notes TEXT,
+                document_path TEXT,
                 created_at TEXT
             );
             CREATE TABLE IF NOT EXISTS briefing_cache (
@@ -871,6 +873,61 @@ def api_insurance_item(iid):
             db.execute(f'UPDATE insurances SET {",".join(fields)} WHERE id=?', params)
         row = db.execute('SELECT * FROM insurances WHERE id=?', (iid,)).fetchone()
         return jsonify(dict(row))
+
+
+# ── Document Upload / Serve ──────────────────────────────────────────────────
+
+DOCS_DIR = DATA_DIR / 'documents'
+
+def _save_upload(file, prefix: str) -> str:
+    """Save an uploaded file, return its stored filename."""
+    DOCS_DIR.mkdir(exist_ok=True)
+    import uuid
+    ext = Path(file.filename).suffix.lower() if file.filename else '.pdf'
+    filename = f"{prefix}_{uuid.uuid4().hex[:8]}{ext}"
+    file.save(str(DOCS_DIR / filename))
+    return filename
+
+@app.route('/api/warranties/<int:wid>/upload', methods=['POST'])
+@login_required
+def api_warranty_upload(wid):
+    f = request.files.get('file')
+    if not f:
+        return jsonify({'error': 'no file'}), 400
+    filename = _save_upload(f, f'warranty_{wid}')
+    with get_db() as db:
+        # Remove old file if present
+        row = db.execute('SELECT document_path FROM warranties WHERE id=?', (wid,)).fetchone()
+        if row and row['document_path']:
+            old = DOCS_DIR / row['document_path']
+            if old.exists(): old.unlink()
+        db.execute('UPDATE warranties SET document_path=? WHERE id=?', (filename, wid))
+        row = db.execute('SELECT * FROM warranties WHERE id=?', (wid,)).fetchone()
+    return jsonify(dict(row))
+
+@app.route('/api/insurances/<int:iid>/upload', methods=['POST'])
+@login_required
+def api_insurance_upload(iid):
+    f = request.files.get('file')
+    if not f:
+        return jsonify({'error': 'no file'}), 400
+    filename = _save_upload(f, f'insurance_{iid}')
+    with get_db() as db:
+        row = db.execute('SELECT document_path FROM insurances WHERE id=?', (iid,)).fetchone()
+        if row and row['document_path']:
+            old = DOCS_DIR / row['document_path']
+            if old.exists(): old.unlink()
+        db.execute('UPDATE insurances SET document_path=? WHERE id=?', (filename, iid))
+        row = db.execute('SELECT * FROM insurances WHERE id=?', (iid,)).fetchone()
+    return jsonify(dict(row))
+
+@app.route('/api/documents/<path:filename>')
+@login_required
+def api_document_serve(filename):
+    filepath = DOCS_DIR / filename
+    if not filepath.exists() or not filepath.resolve().is_relative_to(DOCS_DIR.resolve()):
+        abort(404)
+    return send_file(str(filepath))
 
 
 # ── Discord Integration ───────────────────────────────────────────────────────
