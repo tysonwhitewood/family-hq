@@ -334,11 +334,11 @@ def init_db():
             ('business', 'ProRisk', 'PI-003645-2025',  '2505.00', '2026-11-20',
              'Professional Indemnity — $1M limit ($3M aggregate) | Real Estate Agent / Buyers Advocate | Insurer: Swiss Re via ProRisk | Broker: GT Insurance Brokers',
              'Ref: QLPJWS-3 | Combined invoice $2,505 covers PI + PPL | Renewal 20/11/2026',
-             'documents/business_pi_prorisk_PI-003645-2025.pdf'),
+             None),
             ('business', 'ProRisk', 'PPL-013525-2025', None,      '2026-11-20',
              'Public & Products Liability — $20M per occurrence | Worldwide (ex USA/Canada) | Insurer: Swiss Re via ProRisk | Broker: GT Insurance Brokers',
              'Ref: QLPJWS-3 | Renewal 20/11/2026',
-             'documents/business_ppl_prorisk_PPL-013525-2025.pdf'),
+             None),
         ]
         for type_, provider, policy_number, premium, renewal_date, coverage, notes, document_path in seed_insurances:
             if not db.execute('SELECT 1 FROM insurances WHERE policy_number=?', (policy_number,)).fetchone():
