@@ -12,6 +12,9 @@ COPY . .
 # Create data and backup directories
 RUN mkdir -p /app/data /app/backups
 
+# Keep a copy of config defaults OUTSIDE /app/data so the volume mount can't hide it
+RUN cp /app/data/config.json /app/config_default.json 2>/dev/null || true
+
 # Daily backup: 3am — uses SQLite's .backup command (safe on live DB)
 RUN echo "0 3 * * * sqlite3 /app/data/family.db \".backup /app/backups/family-\$(date +\\%F).sqlite\" && find /app/backups -name 'family-*.sqlite' -mtime +14 -delete >> /var/log/cron.log 2>&1" | crontab -
 
