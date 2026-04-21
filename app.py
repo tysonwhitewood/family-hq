@@ -322,21 +322,29 @@ def init_db():
                 created_at TEXT
             );
         ''')
-        # Seed RACQ insurance records if table is empty
-        if db.execute('SELECT COUNT(*) FROM insurances').fetchone()[0] == 0:
-            now = datetime.now().isoformat()[:19]
-            racq_insurances = [
-                ('car',   'RACQ', 'Q24M8Z',              None, None,
-                 'Motor vehicle insurance — comprehensive cover for Chery Tiggo 8 Pro Max', None),
-                ('car',   'RACQ', 'Mbr 3083 6700 9579 8082', None, None,
-                 'Roadside assistance — towing, battery, fuel, lockout', None),
-                ('house', 'RACQ', '57054030PQ',           None, None,
-                 'Home & contents insurance — building and contents cover', None),
-            ]
-            for type_, provider, policy_number, premium, renewal_date, coverage, notes in racq_insurances:
+        # Seed insurance records — insert each by policy_number if not already present
+        now = datetime.now().isoformat()[:19]
+        seed_insurances = [
+            ('car',      'RACQ',    'Q24M8Z',          None,      None,
+             'Motor vehicle insurance — comprehensive cover for Chery Tiggo 8 Pro Max', None, None),
+            ('car',      'RACQ',    'Mbr 3083 6700 9579 8082', None, None,
+             'Roadside assistance — towing, battery, fuel, lockout', None, None),
+            ('house',    'RACQ',    '57054030PQ',      None,      None,
+             'Home & contents insurance — building and contents cover', None, None),
+            ('business', 'ProRisk', 'PI-003645-2025',  '2505.00', '2026-11-20',
+             'Professional Indemnity — $1M limit ($3M aggregate) | Real Estate Agent / Buyers Advocate | Insurer: Swiss Re via ProRisk | Broker: GT Insurance Brokers',
+             'Ref: QLPJWS-3 | Combined invoice $2,505 covers PI + PPL | Renewal 20/11/2026',
+             'documents/business_pi_prorisk_PI-003645-2025.pdf'),
+            ('business', 'ProRisk', 'PPL-013525-2025', None,      '2026-11-20',
+             'Public & Products Liability — $20M per occurrence | Worldwide (ex USA/Canada) | Insurer: Swiss Re via ProRisk | Broker: GT Insurance Brokers',
+             'Ref: QLPJWS-3 | Renewal 20/11/2026',
+             'documents/business_ppl_prorisk_PPL-013525-2025.pdf'),
+        ]
+        for type_, provider, policy_number, premium, renewal_date, coverage, notes, document_path in seed_insurances:
+            if not db.execute('SELECT 1 FROM insurances WHERE policy_number=?', (policy_number,)).fetchone():
                 db.execute(
-                    'INSERT INTO insurances (type,provider,policy_number,premium,renewal_date,coverage,notes,created_at) VALUES (?,?,?,?,?,?,?,?)',
-                    (type_, provider, policy_number, premium, renewal_date, coverage, notes, now)
+                    'INSERT INTO insurances (type,provider,policy_number,premium,renewal_date,coverage,notes,document_path,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+                    (type_, provider, policy_number, premium, renewal_date, coverage, notes, document_path, now)
                 )
         # Normalise insurance types (fix legacy full-name types from old seed)
         db.execute("UPDATE insurances SET type='house' WHERE type NOT IN ('house','car','business') AND (type LIKE '%Home%' OR type LIKE '%House%' OR type LIKE '%Content%')")
@@ -1289,7 +1297,6 @@ def api_stock_price(ticker):
         return jsonify({'error': str(e)}), 500
 
 XERO_SCOPES = 'openid profile email accounting.transactions.read accounting.reports.read offline_access'
-XERO_CC_SCOPES = 'accounting.transactions.read accounting.reports.read'  # Custom Connection scopes (no OIDC)
 XERO_REDIRECT_URI = 'https://family.edencommercial.au/api/xero/callback'
 XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize'
 XERO_TOKEN_URL = 'https://identity.xero.com/connect/token'
@@ -1358,45 +1365,8 @@ def _xero_get(path):
 
 @app.route('/api/xero/auth')
 def xero_auth():
-    """Try client_credentials (Custom Connection) first; fall back to OAuth redirect."""
+    """Standard OAuth authorization code flow for Xero Web App."""
     from flask import redirect as _redirect
-    if XERO_CLIENT_ID and XERO_CLIENT_SECRET:
-        # Attempt Custom Connection (client_credentials) — works without user redirect
-        creds = base64.b64encode(f'{XERO_CLIENT_ID}:{XERO_CLIENT_SECRET}'.encode()).decode()
-        body = urllib.parse.urlencode({
-            'grant_type': 'client_credentials',
-            'scope': XERO_CC_SCOPES,
-        }).encode()
-        req = urllib.request.Request(
-            XERO_TOKEN_URL, data=body,
-            headers={'Authorization': f'Basic {creds}',
-                     'Content-Type': 'application/x-www-form-urlencoded'},
-            method='POST',
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as r:
-                tok = json.loads(r.read())
-            tok['expires_at'] = time.time() + tok.get('expires_in', 1800)
-            # For custom connections, fetch tenant from connections endpoint
-            try:
-                conn_req = urllib.request.Request(
-                    'https://api.xero.com/connections',
-                    headers={'Authorization': f'Bearer {tok["access_token"]}', 'Accept': 'application/json'},
-                )
-                with urllib.request.urlopen(conn_req, timeout=15) as r2:
-                    connections = json.loads(r2.read())
-                if connections:
-                    tok['tenant_id'] = connections[0]['tenantId']
-                    tok['org_name'] = connections[0].get('tenantName', '')
-            except Exception:
-                pass
-            TOKEN_DIR.mkdir(exist_ok=True)
-            (TOKEN_DIR / 'xero_token.json').write_text(json.dumps(tok))
-            return _redirect('/?xero=connected')
-        except urllib.error.HTTPError:
-            pass  # Not a Custom Connection app — fall through to OAuth redirect
-
-    # Standard OAuth (Web App)
     import secrets as _secrets
     state = _secrets.token_urlsafe(16)
     params = urllib.parse.urlencode({
