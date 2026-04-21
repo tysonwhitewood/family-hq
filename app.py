@@ -161,24 +161,37 @@ def llm_chat(messages: list, system: str = '', max_tokens: int = 1024) -> str:
         return response.content[0].text
 
     if OPENROUTER_API_KEY:
-        payload = json.dumps({
-            'model': 'meta-llama/llama-3.3-70b-instruct:free',
-            'messages': ([{'role': 'system', 'content': system}] if system else []) + messages,
-            'max_tokens': max_tokens,
-        }).encode()
-        req = urllib.request.Request(
-            'https://openrouter.ai/api/v1/chat/completions',
-            data=payload,
-            headers={
-                'Authorization': f'Bearer {OPENROUTER_API_KEY}',
-                'Content-Type': 'application/json',
-                'HTTP-Referer': 'https://family.edencommercial.au',
-            },
-            method='POST',
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-            return data['choices'][0]['message']['content']
+        _models = [
+            'meta-llama/llama-3.3-70b-instruct:free',
+            'google/gemma-3-27b-it:free',
+            'mistralai/mistral-7b-instruct:free',
+        ]
+        last_err = None
+        for model in _models:
+            payload = json.dumps({
+                'model': model,
+                'messages': ([{'role': 'system', 'content': system}] if system else []) + messages,
+                'max_tokens': max_tokens,
+            }).encode()
+            req = urllib.request.Request(
+                'https://openrouter.ai/api/v1/chat/completions',
+                data=payload,
+                headers={
+                    'Authorization': f'Bearer {OPENROUTER_API_KEY}',
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://family.edencommercial.au',
+                },
+                method='POST',
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read())
+                    return data['choices'][0]['message']['content']
+            except urllib.error.HTTPError as e:
+                last_err = e
+                if e.code != 429:
+                    raise
+        raise last_err
 
     raise ValueError('No LLM configured — set ANTHROPIC_API_KEY or OPENROUTER_API_KEY')
 
@@ -280,6 +293,10 @@ def init_db():
                 created_at TEXT
             );
         ''')
+        # Normalise insurance types (fix legacy full-name types from old seed)
+        db.execute("UPDATE insurances SET type='house' WHERE type NOT IN ('house','car','business') AND (type LIKE '%Home%' OR type LIKE '%House%' OR type LIKE '%Content%')")
+        db.execute("UPDATE insurances SET type='car' WHERE type NOT IN ('house','car','business') AND (type LIKE '%Car%' OR type LIKE '%Roadside%' OR type LIKE '%Vehicle%')")
+        db.execute("UPDATE insurances SET type='business' WHERE type NOT IN ('house','car','business') AND type LIKE '%Business%'")
         # Migrate warranties table: add new columns if missing
         for col_def in [
             ('model_number', 'TEXT'), ('serial_number', 'TEXT'),
@@ -752,6 +769,13 @@ Keep it under 200 words, warm and personal."""
     try:
         briefing = llm_chat([{'role': 'user', 'content': prompt}], max_tokens=512)
     except Exception as e:
+        # Fall back to most recent cached briefing if available
+        with get_db() as db:
+            fallback = db.execute(
+                "SELECT briefing, date FROM briefing_cache ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+        if fallback:
+            return jsonify({'briefing': f"[From {fallback['date']}] {fallback['briefing']}", 'date': today_str, 'cached': True})
         return jsonify({'error': f'AI request failed: {str(e)[:300]}'}), 500
 
     # Cache for the day
