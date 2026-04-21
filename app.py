@@ -1521,7 +1521,33 @@ def _start_daily_screener():
     import threading
     from zoneinfo import ZoneInfo
 
+    def _run_screener_now():
+        from datetime import date as _date
+        run_date = _date.today().isoformat()
+        results = [_cgg_score(t) for t in VALUE_WATCHLIST]
+        results.sort(key=lambda x: x['score'], reverse=True)
+        ts = datetime.now().isoformat()[:19]
+        with get_db() as db:
+            db.execute('DELETE FROM screener_cache WHERE run_date=?', (run_date,))
+            for r in results:
+                db.execute(
+                    'INSERT INTO screener_cache (ticker,company_name,score,quality,growth,value_score,momentum,archetype,current_price,details,run_date,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (r['ticker'],r['company_name'],r['score'],r['quality'],r['growth'],r['value_score'],r['momentum'],r['archetype'],r['current_price'],r['details'],run_date,ts)
+                )
+
     def _loop():
+        # On startup: if today's scan hasn't run yet and it's past 6am, catch up immediately
+        try:
+            from datetime import date as _date
+            today = _date.today().isoformat()
+            with get_db() as db:
+                row = db.execute('SELECT 1 FROM screener_cache WHERE run_date=? LIMIT 1', (today,)).fetchone()
+            now = datetime.now(ZoneInfo('Australia/Brisbane'))
+            if not row and now.hour >= 6:
+                _run_screener_now()
+        except Exception:
+            pass
+
         while True:
             try:
                 now = datetime.now(ZoneInfo('Australia/Brisbane'))
@@ -1531,19 +1557,7 @@ def _start_daily_screener():
                     target = target + timedelta(days=1)
                 wait = (target - now).total_seconds()
                 time.sleep(wait)
-                # Run screener
-                from datetime import date as _date
-                run_date = _date.today().isoformat()
-                results = [_cgg_score(t) for t in VALUE_WATCHLIST]
-                results.sort(key=lambda x: x['score'], reverse=True)
-                ts = datetime.now().isoformat()[:19]
-                with get_db() as db:
-                    db.execute('DELETE FROM screener_cache WHERE run_date=?', (run_date,))
-                    for r in results:
-                        db.execute(
-                            'INSERT INTO screener_cache (ticker,company_name,score,quality,growth,value_score,momentum,archetype,current_price,details,run_date,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                            (r['ticker'],r['company_name'],r['score'],r['quality'],r['growth'],r['value_score'],r['momentum'],r['archetype'],r['current_price'],r['details'],run_date,ts)
-                        )
+                _run_screener_now()
             except Exception:
                 time.sleep(3600)  # retry in 1hr on error
 
