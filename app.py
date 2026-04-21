@@ -133,7 +133,7 @@ def logout():
 
 @app.before_request
 def require_auth():
-    public = {'/health', '/login', '/logout'}
+    public = {'/health', '/login', '/logout', '/manifest.json', '/icon-192.png', '/icon-512.png'}
     if request.path in public:
         return
     if request.path.startswith('/static/'):
