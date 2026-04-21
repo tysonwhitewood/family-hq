@@ -1506,6 +1506,7 @@ async function loadFinance() {
   const loading = document.getElementById('xero-loading');
   const notConn = document.getElementById('xero-not-connected');
   const conn    = document.getElementById('xero-connected');
+  const dataEl  = document.getElementById('xero-data');
   if (loading) loading.style.display = 'block';
   if (notConn) notConn.style.display = 'none';
   if (conn)    conn.style.display    = 'none';
@@ -1514,10 +1515,12 @@ async function loadFinance() {
     const d = await r.json();
     if (loading) loading.style.display = 'none';
     if (d.ok) {
-      if (conn) {
-        conn.style.display = 'block';
-        const orgEl = document.getElementById('xero-org-name');
-        if (orgEl) orgEl.textContent = `Connected to ${d.org || 'Xero'}`;
+      if (conn) conn.style.display = 'block';
+      const orgEl = document.getElementById('xero-org-name');
+      if (orgEl) orgEl.textContent = `Connected to ${d.org || 'Xero'}`;
+      if (dataEl) {
+        dataEl.innerHTML = '<span style="color:#9CA3AF">Loading accounts…</span>';
+        loadXeroData(dataEl);
       }
     } else {
       if (notConn) notConn.style.display = 'block';
@@ -1525,6 +1528,80 @@ async function loadFinance() {
   } catch(e) {
     if (loading) loading.style.display = 'none';
     if (notConn) notConn.style.display = 'block';
+  }
+}
+
+async function loadXeroData(dataEl) {
+  try {
+    const [accsR, txnsR] = await Promise.all([
+      authFetch('/api/xero/accounts'),
+      authFetch('/api/xero/transactions'),
+    ]);
+    const accs = await accsR.json();
+    const txns = await txnsR.json();
+
+    if (accs.error || txns.error) {
+      const err = accs.error || txns.error;
+      // Scope error — prompt reconnect with full scopes
+      if (err.includes('403') || err.includes('scope') || err.includes('AuthenticationUnsuccessful')) {
+        dataEl.innerHTML = `<div style="background:#FEF3C7;border:1px solid #FDE68A;border-radius:8px;padding:14px;font-size:13px">
+          <strong>⚠️ Accounting access not yet granted.</strong><br>
+          Your Xero connection needs to be refreshed to include bank data access.<br><br>
+          <a href="/api/xero/auth" style="background:#1B4332;color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-weight:600">Re-authorise Xero →</a>
+        </div>`;
+      } else {
+        dataEl.innerHTML = `<div style="color:#DC2626;font-size:13px">Error: ${err}</div>`;
+      }
+      return;
+    }
+
+    // Build accounts summary
+    let html = '<div style="display:grid;gap:12px">';
+
+    if (Array.isArray(accs) && accs.length) {
+      html += '<div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:4px">Bank Accounts</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:10px">';
+      for (const a of accs) {
+        const bal = Number(a.balance || 0);
+        const color = bal >= 0 ? '#059669' : '#DC2626';
+        html += `<div style="border:1px solid #E5E7EB;border-radius:8px;padding:12px 16px;min-width:160px">
+          <div style="font-size:12px;color:#6B7280">${a.name}</div>
+          <div style="font-size:18px;font-weight:700;color:${color}">$${Math.abs(bal).toLocaleString('en-AU',{minimumFractionDigits:2})}</div>
+          <div style="font-size:11px;color:#9CA3AF">${a.currency}</div>
+        </div>`;
+      }
+      html += '</div>';
+    }
+
+    // Recent transactions
+    if (Array.isArray(txns) && txns.length) {
+      html += '<div style="font-weight:600;font-size:13px;color:#374151;margin:8px 0 4px">Recent Transactions (30 days)</div>';
+      html += '<div style="border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">';
+      for (const t of txns.slice(0, 15)) {
+        const amt = Number(t.amount || 0);
+        const sign = t.type === 'SPEND' ? -1 : 1;
+        const display = sign * amt;
+        const color = display >= 0 ? '#059669' : '#DC2626';
+        const dateStr = t.date ? t.date.substring(0,10) : '';
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 14px;border-bottom:1px solid #F3F4F6;font-size:13px">
+          <div>
+            <div style="color:#111">${t.contact || t.ref || '—'}</div>
+            <div style="font-size:11px;color:#9CA3AF">${dateStr}</div>
+          </div>
+          <div style="font-weight:600;color:${color}">${display>=0?'+':''}$${Math.abs(display).toLocaleString('en-AU',{minimumFractionDigits:2})}</div>
+        </div>`;
+      }
+      html += '</div>';
+    }
+
+    if (!Array.isArray(accs) || (!accs.length && !txns.length)) {
+      html += '<div style="color:#9CA3AF;font-size:13px;padding:10px 0">No bank data found in Xero.</div>';
+    }
+
+    html += '</div>';
+    dataEl.innerHTML = html;
+  } catch(e) {
+    dataEl.innerHTML = `<div style="color:#DC2626;font-size:13px">Could not load Xero data</div>`;
   }
 }
 
