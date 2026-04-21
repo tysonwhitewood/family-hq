@@ -404,7 +404,7 @@ body {
     <div class="nav-item" onclick="showPage('property',this);loadProperty()">
       <span class="nav-icon">🏡</span> Property
     </div>
-    <div class="nav-item" onclick="showPage('finance',this)">
+    <div class="nav-item" onclick="showPage('finance',this);loadFinance()">
       <span class="nav-icon">💰</span> Finance
     </div>
   </div>
@@ -703,12 +703,24 @@ body {
 <div class="page" id="page-finance">
   <div class="topbar"><div class="topbar-title">💰 Finance</div></div>
   <div class="page-body">
-    <div class="card">
-      <div style="padding:40px;text-align:center;color:#6B7280">
+    <div class="card" id="xero-status-card">
+      <div id="xero-loading" style="padding:40px;text-align:center;color:#9CA3AF;font-size:13px">Checking Xero connection…</div>
+      <div id="xero-not-connected" style="display:none;padding:40px;text-align:center;color:#6B7280">
         <div style="font-size:40px;margin-bottom:16px">💰</div>
         <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:8px">Xero — Not Connected</div>
         <p style="font-size:13px;max-width:400px;margin:0 auto 20px">Connect Xero to see bank accounts, transactions, and cashflow. You'll be redirected to Xero to authorise, then brought straight back.</p>
         <a href="/api/xero/auth" style="display:inline-block;background:#1B4332;color:#fff;text-decoration:none;padding:10px 24px;border-radius:8px;font-weight:600;cursor:pointer">Connect Xero →</a>
+      </div>
+      <div id="xero-connected" style="display:none;padding:20px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          <span style="font-size:20px">✅</span>
+          <div>
+            <div style="font-weight:600;font-size:15px" id="xero-org-name">Connected to Xero</div>
+            <div style="font-size:12px;color:#6B7280">Bank accounts, transactions and cashflow active</div>
+          </div>
+          <a href="/api/xero/auth" style="margin-left:auto;font-size:12px;color:#6B7280;text-decoration:underline">Reconnect</a>
+        </div>
+        <div id="xero-data" style="color:#6B7280;font-size:13px">Loading data…</div>
       </div>
     </div>
   </div>
@@ -861,7 +873,7 @@ body {
     <div class="mnav-item" onclick="showPage('wishlist',this);loadWishlist()" data-page="wishlist">
       <span class="micon">🛒</span><span>Wishlist</span>
     </div>
-    <div class="mnav-item" onclick="showPage('finance',this)" data-page="finance">
+    <div class="mnav-item" onclick="showPage('finance',this);loadFinance()" data-page="finance">
       <span class="micon">💰</span><span>Finance</span>
     </div>
     <div class="mnav-item" onclick="showPage('property',this);loadProperty()" data-page="property">
@@ -1284,7 +1296,8 @@ async function loadPortfolio() {
   if (!open.length) {
     el.innerHTML = '<div style="padding:20px;text-align:center;color:#9CA3AF;font-size:13px">No open positions — buy a recommendation above</div>';
     badge.textContent = '';
-    document.getElementById('nw-portfolio-val').textContent = '$0';
+    const nwPortEl = document.getElementById('nw-portfolio-val');
+    if (nwPortEl) nwPortEl.textContent = '$0';
     return;
   }
 
@@ -1319,7 +1332,8 @@ async function loadPortfolio() {
   const totalPnl = totalValue - totalCost;
   const pnlColor = totalPnl >= 0 ? '#059669' : '#DC2626';
   badge.innerHTML = `<span style="color:${pnlColor}">${totalPnl>=0?'+':''}$${totalPnl.toFixed(2)}</span>`;
-  document.getElementById('nw-portfolio-val').textContent = `$${totalValue.toFixed(2)}`;
+  const nwPortEl2 = document.getElementById('nw-portfolio-val');
+  if (nwPortEl2) nwPortEl2.textContent = `$${totalValue.toFixed(2)}`;
   // Update net worth
   try {
     const nwEl = document.getElementById('nw-total');
@@ -1487,6 +1501,32 @@ function escHtml(s) {
 }
 
 // ── XERO ──────────────────────────────────────────────────────────────────────
+
+async function loadFinance() {
+  const loading = document.getElementById('xero-loading');
+  const notConn = document.getElementById('xero-not-connected');
+  const conn    = document.getElementById('xero-connected');
+  if (loading) loading.style.display = 'block';
+  if (notConn) notConn.style.display = 'none';
+  if (conn)    conn.style.display    = 'none';
+  try {
+    const r = await authFetch('/api/xero/connect', {method:'POST'});
+    const d = await r.json();
+    if (loading) loading.style.display = 'none';
+    if (d.ok) {
+      if (conn) {
+        conn.style.display = 'block';
+        const orgEl = document.getElementById('xero-org-name');
+        if (orgEl) orgEl.textContent = `Connected to ${d.org || 'Xero'}`;
+      }
+    } else {
+      if (notConn) notConn.style.display = 'block';
+    }
+  } catch(e) {
+    if (loading) loading.style.display = 'none';
+    if (notConn) notConn.style.display = 'block';
+  }
+}
 
 async function connectXero() {
   const btn = document.getElementById('xero-connect-btn');
@@ -1912,6 +1952,15 @@ async function uploadInsuranceDoc(id, input) {
 loadHome();
 loadInsurances();
 loadWarranties();
+
+// Handle Xero callback redirect — navigate to Finance tab and show connection status
+if (new URLSearchParams(window.location.search).get('xero') === 'connected') {
+  const financeNavDesktop = document.querySelector('.nav-item[onclick*="finance"]');
+  const financeNavMobile  = document.querySelector('.mnav-item[data-page="finance"]');
+  showPage('finance', financeNavDesktop || financeNavMobile);
+  loadFinance();
+  history.replaceState({}, '', '/');
+}
 </script>
 </body>
 </html>
