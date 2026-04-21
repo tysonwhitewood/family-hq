@@ -205,12 +205,16 @@ def get_db():
 
 def init_db():
     DATA_DIR.mkdir(exist_ok=True)
-    # Seed config.json from bundled default if volume mount started empty
+    # Seed static data files from bundled defaults if volume mount started empty
+    import shutil as _shutil
     if not CONFIG_PATH.exists():
         default = ROOT / 'config_default.json'
         if default.exists():
-            import shutil
-            shutil.copy(default, CONFIG_PATH)
+            _shutil.copy(default, CONFIG_PATH)
+    if not BIRTHDAYS_PATH.exists():
+        default_xl = ROOT / 'birthdays_default.xlsx'
+        if default_xl.exists():
+            _shutil.copy(default_xl, BIRTHDAYS_PATH)
     with get_db() as db:
         db.executescript('''
             CREATE TABLE IF NOT EXISTS goals (
