@@ -1637,9 +1637,10 @@ async function loadWarranties() {
         </div>
       </div>
       <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-        ${w.standard_expires_date ? `<div style="font-size:11px"><span style="color:#6B7280">Standard:</span> ${_warAlertBadge(w.standard_expires_date, today)}</div>` : ''}
-        ${w.extended_expires_date ? `<div style="font-size:11px"><span style="color:#6B7280">Extended:</span> ${_warAlertBadge(w.extended_expires_date, today)}</div>` : ''}
+        ${w.standard_expires_date ? `<div style="font-size:11px"><span style="color:#6B7280">Standard:</span> ${_warAlertBadge(w.standard_expires_date, today)}${w.date_source==='web'?'<span title="Expiry estimated from manufacturer specs — not stated on receipt" style="font-size:10px;cursor:help;margin-left:3px">🔍</span>':''}</div>` : ''}
+        ${w.extended_expires_date ? `<div style="font-size:11px"><span style="color:#6B7280">Extended:</span> ${_warAlertBadge(w.extended_expires_date, today)}${w.date_source==='web'?'<span title="Expiry estimated from manufacturer specs — not stated on receipt" style="font-size:10px;cursor:help;margin-left:3px">🔍</span>':''}</div>` : ''}
         ${!w.standard_expires_date && !w.extended_expires_date && w.expires_date ? _warAlertBadge(w.expires_date, today) : ''}
+        ${w.date_source==='web' && !w.standard_expires_date && !w.extended_expires_date ? '<span title="Expiry estimated from manufacturer specs — not stated on receipt" style="font-size:10px;cursor:help">🔍</span>' : ''}
       </div>
       ${w.purchased_date ? `<div style="font-size:11px;color:#9CA3AF;margin-top:4px">Purchased ${w.purchased_date}</div>` : ''}
       ${w.coverage ? `<div style="font-size:12px;color:#374151;margin-top:5px">${w.coverage}</div>` : ''}

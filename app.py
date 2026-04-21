@@ -254,6 +254,7 @@ def init_db():
                 expires_date TEXT,
                 standard_expires_date TEXT,
                 extended_expires_date TEXT,
+                date_source TEXT,
                 coverage TEXT,
                 claim_info TEXT,
                 notes TEXT,
@@ -283,6 +284,7 @@ def init_db():
         for col_def in [
             ('model_number', 'TEXT'), ('serial_number', 'TEXT'),
             ('standard_expires_date', 'TEXT'), ('extended_expires_date', 'TEXT'),
+            ('date_source', 'TEXT'),
         ]:
             try:
                 db.execute(f'ALTER TABLE warranties ADD COLUMN {col_def[0]} {col_def[1]}')
@@ -308,8 +310,8 @@ def init_db():
                 exists = db.execute('SELECT 1 FROM warranties WHERE model_number=? AND serial_number=?', (model_number, serial_number)).fetchone()
                 if not exists:
                     db.execute(
-                        'INSERT INTO warranties (product,provider,model_number,serial_number,purchased_date,expires_date,standard_expires_date,extended_expires_date,coverage,claim_info,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                        (product, provider, model_number, serial_number, purchased_date, expires_date, standard_expires_date, extended_expires_date, coverage, claim_info, now)
+                        'INSERT INTO warranties (product,provider,model_number,serial_number,purchased_date,expires_date,standard_expires_date,extended_expires_date,date_source,coverage,claim_info,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                        (product, provider, model_number, serial_number, purchased_date, expires_date, standard_expires_date, extended_expires_date, 'receipt', coverage, claim_info, now)
                     )
         # Seed wishlist if empty
         wl_count = db.execute('SELECT COUNT(*) FROM wishlist').fetchone()[0]
@@ -843,11 +845,12 @@ def api_warranties():
             d = request.get_json(force=True)
             now = datetime.now().isoformat()[:19]
             cur = db.execute(
-                'INSERT INTO warranties (product,provider,model_number,serial_number,purchased_date,expires_date,standard_expires_date,extended_expires_date,coverage,claim_info,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                'INSERT INTO warranties (product,provider,model_number,serial_number,purchased_date,expires_date,standard_expires_date,extended_expires_date,date_source,coverage,claim_info,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (d.get('product',''), d.get('provider',''), d.get('model_number',''),
                  d.get('serial_number',''), d.get('purchased_date',''),
                  d.get('expires_date',''), d.get('standard_expires_date',''),
                  d.get('extended_expires_date','') or None,
+                 d.get('date_source',''),
                  d.get('coverage',''), d.get('claim_info',''), d.get('notes',''), now)
             )
             row = db.execute('SELECT * FROM warranties WHERE id=?', (cur.lastrowid,)).fetchone()
@@ -893,7 +896,7 @@ def api_warranty_item(wid):
             return jsonify({'ok': True})
         d = request.get_json(force=True)
         fields, params = [], []
-        for col in ('product','provider','model_number','serial_number','purchased_date','expires_date','standard_expires_date','extended_expires_date','coverage','claim_info','notes'):
+        for col in ('product','provider','model_number','serial_number','purchased_date','expires_date','standard_expires_date','extended_expires_date','date_source','coverage','claim_info','notes'):
             if col in d:
                 fields.append(f'{col}=?'); params.append(d[col])
         if fields:
