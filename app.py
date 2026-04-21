@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Family HQ — Whitewood Family Command Centre"""
-import json, os, sqlite3, re, time, urllib.request, urllib.parse
+import base64, json, os, sqlite3, re, time, urllib.request, urllib.parse
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, abort, g, Response, redirect, url_for, render_template_string
@@ -1517,6 +1517,42 @@ def xero_cashflow():
 
 # Always initialise DB — runs under both gunicorn and direct invocation
 init_db()
+
+# ── Daily 6am AEST screener run ───────────────────────────────────────────────
+def _start_daily_screener():
+    import threading
+    from zoneinfo import ZoneInfo
+
+    def _loop():
+        while True:
+            try:
+                now = datetime.now(ZoneInfo('Australia/Brisbane'))
+                # Next 6am AEST
+                target = now.replace(hour=6, minute=0, second=0, microsecond=0)
+                if now >= target:
+                    target = target + timedelta(days=1)
+                wait = (target - now).total_seconds()
+                time.sleep(wait)
+                # Run screener
+                from datetime import date as _date
+                run_date = _date.today().isoformat()
+                results = [_cgg_score(t) for t in VALUE_WATCHLIST]
+                results.sort(key=lambda x: x['score'], reverse=True)
+                ts = datetime.now().isoformat()[:19]
+                with get_db() as db:
+                    db.execute('DELETE FROM screener_cache WHERE run_date=?', (run_date,))
+                    for r in results:
+                        db.execute(
+                            'INSERT INTO screener_cache (ticker,company_name,score,quality,growth,value_score,momentum,archetype,current_price,details,run_date,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                            (r['ticker'],r['company_name'],r['score'],r['quality'],r['growth'],r['value_score'],r['momentum'],r['archetype'],r['current_price'],r['details'],run_date,ts)
+                        )
+            except Exception:
+                time.sleep(3600)  # retry in 1hr on error
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+
+_start_daily_screener()
 
 if __name__ == '__main__':
     print(f'Family HQ running on port {PORT}')
