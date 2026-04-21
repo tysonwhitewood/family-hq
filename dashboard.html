@@ -665,12 +665,31 @@ body {
       </div>
       <div class="prop-grid" id="property-grid"></div>
     </div>
+    <!-- Daily Recommendations -->
     <div class="card" style="margin-bottom:20px">
-      <div class="card-header"><div class="card-title">📈 Share Portfolio</div></div>
-      <div style="padding:24px;text-align:center;color:#6B7280">
-        <div style="font-size:32px;margin-bottom:12px">📊</div>
-        <div style="font-size:14px;font-weight:600;color:#374151;margin-bottom:8px">Paper trading mode</div>
-        <p style="font-size:12px;max-width:360px;margin:0 auto">Running the stock screener in paper trading mode. Live portfolio will be added here once you make your first trade.</p>
+      <div class="card-header">
+        <div class="card-title">🔍 Daily Recommendations</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="screener-run-date" style="font-size:11px;color:#9CA3AF"></span>
+          <button onclick="runScreener()" id="screener-btn" style="background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">▶ Run Scan</button>
+        </div>
+      </div>
+      <div id="screener-results" style="padding:0 16px 16px">
+        <div style="padding:20px;text-align:center;color:#9CA3AF;font-size:13px">Hit "Run Scan" to score the value watchlist (takes ~2 min)</div>
+      </div>
+    </div>
+
+    <!-- Paper Portfolio -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <div class="card-title">📈 Paper Portfolio</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="portfolio-pnl-badge" style="font-size:12px;font-weight:700"></span>
+          <button onclick="showBuyModal()" style="background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Buy</button>
+        </div>
+      </div>
+      <div id="portfolio-list" style="padding:0 16px 16px">
+        <div style="padding:20px;text-align:center;color:#9CA3AF;font-size:13px">No trades yet — use "Buy" or hit Buy on a recommendation above</div>
       </div>
     </div>
     <div class="card">
@@ -909,6 +928,33 @@ body {
   </div>
 </div>
 
+<!-- Buy Trade Modal -->
+<div id="buy-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:16px;width:380px;max-width:95vw;padding:28px">
+    <div style="font-size:16px;font-weight:700;margin-bottom:20px">📈 Record Paper Trade</div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">TICKER</div>
+      <input id="trade-ticker" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px;text-transform:uppercase" placeholder="e.g. AAPL">
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">SHARES</div>
+      <input type="number" id="trade-qty" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="e.g. 10">
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">ENTRY PRICE (USD)</div>
+      <input type="number" step="0.01" id="trade-price" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="e.g. 185.50">
+    </div>
+    <div style="margin-bottom:20px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">DATE</div>
+      <input type="date" id="trade-date" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button onclick="closeBuyModal()" style="background:#F3F4F6;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Cancel</button>
+      <button onclick="saveTrade()" style="background:#1B4332;color:#fff;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Buy</button>
+    </div>
+  </div>
+</div>
+
 <script>
 function authFetch(url, opts = {}) {
   return fetch(url, { ...opts, credentials: 'same-origin', headers: { ...(opts.headers || {}) } });
@@ -1116,6 +1162,8 @@ async function archiveGoal(id) {
 // ── PROPERTY ──────────────────────────────────────────────────────────────────
 
 async function loadProperty() {
+  loadScreener();
+  loadPortfolio();
   const p = await authFetch('/api/property').then(r => r.json()).catch(() => ({}));
   const equity = p.estimated_value - p.mortgage_balance;
   document.getElementById('property-stats').innerHTML = [
@@ -1141,10 +1189,10 @@ async function loadProperty() {
       <div><span style="color:#6B7280">Property value:</span> <strong>${fmt(p.estimated_value)}</strong></div>
       <div><span style="color:#6B7280">Mortgage:</span> <strong class="red-text">-${fmt(p.mortgage_balance)}</strong></div>
       <div><span style="color:#6B7280">Property equity:</span> <strong class="green-text">${fmt(equity)}</strong></div>
-      <div><span style="color:#6B7280">Share portfolio:</span> <strong style="color:#9CA3AF">Not yet live</strong></div>
+      <div><span style="color:#6B7280">Share portfolio:</span> <strong id="nw-portfolio-val" style="color:#9CA3AF">Loading…</strong></div>
       <div style="grid-column:1/-1;padding-top:12px;border-top:1px solid #F3F4F6">
-        <span style="color:#6B7280">Estimated net worth:</span> <strong style="font-size:18px">${fmt(equity)}</strong>
-        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">(property equity only — shares, savings not included)</span>
+        <span style="color:#6B7280">Estimated net worth:</span> <strong id="nw-total" style="font-size:18px">${fmt(equity)}</strong>
+        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">(property equity + paper portfolio)</span>
       </div>
     </div>`;
 }
@@ -1163,6 +1211,161 @@ async function savePropertyValue() {
   await authFetch('/api/property', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({estimated_value: val, notes: note})});
   closeValueModal();
   loadProperty();
+}
+
+// ── SCREENER & PAPER TRADING ─────────────────────────────────────────────────
+
+let _trades = [];
+
+async function loadScreener() {
+  const data = await authFetch('/api/screener/results').then(r=>r.json()).catch(()=>({results:[],run_date:null}));
+  const el = document.getElementById('screener-results');
+  const dateEl = document.getElementById('screener-run-date');
+  if (!data.results.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:#9CA3AF;font-size:13px">No results yet — hit "Run Scan" to score the value watchlist (~2 min)</div>';
+    return;
+  }
+  dateEl.textContent = data.run_date ? `Last run: ${data.run_date}` : '';
+  const top = data.results.slice(0, 10);
+  el.innerHTML = `
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="border-bottom:2px solid #E5E7EB;color:#6B7280;text-align:left">
+        <th style="padding:8px 12px">Stock</th>
+        <th style="padding:8px 6px;text-align:center">Score</th>
+        <th style="padding:8px 6px;text-align:center">Q</th>
+        <th style="padding:8px 6px;text-align:center">G</th>
+        <th style="padding:8px 6px;text-align:center">V</th>
+        <th style="padding:8px 6px;text-align:center">M</th>
+        <th style="padding:8px 6px">Price</th>
+        <th style="padding:8px 6px"></th>
+      </tr></thead>
+      <tbody>
+      ${top.map(r => {
+        const scoreColor = r.score >= 70 ? '#059669' : r.score >= 50 ? '#D97706' : '#9CA3AF';
+        return `<tr style="border-bottom:1px solid #F3F4F6">
+          <td style="padding:8px 12px">
+            <div style="font-weight:600">${r.ticker}</div>
+            <div style="font-size:11px;color:#9CA3AF">${(r.company_name||'').substring(0,20)}</div>
+            <div style="font-size:10px;color:#6B7280;font-style:italic">${r.archetype||''}</div>
+          </td>
+          <td style="padding:8px 6px;text-align:center"><span style="font-weight:700;color:${scoreColor}">${r.score}</span></td>
+          <td style="padding:8px 6px;text-align:center;color:#6B7280">${r.quality}</td>
+          <td style="padding:8px 6px;text-align:center;color:#6B7280">${r.growth}</td>
+          <td style="padding:8px 6px;text-align:center;color:#6B7280">${r.value_score}</td>
+          <td style="padding:8px 6px;text-align:center;color:#6B7280">${r.momentum}</td>
+          <td style="padding:8px 6px">$${(r.current_price||0).toFixed(2)}</td>
+          <td style="padding:8px 6px">
+            <button onclick="quickBuy('${r.ticker}','${(r.company_name||r.ticker).replace(/'/g,"\\'")}',${r.current_price||0})"
+              style="background:#1B4332;color:#fff;border:none;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">Buy</button>
+          </td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table></div>`;
+}
+
+async function runScreener() {
+  const btn = document.getElementById('screener-btn');
+  btn.textContent = '⏳ Running…'; btn.disabled = true;
+  await authFetch('/api/screener/run', {method:'POST'});
+  btn.textContent = '⏳ Scanning…';
+  await new Promise(r => setTimeout(r, 120000));
+  await loadScreener();
+  btn.textContent = '▶ Run Scan'; btn.disabled = false;
+}
+
+async function loadPortfolio() {
+  _trades = await authFetch('/api/paper-trades').then(r=>r.json()).catch(()=>[]);
+  const open = _trades.filter(t => !t.closed);
+  const el = document.getElementById('portfolio-list');
+  const badge = document.getElementById('portfolio-pnl-badge');
+
+  if (!open.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:#9CA3AF;font-size:13px">No open positions — buy a recommendation above</div>';
+    badge.textContent = '';
+    document.getElementById('nw-portfolio-val').textContent = '$0';
+    return;
+  }
+
+  // Fetch live prices
+  let totalValue = 0, totalCost = 0;
+  const rows = await Promise.all(open.map(async t => {
+    let current = t.entry_price;
+    try {
+      const p = await authFetch(`/api/stock-price/${t.ticker}`).then(r=>r.json());
+      current = p.price || t.entry_price;
+    } catch(e) {}
+    const cost = t.qty * t.entry_price;
+    const val = t.qty * current;
+    totalCost += cost; totalValue += val;
+    const pnl = val - cost;
+    const pnlPct = (pnl / cost * 100).toFixed(1);
+    const pnlColor = pnl >= 0 ? '#059669' : '#DC2626';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #F3F4F6">
+      <div>
+        <span style="font-weight:600;font-size:14px">${t.ticker}</span>
+        <span style="font-size:12px;color:#6B7280;margin-left:8px">${t.qty} shares @ $${t.entry_price}</span>
+        <div style="font-size:11px;color:#9CA3AF">${t.entry_date}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:13px">$${val.toFixed(2)}</div>
+        <div style="font-size:12px;color:${pnlColor};font-weight:600">${pnl>=0?'+':''}$${pnl.toFixed(2)} (${pnlPct}%)</div>
+      </div>
+      <button onclick="deleteTrade(${t.id})" style="background:none;border:none;color:#9CA3AF;cursor:pointer;margin-left:10px">×</button>
+    </div>`;
+  }));
+
+  const totalPnl = totalValue - totalCost;
+  const pnlColor = totalPnl >= 0 ? '#059669' : '#DC2626';
+  badge.innerHTML = `<span style="color:${pnlColor}">${totalPnl>=0?'+':''}$${totalPnl.toFixed(2)}</span>`;
+  document.getElementById('nw-portfolio-val').textContent = `$${totalValue.toFixed(2)}`;
+  // Update net worth
+  try {
+    const nwEl = document.getElementById('nw-total');
+    if (nwEl) {
+      const equityText = nwEl.textContent.replace(/[^0-9]/g,'');
+      const equity = parseInt(equityText) || 0;
+      nwEl.textContent = fmt(equity + Math.round(totalValue));
+    }
+  } catch(e) {}
+
+  el.innerHTML = `
+    <div style="padding:10px 0 0">${rows.join('')}</div>
+    <div style="display:flex;justify-content:space-between;padding:12px 0;font-size:13px;font-weight:600;border-top:2px solid #E5E7EB;margin-top:4px">
+      <span>Total Portfolio</span>
+      <span style="color:${pnlColor}">$${totalValue.toFixed(2)} (${totalPnl>=0?'+':''}${((totalPnl/totalCost)*100).toFixed(1)}%)</span>
+    </div>`;
+}
+
+function showBuyModal(ticker='', name='', price=0) {
+  document.getElementById('buy-modal').style.display = 'flex';
+  document.getElementById('trade-ticker').value = ticker;
+  document.getElementById('trade-price').value = price || '';
+  document.getElementById('trade-qty').value = '';
+  document.getElementById('trade-date').value = new Date().toISOString().slice(0,10);
+}
+function quickBuy(ticker, name, price) { showBuyModal(ticker, name, price); }
+function closeBuyModal() { document.getElementById('buy-modal').style.display = 'none'; }
+
+async function saveTrade() {
+  const ticker = document.getElementById('trade-ticker').value.trim().toUpperCase();
+  const qty = parseFloat(document.getElementById('trade-qty').value);
+  const price = parseFloat(document.getElementById('trade-price').value);
+  const date = document.getElementById('trade-date').value;
+  if (!ticker || !qty || !price) { alert('Fill in all fields'); return; }
+  await authFetch('/api/paper-trades', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ticker, qty, entry_price: price, entry_date: date})
+  });
+  closeBuyModal();
+  await loadPortfolio();
+}
+
+async function deleteTrade(id) {
+  if (!confirm('Remove this trade?')) return;
+  await authFetch(`/api/paper-trades/${id}`, {method:'DELETE'});
+  await loadPortfolio();
 }
 
 // ── CHAT ──────────────────────────────────────────────────────────────────────

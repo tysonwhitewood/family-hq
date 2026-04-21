@@ -292,6 +292,35 @@ def init_db():
                 briefing TEXT NOT NULL,
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                company_name TEXT,
+                action TEXT DEFAULT 'buy',
+                qty REAL NOT NULL,
+                entry_price REAL NOT NULL,
+                entry_date TEXT NOT NULL,
+                notes TEXT,
+                closed INTEGER DEFAULT 0,
+                close_price REAL,
+                close_date TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS screener_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                company_name TEXT,
+                score INTEGER DEFAULT 0,
+                quality INTEGER DEFAULT 0,
+                growth INTEGER DEFAULT 0,
+                value_score INTEGER DEFAULT 0,
+                momentum INTEGER DEFAULT 0,
+                archetype TEXT,
+                current_price REAL,
+                details TEXT,
+                run_date TEXT NOT NULL,
+                created_at TEXT
+            );
         ''')
         # Normalise insurance types (fix legacy full-name types from old seed)
         db.execute("UPDATE insurances SET type='house' WHERE type NOT IN ('house','car','business') AND (type LIKE '%Home%' OR type LIKE '%House%' OR type LIKE '%Content%')")
@@ -1090,7 +1119,159 @@ def discord_webhook_test():
 
 TOKEN_DIR = DATA_DIR / 'tokens'
 
-XERO_SCOPES = 'openid profile email accounting.accounts.read accounting.banktransactions.read accounting.reports.profitandloss.read offline_access'
+# ── Paper Trading & Screener ──────────────────────────────────────────────────
+
+VALUE_WATCHLIST = [
+    "AAPL","MSFT","V","MA","KO","JNJ","PG","UNH","HD","COST",
+    "BRK-B","JPM","BAC","AXP","CVX","OXY","MCO","SPGI","TMO","ISRG",
+    "NKE","ADBE","INTU","NVDA","AMZN",
+]
+
+def _cgg_score(ticker: str) -> dict:
+    """Simplified CGG 4-factor score using yfinance."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        hist = t.history(period='1y', auto_adjust=True)
+
+        score = 0
+        details = {}
+
+        # Quality (0-25): net margin + ROE + FCF positive
+        margin = (info.get('profitMargins') or 0) * 100
+        roe = (info.get('returnOnEquity') or 0) * 100
+        fcf = info.get('freeCashflow') or 0
+        q = min(10, max(0, int(margin / 3))) + min(10, max(0, int(roe / 5))) + (5 if fcf > 0 else 0)
+        score += q; details['quality'] = q
+
+        # Growth (0-25): earnings + revenue growth
+        eg = (info.get('earningsGrowth') or info.get('earningsQuarterlyGrowth') or 0) * 100
+        rg = (info.get('revenueGrowth') or 0) * 100
+        g = min(15, max(0, int(eg / 3))) + min(10, max(0, int(rg / 3)))
+        score += g; details['growth'] = g
+
+        # Value (0-25): PEG + FCF yield
+        peg = info.get('pegRatio') or 99
+        mcap = info.get('marketCap') or 1
+        fcf_yield = (fcf / mcap * 100) if mcap > 0 and fcf > 0 else 0
+        v = (15 if peg < 1 else 10 if peg < 2 else 5 if peg < 3 else 0) + min(10, max(0, int(fcf_yield * 2)))
+        score += v; details['value_score'] = v
+
+        # Momentum (0-25): above 200MA + 12m return
+        mom = 0
+        if len(hist) >= 200:
+            price = hist['Close'].iloc[-1]
+            ma200 = hist['Close'].rolling(200).mean().iloc[-1]
+            ret12 = (price / hist['Close'].iloc[0] - 1) * 100
+            mom = (10 if price > ma200 else 0) + min(15, max(0, int(ret12 / 5)))
+        score += mom; details['momentum'] = mom
+
+        price_now = info.get('currentPrice') or info.get('regularMarketPrice') or 0
+        archetype = ('Quality Compounder' if q >= 18 else
+                     'Momentum Leader' if mom >= 18 else
+                     'Income Grower' if v >= 18 else 'Developing')
+
+        return {
+            'ticker': ticker,
+            'company_name': info.get('shortName') or info.get('longName') or ticker,
+            'score': score,
+            'quality': q, 'growth': g, 'value_score': v, 'momentum': mom,
+            'archetype': archetype,
+            'current_price': round(price_now, 2),
+            'details': json.dumps(details),
+        }
+    except Exception as e:
+        return {'ticker': ticker, 'company_name': ticker, 'score': 0,
+                'quality': 0, 'growth': 0, 'value_score': 0, 'momentum': 0,
+                'archetype': 'Error', 'current_price': 0, 'details': str(e)}
+
+
+@app.route('/api/screener/run', methods=['POST'])
+@login_required
+def api_screener_run():
+    """Run CGG screener on value watchlist and cache results."""
+    import threading
+    def _run():
+        from datetime import date as _date
+        run_date = _date.today().isoformat()
+        results = [_cgg_score(t) for t in VALUE_WATCHLIST]
+        results.sort(key=lambda x: x['score'], reverse=True)
+        now = datetime.now().isoformat()[:19]
+        with get_db() as db:
+            db.execute('DELETE FROM screener_cache WHERE run_date=?', (run_date,))
+            for r in results:
+                db.execute(
+                    'INSERT INTO screener_cache (ticker,company_name,score,quality,growth,value_score,momentum,archetype,current_price,details,run_date,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (r['ticker'],r['company_name'],r['score'],r['quality'],r['growth'],r['value_score'],r['momentum'],r['archetype'],r['current_price'],r['details'],run_date,now)
+                )
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'ok': True, 'message': 'Screener running in background — refresh in ~2 minutes'})
+
+
+@app.route('/api/screener/results')
+@login_required
+def api_screener_results():
+    with get_db() as db:
+        rows = db.execute(
+            'SELECT * FROM screener_cache ORDER BY score DESC'
+        ).fetchall()
+    if not rows:
+        return jsonify({'results': [], 'run_date': None})
+    run_date = rows[0]['run_date']
+    return jsonify({'results': [dict(r) for r in rows], 'run_date': run_date})
+
+
+@app.route('/api/paper-trades', methods=['GET', 'POST'])
+@login_required
+def api_paper_trades():
+    with get_db() as db:
+        if request.method == 'POST':
+            d = request.get_json(force=True)
+            now = datetime.now().isoformat()[:19]
+            cur = db.execute(
+                'INSERT INTO paper_trades (ticker,company_name,action,qty,entry_price,entry_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?)',
+                (d['ticker'].upper(), d.get('company_name',''), d.get('action','buy'),
+                 float(d['qty']), float(d['entry_price']), d.get('entry_date', now[:10]),
+                 d.get('notes',''), now)
+            )
+            row = db.execute('SELECT * FROM paper_trades WHERE id=?', (cur.lastrowid,)).fetchone()
+            return jsonify(dict(row)), 201
+        rows = db.execute('SELECT * FROM paper_trades ORDER BY entry_date DESC').fetchall()
+        return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/paper-trades/<int:tid>', methods=['PUT', 'DELETE'])
+@login_required
+def api_paper_trade_item(tid):
+    with get_db() as db:
+        if request.method == 'DELETE':
+            db.execute('DELETE FROM paper_trades WHERE id=?', (tid,))
+            return jsonify({'ok': True})
+        d = request.get_json(force=True)
+        fields = [f'{k}=?' for k in d if k in ('qty','entry_price','entry_date','notes','closed','close_price','close_date')]
+        params = [d[k] for k in d if k in ('qty','entry_price','entry_date','notes','closed','close_price','close_date')]
+        if fields:
+            db.execute(f'UPDATE paper_trades SET {",".join(fields)} WHERE id=?', params + [tid])
+        row = db.execute('SELECT * FROM paper_trades WHERE id=?', (tid,)).fetchone()
+        return jsonify(dict(row))
+
+
+@app.route('/api/stock-price/<ticker>')
+@login_required
+def api_stock_price(ticker):
+    """Live price for a ticker via yfinance."""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker.upper()).info
+        price = info.get('currentPrice') or info.get('regularMarketPrice') or 0
+        name = info.get('shortName') or info.get('longName') or ticker
+        return jsonify({'ticker': ticker.upper(), 'price': price, 'name': name})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+XERO_SCOPES = 'openid profile email accounting.transactions.read accounting.reports.read offline_access'
+XERO_CC_SCOPES = 'accounting.transactions.read accounting.reports.read'  # Custom Connection scopes (no OIDC)
 XERO_REDIRECT_URI = 'https://family.edencommercial.au/api/xero/callback'
 XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize'
 XERO_TOKEN_URL = 'https://identity.xero.com/connect/token'
@@ -1159,7 +1340,45 @@ def _xero_get(path):
 
 @app.route('/api/xero/auth')
 def xero_auth():
-    """Redirect to Xero OAuth consent screen."""
+    """Try client_credentials (Custom Connection) first; fall back to OAuth redirect."""
+    from flask import redirect as _redirect
+    if XERO_CLIENT_ID and XERO_CLIENT_SECRET:
+        # Attempt Custom Connection (client_credentials) — works without user redirect
+        creds = base64.b64encode(f'{XERO_CLIENT_ID}:{XERO_CLIENT_SECRET}'.encode()).decode()
+        body = urllib.parse.urlencode({
+            'grant_type': 'client_credentials',
+            'scope': XERO_CC_SCOPES,
+        }).encode()
+        req = urllib.request.Request(
+            XERO_TOKEN_URL, data=body,
+            headers={'Authorization': f'Basic {creds}',
+                     'Content-Type': 'application/x-www-form-urlencoded'},
+            method='POST',
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                tok = json.loads(r.read())
+            tok['expires_at'] = time.time() + tok.get('expires_in', 1800)
+            # For custom connections, fetch tenant from connections endpoint
+            try:
+                conn_req = urllib.request.Request(
+                    'https://api.xero.com/connections',
+                    headers={'Authorization': f'Bearer {tok["access_token"]}', 'Accept': 'application/json'},
+                )
+                with urllib.request.urlopen(conn_req, timeout=15) as r2:
+                    connections = json.loads(r2.read())
+                if connections:
+                    tok['tenant_id'] = connections[0]['tenantId']
+                    tok['org_name'] = connections[0].get('tenantName', '')
+            except Exception:
+                pass
+            TOKEN_DIR.mkdir(exist_ok=True)
+            (TOKEN_DIR / 'xero_token.json').write_text(json.dumps(tok))
+            return _redirect('/?xero=connected')
+        except urllib.error.HTTPError:
+            pass  # Not a Custom Connection app — fall through to OAuth redirect
+
+    # Standard OAuth (Web App)
     import secrets as _secrets
     state = _secrets.token_urlsafe(16)
     params = urllib.parse.urlencode({
@@ -1169,7 +1388,6 @@ def xero_auth():
         'scope': XERO_SCOPES,
         'state': state,
     })
-    from flask import redirect as _redirect
     return _redirect(f'{XERO_AUTH_URL}?{params}')
 
 
