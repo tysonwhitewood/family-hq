@@ -322,6 +322,22 @@ def init_db():
                 created_at TEXT
             );
         ''')
+        # Seed RACQ insurance records if table is empty
+        if db.execute('SELECT COUNT(*) FROM insurances').fetchone()[0] == 0:
+            now = datetime.now().isoformat()[:19]
+            racq_insurances = [
+                ('car',   'RACQ', 'Q24M8Z',              None, None,
+                 'Motor vehicle insurance — comprehensive cover for Chery Tiggo 8 Pro Max', None),
+                ('car',   'RACQ', 'Mbr 3083 6700 9579 8082', None, None,
+                 'Roadside assistance — towing, battery, fuel, lockout', None),
+                ('house', 'RACQ', '57054030PQ',           None, None,
+                 'Home & contents insurance — building and contents cover', None),
+            ]
+            for type_, provider, policy_number, premium, renewal_date, coverage, notes in racq_insurances:
+                db.execute(
+                    'INSERT INTO insurances (type,provider,policy_number,premium,renewal_date,coverage,notes,created_at) VALUES (?,?,?,?,?,?,?,?)',
+                    (type_, provider, policy_number, premium, renewal_date, coverage, notes, now)
+                )
         # Normalise insurance types (fix legacy full-name types from old seed)
         db.execute("UPDATE insurances SET type='house' WHERE type NOT IN ('house','car','business') AND (type LIKE '%Home%' OR type LIKE '%House%' OR type LIKE '%Content%')")
         db.execute("UPDATE insurances SET type='car' WHERE type NOT IN ('house','car','business') AND (type LIKE '%Car%' OR type LIKE '%Roadside%' OR type LIKE '%Vehicle%')")
@@ -908,7 +924,9 @@ def api_warranties():
             )
             row = db.execute('SELECT * FROM warranties WHERE id=?', (cur.lastrowid,)).fetchone()
             return jsonify(dict(row)), 201
-        rows = [dict(r) for r in db.execute('SELECT * FROM warranties ORDER BY expires_date ASC').fetchall()]
+        rows = [dict(r) for r in db.execute(
+            'SELECT * FROM warranties ORDER BY COALESCE(standard_expires_date, expires_date) ASC'
+        ).fetchall()]
         return jsonify(rows)
 
 @app.route('/api/warranties/alerts')
