@@ -1157,7 +1157,13 @@ TOKEN_DIR = DATA_DIR / 'tokens'
 
 # ── Finance CSV + AI Chat ─────────────────────────────────────────────────────
 
-FINANCE_CSV_DIR = Path('/home/claude/family-wealth/2. Financial Capital/Banking & Cash Flow')
+# Check multiple paths — Coolify volume mount takes priority
+_FINANCE_CSV_CANDIDATES = [
+    Path('/app/family-wealth/2. Financial Capital/Banking & Cash Flow'),  # Coolify volume mount
+    Path('/app/data/bank_statements'),                                     # manual uploads
+    Path('/home/claude/family-wealth/2. Financial Capital/Banking & Cash Flow'),  # dev/host
+]
+FINANCE_CSV_DIR = next((p for p in _FINANCE_CSV_CANDIDATES if p.exists()), _FINANCE_CSV_CANDIDATES[1])
 
 def _parse_csv_files():
     """Parse all bank CSV files from the synced family-wealth folder. Returns list of transactions."""
@@ -1275,6 +1281,22 @@ def _categorise(description: str) -> str:
             return cat
     return 'Other'
 
+
+@app.route('/api/finance/upload-csv', methods=['POST'])
+@login_required
+def api_finance_upload_csv():
+    """Upload a bank CSV file — saves to /app/data/bank_statements/."""
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify({'error': 'no file'}), 400
+    save_dir = DATA_DIR / 'bank_statements'
+    save_dir.mkdir(exist_ok=True)
+    safe_name = re.sub(r'[^\w\s\-.]', '', f.filename).strip()
+    if not safe_name.endswith('.csv'):
+        return jsonify({'error': 'CSV files only'}), 400
+    dest = save_dir / safe_name
+    f.save(str(dest))
+    return jsonify({'ok': True, 'saved': safe_name})
 
 @app.route('/api/finance/summary')
 @login_required
