@@ -21,8 +21,8 @@ USERNAME = os.environ.get('FAMILY_HQ_USER', 'family')
 PASSWORD = os.environ.get('FAMILY_HQ_PASS', 'Whitewood2026!')
 app.secret_key = os.environ.get('SECRET_KEY', f'family-hq-{USERNAME}-dev-key')
 
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+def _anthropic_key(): return os.environ.get('ANTHROPIC_API_KEY', '')
+def _openrouter_key(): return os.environ.get('OPENROUTER_API_KEY', '')
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 
@@ -145,20 +145,23 @@ def require_auth():
 # ── LLM helper (Anthropic → OpenRouter fallback) ─────────────────────────────
 
 def llm_available():
-    return bool(ANTHROPIC_API_KEY or OPENROUTER_API_KEY)
+    return bool(_anthropic_key() or _openrouter_key())
 
 def llm_chat(messages: list, system: str = '', max_tokens: int = 1024) -> str:
     """Call Claude via Anthropic SDK, or fall back to OpenRouter free model."""
-    if ANTHROPIC_API_KEY:
+    anthropic_key = _anthropic_key()
+    openrouter_key = _openrouter_key()
+
+    if anthropic_key:
         import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        client = anthropic.Anthropic(api_key=anthropic_key)
         kwargs = dict(model='claude-haiku-4-5-20251001', max_tokens=max_tokens, messages=messages)
         if system:
             kwargs['system'] = system
         response = client.messages.create(**kwargs)
         return response.content[0].text
 
-    if OPENROUTER_API_KEY:
+    if openrouter_key:
         _models = [
             'meta-llama/llama-3.3-70b-instruct:free',
             'google/gemma-3-27b-it:free',
@@ -175,7 +178,7 @@ def llm_chat(messages: list, system: str = '', max_tokens: int = 1024) -> str:
                 'https://openrouter.ai/api/v1/chat/completions',
                 data=payload,
                 headers={
-                    'Authorization': f'Bearer {OPENROUTER_API_KEY}',
+                    'Authorization': f'Bearer {openrouter_key}',
                     'Content-Type': 'application/json',
                     'HTTP-Referer': 'https://family.edencommercial.au',
                 },
@@ -738,7 +741,7 @@ def api_chat():
         db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('user', user_msg, now))
         db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('assistant', reply, now))
 
-    model = 'claude-haiku' if ANTHROPIC_API_KEY else 'llama-3.3-70b (openrouter)'
+    model = 'claude-haiku' if _anthropic_key() else 'llama-3.3-70b (openrouter)'
     return jsonify({'reply': reply, 'model': model})
 
 @app.route('/api/chat/history')
@@ -787,8 +790,8 @@ def api_integrations():
     token_dir = DATA_DIR / 'tokens'
     return jsonify({
         'google_calendar': (token_dir / 'google_token.json').exists(),
-        'anthropic': bool(ANTHROPIC_API_KEY),
-        'openrouter': bool(OPENROUTER_API_KEY),
+        'anthropic': bool(_anthropic_key()),
+        'openrouter': bool(_openrouter_key()),
         'ai_ready': llm_available(),
         'outlook': True,
     })
@@ -1420,7 +1423,7 @@ Return ONLY valid JSON array, nothing else. Example:
     messages = [{'role': 'user', 'content': prompt}]
     reply = None
 
-    if ANTHROPIC_API_KEY:
+    if _anthropic_key():
         try:
             body = json.dumps({
                 'model': 'claude-haiku-4-5-20251001',
@@ -1431,7 +1434,7 @@ Return ONLY valid JSON array, nothing else. Example:
                 'https://api.anthropic.com/v1/messages',
                 data=body,
                 headers={
-                    'x-api-key': ANTHROPIC_API_KEY,
+                    'x-api-key': _anthropic_key(),
                     'anthropic-version': '2023-06-01',
                     'content-type': 'application/json',
                 },
@@ -1443,7 +1446,7 @@ Return ONLY valid JSON array, nothing else. Example:
         except Exception:
             pass
 
-    if not reply and OPENROUTER_API_KEY:
+    if not reply and _openrouter_key():
         for model in ['deepseek/deepseek-r1:free', 'meta-llama/llama-3.3-70b-instruct:free']:
             try:
                 body = json.dumps({
@@ -1455,7 +1458,7 @@ Return ONLY valid JSON array, nothing else. Example:
                     'https://openrouter.ai/api/v1/chat/completions',
                     data=body,
                     headers={
-                        'Authorization': f'Bearer {OPENROUTER_API_KEY}',
+                        'Authorization': f'Bearer {_openrouter_key()}',
                         'Content-Type': 'application/json',
                         'HTTP-Referer': 'https://family.edencommercial.au',
                     },
@@ -1523,10 +1526,9 @@ Today's date: {date.today().isoformat()}"""
         'google/gemma-3-27b-it:free',
         'mistralai/mistral-7b-instruct:free',
     ]
-    api_key = OPENROUTER_API_KEY or ANTHROPIC_API_KEY
     reply = None
 
-    if ANTHROPIC_API_KEY:
+    if _anthropic_key():
         # Try Anthropic first (haiku — cheapest)
         try:
             body = json.dumps({
@@ -1539,7 +1541,7 @@ Today's date: {date.today().isoformat()}"""
                 'https://api.anthropic.com/v1/messages',
                 data=body,
                 headers={
-                    'x-api-key': ANTHROPIC_API_KEY,
+                    'x-api-key': _anthropic_key(),
                     'anthropic-version': '2023-06-01',
                     'content-type': 'application/json',
                 },
@@ -1551,7 +1553,7 @@ Today's date: {date.today().isoformat()}"""
         except Exception:
             pass
 
-    if not reply and OPENROUTER_API_KEY:
+    if not reply and _openrouter_key():
         for model in free_models:
             try:
                 body = json.dumps({
@@ -1563,7 +1565,7 @@ Today's date: {date.today().isoformat()}"""
                     'https://openrouter.ai/api/v1/chat/completions',
                     data=body,
                     headers={
-                        'Authorization': f'Bearer {OPENROUTER_API_KEY}',
+                        'Authorization': f'Bearer {_openrouter_key()}',
                         'Content-Type': 'application/json',
                         'HTTP-Referer': 'https://family.edencommercial.au',
                     },
