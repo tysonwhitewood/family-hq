@@ -1258,24 +1258,47 @@ def _finance_context_summary(transactions, max_txns=80):
 
 
 CATEGORY_RULES = [
-    ('Groceries',       ['woolworth','coles','aldi','iga','supercheap','butcher','bakery','fruit','market','foodworks','spudshed']),
-    ('Dining Out',      ['mcdonald','hungry','kfc','subway','domino','pizza','cafe','coffee','restaurant','bistro','canteen','grill','burger','sushi','noodle','thai','chinese','indian','hangi','donut','pastry','bakehouse']),
-    ('Fuel',            ['shell','bp ','caltex','7-eleven','ampol','puma fuel','petrol','servo','united petroleum']),
-    ('School / Kids',   ['rackley','swim','school','tutor','gym','sport','dance','martial','gymnastics','montessori','preschool','daycare','child care','kindy']),
-    ('Software / SaaS', ['netflix','spotify','disney','apple.com','google','prime','adobe','canva','openai','anthropic','cloudflare','github','dropbox','starlink','godaddy','shopify','coolify','hetzner','notion','slack','zoom','microsoft','office 365','aws ']),
-    ('Utilities',       ['agl','origin energy','energy australia','electricity','council rates','water corp','synergy','tas networks','gas','telstra','optus','vodafone','internet','nbn','aussie broadband']),
-    ('Business Income', ['squareup','sq *','eftpos purchase','stripe','payment receiv','invoice paid','sale ']),
-    ('Business Expense',['xero','myob','accountant','bookkeeper','stationery','office','printing','postage','courier','linkedin','seek','domain.com','rept.ai']),
-    ('Health',          ['chemist','pharmacy','priceline','doctor','medical centre','hospital','dental','physio','psych','health fund','medibank','bupa','nib ']),
-    ('Insurance',       ['racq','insurance','insur','iag','allianz','suncorp','nrma','gt insurance','aami','cgu ']),
-    ('Home & Garden',   ['bunning','mitre 10','hardware','nursery','garden','plumber','electrician','reno','handyman','cleaners','cleaning','pool','pest']),
-    ('Clothing',        ['kmart','target','big w','myer','david jones','cotton on','uniqlo','h&m','country road','clothing','fashion','shoes','nike','adidas','rebel sport']),
-    ('Electronics',     ['jb hi-fi','harvey norman','officeworks','apple store','bing lee','dick smith','jaycar','dji','sony','samsung','the good guys']),
-    ('Travel',          ['airbnb','hotel','motel','flight','jetstar','qantas','virgin australia','uber','taxi','booking.com','expedia','wotif','car hire']),
-    ('Parking / Fines', ['parking','wilson parking','secure parking','care park','council fine','infringement','toll']),
-    ('ATM / Cash',      ['atm','cash out','cash withdrawal','currency exchange']),
-    ('Banking / Fees',  ['monthly fee','account fee','bank fee','interest charge','overdrawn','card fee','annual fee','dishonour']),
-    ('Transfers',       ['transfer to','transfer from','pay id','osko','bpay','direct credit','aba','autosave']),
+    # ── Groceries & Food ──────────────────────────────────────────────────────
+    ('Groceries',        ['woolworth','coles','aldi','iga','spar','foodworks','spudshed','butcher','bakery','fruit shop','fresh market','harris farm','asian grocer']),
+    ('Dining Out',       ['mcdonald','hungry jacks','kfc','subway','domino','pizza','cafe ','coffee','restaurant','bistro','canteen','grill','burger','sushi','noodle','thai','chinese','indian','hangi','donut','pastry','bakehouse','kebab','mexican','italian','tapas','food court','oporto','guzman','chatime','betty','taco','roll\'d']),
+    # ── Transport ─────────────────────────────────────────────────────────────
+    ('Fuel',             ['shell','bp ','caltex','7-eleven','ampol','puma fuel','petrol','servo','united petroleum','liberty oil']),
+    ('Transport',        ['uber','ola ride','didi','taxi','rideshare','go car','translink','opal','myki','limousine','bus ticket']),
+    ('Parking / Tolls',  ['parking','wilson parking','secure parking','care park','linkt','citylink','transurban','e-toll','toll ','infringement','fine ']),
+    # ── Family & Kids ─────────────────────────────────────────────────────────
+    ('School / Kids',    ['rackley','swim school','school fees','tutor','dance','martial arts','gymnastics','montessori','preschool','daycare','child care','kindy','little athletics','soccer club','football club','cricket club','netball','sport fee']),
+    ('Health & Medical', ['chemist','pharmacy','priceline','terry white','amcal','doctor','medical centre','hospital','dental','dentist','physio','psychologist','health fund','medibank','bupa','nib ','optical','hearing','specialist','pathology']),
+    # ── Home ──────────────────────────────────────────────────────────────────
+    ('Home & Garden',    ['bunning','mitre 10','hardware','nursery','garden centre','plumber','plumbing','electrician','reno','handyman','cleaners','cleaning service','pool','pest control','locksmith','furniture','ikea','fantastic','nick scali','amart','harvey norm']),
+    ('Home Utilities',   ['agl','origin energy','energy australia','electricity','ergon','endeavour energy','council rates','water corp','synergy','seqwater','unitywater','gas','origin gas','nt power']),
+    ('Rent / Mortgage',  ['rent ','rental payment','mortgage','home loan','strata','body corporate','property manager']),
+    # ── Lifestyle ─────────────────────────────────────────────────────────────
+    ('Clothing',         ['kmart','target','big w','myer','david jones','cotton on','uniqlo','h&m','country road','clothing','fashion','shoes','nike','adidas','rebel sport','glue store','factorie','jay jays','jeanswest','rivers','sportscraft']),
+    ('Electronics',      ['jb hi-fi','harvey norman','officeworks','apple store','bing lee','jaycar','dji','sony','samsung','the good guys','dell','lenovo','microsoft store','camera house']),
+    ('Online Shopping',  ['ebay','amazon','etsy','aliexpress','wish.com','catch.com','kogan','temu','shein','boohoo','the iconic','net-a-porter']),
+    ('Entertainment',    ['hoyts','event cinemas','village cinema','reading cinema','ticketek','ticketmaster','moshtix','oztix','theme park','dreamworld','movieworld','sea world','bowling','minigolf','escape room','laser tag','trampoline']),
+    ('Beauty / Wellbeing',['salon','hairdresser','barber','nails','nail bar','spa ','massage','waxing','blow dry','beauty','lash','cosmetic','mecca','sephora','priceline beauty']),
+    ('Sports / Fitness', ['gym','crossfit','f45','anytime fitness','jetts','goodlife','planet fitness','yoga','pilates','swim centre','aquatic','golf','tennis','cycling','running gear','sportsmans']),
+    ('Travel',           ['airbnb','hotel','motel','flight','jetstar','qantas','virgin australia','tigerair','bonza','booking.com','expedia','wotif','trivago','car hire','hertz','budget rent','avis','thrifty','campervan']),
+    ('Subscriptions',    ['netflix','spotify','disney+','foxtel','binge','stan ','paramount','apple tv','youtube premium','amazon prime','kindle','audible']),
+    # ── Insurance & Finance ───────────────────────────────────────────────────
+    ('Insurance',        ['racq','insurance','insur','iag','allianz','suncorp','nrma','gt insurance','aami','cgu ','qbe','zurich','woolworths insurance','budget direct']),
+    ('Banking / Fees',   ['monthly fee','account fee','bank fee','interest charge','loan repayment','credit card','overdrawn','card fee','annual fee','dishonour','late fee']),
+    ('ATM / Cash',       ['atm ','cash out','cash withdrawal','currency exchange','foreign atm']),
+    # ── Digital / Software ────────────────────────────────────────────────────
+    ('Software / SaaS',  ['openai','anthropic','github','cloudflare','dropbox','notion','slack','zoom','hetzner','coolify','linode','digital ocean','vultr','aws ','google cloud','azure','namecheap','godaddy','shopify','wix','squarespace','mailchimp','hubspot','salesforce','figma','loom']),
+    ('Telco / Internet',  ['telstra','optus','vodafone','boost mobile','amaysim','circles.life','belong','aussie broadband','superloop','nbn','kogan mobile','dodo','iinet','internode']),
+    # ── Business ──────────────────────────────────────────────────────────────
+    ('Payroll / Super',  ['payroll','salary payment','wages','superannuation','australiansuper','rest super','hostplus','sunsuper','colonial first','amp super','bt super','cbus','hesta']),
+    ('ATO / Tax',        ['ato ','australian taxation','bas payment','payg','gst payment','tax office','tax instalment','fringe benefit']),
+    ('Rent / Lease',     ['commercial lease','shop lease','office lease','strata levy','body corp levy']),
+    ('Marketing / Ads',  ['google ads','facebook ads','meta ads','instagram ads','tiktok ads','adwords','advertising','marketing agency','pr agency','mailchimp','klaviyo','hubspot']),
+    ('Staff / Contractors',['contractor','freelance','labour hire','staffing','recruitment fee','seek job']),
+    ('Business Services',['xero','myob','reckon','quickbooks','accountant','bookkeeper','solicitor','legal fee','consulting fee','advisory','business bank','squareup','sq *','stripe','eftpos','tyro','pos system','rept.ai']),
+    ('Business Supplies',['stationery','printing','packaging','courier','australia post','sendle','startrack','fastway','toll ipec','tnt express','office supplies','signage','uniform','workwear']),
+    ('Freight / Postage',['freight','shipping','postage','startrack','toll ipec','tnt ','fastway','sendle','courier please','zoom2u']),
+    ('IT / Tech',        ['dell','lenovo','hp ','microsoft','adobe','server','hosting','domain','ssl cert','backup','software licence','it support','managed services']),
+    ('Transfers',        ['transfer to','transfer from','pay id','osko','bpay','direct credit','autosave','linked saver']),
 ]
 
 BUSINESS_ACCOUNT_KEYWORDS = ['eden', 'commercial', 'business', 'pty', 'company']
