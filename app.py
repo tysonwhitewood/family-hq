@@ -1251,11 +1251,36 @@ def _finance_context_summary(transactions, max_txns=80):
     return '\n'.join(lines)
 
 
+CATEGORY_RULES = [
+    ('Groceries',       ['woolworth','coles','aldi','iga','supercheap','butcher','bakery','fruit','market']),
+    ('Dining Out',      ['mcdonald','hungry','kfc','subway','domino','pizza','cafe','coffee','restaurant','bar ','bistro','canteen','grill','burger','sushi','noodle','thai','chinese','indian','hangi']),
+    ('Fuel',            ['shell','bp ','caltex','7-eleven','ampol','puma fuel','petrol','servo']),
+    ('School / Kids',   ['rackley','swim','school','tutor','gym','sport','dance','martial','gymnastics','gymnastics']),
+    ('Subscriptions',   ['netflix','spotify','disney','apple','google','amazon','prime','adobe','canva','openai','anthropic','cloudflare','github','dropbox','cheesecake','starlink','godaddy','shopify','coolify','hetzner']),
+    ('Utilities',       ['agl','origin','energy','electricity','water','gas','telstra','optus','vodafone','internet','nbn']),
+    ('Business',        ['squareup','sq *','eftpos','payment receiv','invoice','stripe','xero','myob','accountant']),
+    ('Health',          ['chemist','pharmacy','doctor','medical','hospital','dental','physio','psych','health']),
+    ('Insurance',       ['racq','insurance','insur','iag','allianz','suncorp','nrma','gt insurance']),
+    ('Home & Garden',   ['bunning','mitre 10','hardware','nursery','garden','plumb','electric','reno','handyman']),
+    ('Clothing',        ['kmart','target','big w','myer','david jones','cotton on','uniqlo','h&m','country road','clothing','fashion']),
+    ('Travel',          ['airbnb','hotel','motel','flight','jetstar','qantas','virgin','uber','taxi','booking','expedia']),
+    ('Banking / Fees',  ['monthly fee','account fee','bank fee','interest charge','overdrawn','direct debit']),
+    ('Transfers',       ['transfer','payment receiv','pay id','osko','bpay']),
+]
+
+def _categorise(description: str) -> str:
+    desc_l = description.lower()
+    for cat, keywords in CATEGORY_RULES:
+        if any(k in desc_l for k in keywords):
+            return cat
+    return 'Other'
+
+
 @app.route('/api/finance/summary')
 @login_required
 def api_finance_summary():
-    transactions = _parse_csv_files()
     from collections import defaultdict
+    transactions = _parse_csv_files()
     accounts = defaultdict(lambda: {'count': 0, 'balance': None, 'last_date': None})
     for t in transactions:
         acc = t['account']
@@ -1264,11 +1289,130 @@ def api_finance_summary():
             accounts[acc]['balance'] = t['balance']
         if accounts[acc]['last_date'] is None:
             accounts[acc]['last_date'] = t['date']
+
+    # Category spending (last 90 days, expenses only)
+    from datetime import timedelta
+    cutoff = (date.today() - timedelta(days=90)).isoformat()
+    cat_spend = defaultdict(float)
+    monthly_in = defaultdict(float)
+    monthly_out = defaultdict(float)
+    for t in transactions:
+        if t['date'] < cutoff:
+            continue
+        cat = _categorise(t['description'])
+        month = t['date'][:7]
+        if t['amount'] < 0:
+            cat_spend[cat] += abs(t['amount'])
+            monthly_out[month] += abs(t['amount'])
+        else:
+            monthly_in[month] += t['amount']
+
+    # Annotate recent with category
+    recent = []
+    for t in transactions[:50]:
+        recent.append({**t, 'category': _categorise(t['description'])})
+
     return jsonify({
         'accounts': [{'name': k, **v} for k, v in accounts.items()],
         'total_transactions': len(transactions),
-        'recent': transactions[:30],
+        'recent': recent,
+        'category_spend': dict(sorted(cat_spend.items(), key=lambda x: -x[1])),
+        'monthly_income': dict(sorted(monthly_in.items())),
+        'monthly_expenses': dict(sorted(monthly_out.items())),
     })
+
+
+@app.route('/api/finance/savings-tips', methods=['POST'])
+@login_required
+def api_finance_savings_tips():
+    """AI-generated cost-saving suggestions based on transaction data."""
+    transactions = _parse_csv_files()
+    context = _finance_context_summary(transactions, max_txns=100)
+
+    prompt = f"""You are a personal finance advisor for the Whitewood family. Analyse their bank transactions and provide specific, actionable cost-saving suggestions.
+
+Focus on:
+1. Subscriptions that could be cancelled or reduced
+2. Recurring charges that could be negotiated or DIY'd
+3. Spending categories with high amounts that could be reduced
+4. Business expenses that could be optimised
+5. Any duplicate or redundant services
+
+Format your response as a JSON array of suggestions, each with:
+- "item": the specific charge or category
+- "saving": estimated monthly saving in AUD
+- "action": what to do
+- "type": "cancel" | "reduce" | "diy" | "negotiate" | "switch"
+
+Transaction data:
+{context}
+
+Return ONLY valid JSON array, nothing else. Example:
+[{{"item": "Netflix", "saving": 22, "action": "Cancel or share plan", "type": "cancel"}}]"""
+
+    messages = [{'role': 'user', 'content': prompt}]
+    reply = None
+
+    if ANTHROPIC_API_KEY:
+        try:
+            body = json.dumps({
+                'model': 'claude-haiku-4-5-20251001',
+                'max_tokens': 1500,
+                'messages': messages,
+            }).encode()
+            req = urllib.request.Request(
+                'https://api.anthropic.com/v1/messages',
+                data=body,
+                headers={
+                    'x-api-key': ANTHROPIC_API_KEY,
+                    'anthropic-version': '2023-06-01',
+                    'content-type': 'application/json',
+                },
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                resp = json.loads(r.read())
+            reply = resp['content'][0]['text']
+        except Exception:
+            pass
+
+    if not reply and OPENROUTER_API_KEY:
+        for model in ['deepseek/deepseek-r1:free', 'meta-llama/llama-3.3-70b-instruct:free']:
+            try:
+                body = json.dumps({
+                    'model': model,
+                    'messages': messages,
+                    'max_tokens': 1500,
+                }).encode()
+                req = urllib.request.Request(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    data=body,
+                    headers={
+                        'Authorization': f'Bearer {OPENROUTER_API_KEY}',
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': 'https://family.edencommercial.au',
+                    },
+                    method='POST',
+                )
+                with urllib.request.urlopen(req, timeout=45) as r:
+                    resp = json.loads(r.read())
+                reply = resp['choices'][0]['message']['content']
+                break
+            except Exception:
+                continue
+
+    if not reply:
+        return jsonify({'error': 'No AI available'}), 503
+
+    # Extract JSON from response
+    try:
+        start = reply.find('[')
+        end   = reply.rfind(']') + 1
+        tips  = json.loads(reply[start:end])
+    except Exception:
+        tips = []
+
+    return jsonify({'tips': tips})
 
 
 @app.route('/api/finance/chat', methods=['POST'])

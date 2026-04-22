@@ -402,7 +402,7 @@ body {
       <span class="nav-icon">🎯</span> Family Goals
     </div>
     <div class="nav-item" onclick="showPage('property',this);loadProperty()">
-      <span class="nav-icon">🏡</span> Property
+      <span class="nav-icon">🏡</span> Investments
     </div>
     <div class="nav-item" onclick="showPage('finance',this);loadFinance()">
       <span class="nav-icon">💰</span> Finance
@@ -706,18 +706,34 @@ body {
   <div class="page-body">
 
     <!-- Account summaries -->
-    <div class="card" id="fin-accounts-card" style="margin-bottom:16px">
-      <div class="card-header"><div class="card-title">Accounts</div></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">Accounts</div><div id="fin-txn-count" style="font-size:12px;color:#9CA3AF"></div></div>
       <div id="fin-accounts-body" style="padding:16px;color:#6B7280;font-size:13px">Loading…</div>
+    </div>
+
+    <!-- Spending by category (last 90 days) -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <div class="card-title">Spending by Category <span style="font-size:11px;color:#9CA3AF;font-weight:400">(last 90 days)</span></div>
+        <button onclick="finGetSavingsTips()" id="fin-tips-btn" style="background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">✦ AI Savings Tips</button>
+      </div>
+      <div id="fin-categories-body" style="padding:12px 16px">Loading…</div>
+      <div id="fin-tips-body" style="padding:0 16px 12px;display:none"></div>
+    </div>
+
+    <!-- Wishlist on Finance -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <div class="card-title">🛒 Wishlist — Upcoming Costs</div>
+        <a onclick="showPage('wishlist',null);loadWishlist()" style="font-size:12px;color:#1B4332;cursor:pointer;text-decoration:underline">Manage →</a>
+      </div>
+      <div id="fin-wishlist-body" style="padding:4px 0">Loading…</div>
     </div>
 
     <!-- Recent transactions -->
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header">
-        <div class="card-title">Recent Transactions</div>
-        <div id="fin-txn-count" style="font-size:12px;color:#9CA3AF"></div>
-      </div>
-      <div id="fin-txns-body" style="max-height:300px;overflow-y:auto">
+      <div class="card-header"><div class="card-title">Recent Transactions</div></div>
+      <div id="fin-txns-body" style="max-height:280px;overflow-y:auto">
         <div style="padding:16px;color:#6B7280;font-size:13px">Loading…</div>
       </div>
     </div>
@@ -884,7 +900,7 @@ body {
       <span class="micon">💰</span><span>Finance</span>
     </div>
     <div class="mnav-item" onclick="showPage('property',this);loadProperty()" data-page="property">
-      <span class="micon">🏡</span><span>Property</span>
+      <span class="micon">🏡</span><span>Investments</span>
     </div>
   </div>
 </nav>
@@ -1911,18 +1927,27 @@ loadWarranties();
 let _finHistory = [];
 
 async function loadFinance() {
-  const accsEl  = document.getElementById('fin-accounts-body');
-  const txnsEl  = document.getElementById('fin-txns-body');
-  const cntEl   = document.getElementById('fin-txn-count');
+  const accsEl = document.getElementById('fin-accounts-body');
+  const txnsEl = document.getElementById('fin-txns-body');
+  const cntEl  = document.getElementById('fin-txn-count');
+  const catEl  = document.getElementById('fin-categories-body');
+  const wlEl   = document.getElementById('fin-wishlist-body');
   if (accsEl) accsEl.innerHTML = '<span style="color:#9CA3AF">Loading…</span>';
   if (txnsEl) txnsEl.innerHTML = '<div style="padding:16px;color:#9CA3AF;font-size:13px">Loading…</div>';
+  if (catEl)  catEl.innerHTML  = '<span style="color:#9CA3AF;font-size:13px">Loading…</span>';
+
   try {
-    const r = await authFetch('/api/finance/summary');
-    const d = await r.json();
+    const [finR, wlR] = await Promise.all([
+      authFetch('/api/finance/summary'),
+      authFetch('/api/wishlist'),
+    ]);
+    const d  = await finR.json();
+    const wl = await wlR.json();
+
     // Accounts
     if (accsEl) {
       if (!d.accounts || !d.accounts.length) {
-        accsEl.innerHTML = '<span style="color:#9CA3AF;font-size:13px">No CSV files found in Syncthing family-wealth folder.</span>';
+        accsEl.innerHTML = '<span style="color:#9CA3AF;font-size:13px">No CSV files found in Syncthing family-wealth folder. Add CSVs to the Banking & Cash Flow folder and they\'ll appear here.</span>';
       } else {
         accsEl.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:12px;padding:4px 0">' +
           d.accounts.map(a => {
@@ -1935,17 +1960,53 @@ async function loadFinance() {
           }).join('') + '</div>';
       }
     }
-    // Transactions
     if (cntEl) cntEl.textContent = d.total_transactions + ' total';
+
+    // Category spending bars
+    if (catEl && d.category_spend) {
+      const cats = Object.entries(d.category_spend).filter(([k,v]) => v > 0);
+      const maxV = cats.length ? Math.max(...cats.map(([,v]) => v)) : 1;
+      catEl.innerHTML = cats.map(([cat, amt]) => {
+        const pct = Math.round((amt / maxV) * 100);
+        return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:13px">
+          <div style="width:120px;color:#374151;font-weight:500;flex-shrink:0">${cat}</div>
+          <div style="flex:1;background:#F3F4F6;border-radius:4px;height:10px;overflow:hidden">
+            <div style="width:${pct}%;height:100%;background:#1B4332;border-radius:4px"></div>
+          </div>
+          <div style="width:80px;text-align:right;color:#374151;font-weight:600">$${Math.round(amt).toLocaleString()}</div>
+        </div>`;
+      }).join('') || '<span style="color:#9CA3AF;font-size:13px">No spending data yet.</span>';
+    }
+
+    // Wishlist on finance page
+    if (wlEl) {
+      const pending = (wl || []).filter(w => w.status !== 'done');
+      if (!pending.length) {
+        wlEl.innerHTML = '<div style="padding:12px 16px;color:#9CA3AF;font-size:13px">Nothing on the wishlist yet.</div>';
+      } else {
+        const total = pending.reduce((s, w) => s + (w.estimated_cost || 0), 0);
+        wlEl.innerHTML = '<div style="padding:8px 16px 4px;font-size:12px;color:#6B7280">'+pending.length+' items · Total ~$'+total.toLocaleString()+'</div>'
+          + pending.slice(0,8).map(w => {
+            const season = {now:'🔥',spring:'🌱',winter:'❄️',anytime:'⏳'}[w.season] || '';
+            const cost = w.estimated_cost ? '$'+Number(w.estimated_cost).toLocaleString() : '—';
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 16px;border-top:1px solid #F3F4F6;font-size:13px">
+              <span style="color:#111">${season} ${w.title}</span>
+              <span style="color:#1B4332;font-weight:700">${cost}</span>
+            </div>`;
+          }).join('');
+      }
+    }
+
+    // Transactions
     if (txnsEl && d.recent && d.recent.length) {
       txnsEl.innerHTML = d.recent.map(t => {
         const pos = t.amount >= 0;
         const color = pos ? '#059669' : '#DC2626';
         const sign  = pos ? '+' : '';
-        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-bottom:1px solid #F9FAFB;font-size:13px">
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 16px;border-bottom:1px solid #F9FAFB;font-size:13px">
           <div>
             <div style="color:#111;font-weight:500">${t.description||'—'}</div>
-            <div style="font-size:11px;color:#9CA3AF">${t.date} · ${t.account}</div>
+            <div style="font-size:11px;color:#9CA3AF">${t.date} · ${t.account} · <span style="color:#6B7280">${t.category||''}</span></div>
           </div>
           <div style="font-weight:700;color:${color};white-space:nowrap;margin-left:12px">${sign}$${Math.abs(t.amount).toLocaleString('en-AU',{minimumFractionDigits:2})}</div>
         </div>`;
@@ -1953,10 +2014,44 @@ async function loadFinance() {
     } else if (txnsEl) {
       txnsEl.innerHTML = '<div style="padding:16px;color:#9CA3AF;font-size:13px">No transactions loaded.</div>';
     }
-    // Load chat history
     finLoadHistory();
   } catch(e) {
     if (accsEl) accsEl.innerHTML = '<span style="color:#DC2626;font-size:13px">Could not load finance data</span>';
+  }
+}
+
+async function finGetSavingsTips() {
+  const btn  = document.getElementById('fin-tips-btn');
+  const body = document.getElementById('fin-tips-body');
+  if (!btn || !body) return;
+  btn.textContent = '⟳ Analysing…';
+  btn.disabled = true;
+  body.style.display = 'block';
+  body.innerHTML = '<div style="color:#9CA3AF;font-size:13px;padding:8px 0">Scanning your transactions for savings opportunities…</div>';
+  try {
+    const r = await authFetch('/api/finance/savings-tips', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json();
+    btn.textContent = '↺ Refresh Tips';
+    btn.disabled = false;
+    if (!d.tips || !d.tips.length) {
+      body.innerHTML = '<div style="color:#9CA3AF;font-size:13px;padding:8px 0">No specific suggestions found — your spending looks clean!</div>';
+      return;
+    }
+    const typeIcon = {cancel:'🚫',reduce:'✂️',diy:'🔧',negotiate:'💬',switch:'🔄'};
+    const totalSaving = d.tips.reduce((s, t) => s + (t.saving || 0), 0);
+    body.innerHTML = `<div style="font-size:12px;color:#059669;font-weight:600;margin-bottom:8px">Potential savings: ~$${totalSaving}/month</div>`
+      + d.tips.map(t => `<div style="display:flex;gap:10px;padding:8px 0;border-top:1px solid #F3F4F6;font-size:13px;align-items:flex-start">
+          <span style="font-size:16px;flex-shrink:0">${typeIcon[t.type]||'💡'}</span>
+          <div style="flex:1">
+            <div style="font-weight:600;color:#111">${t.item}</div>
+            <div style="color:#6B7280;font-size:12px">${t.action}</div>
+          </div>
+          <div style="font-weight:700;color:#059669;white-space:nowrap">~$${t.saving}/mo</div>
+        </div>`).join('');
+  } catch(e) {
+    body.innerHTML = '<div style="color:#DC2626;font-size:13px">Could not get suggestions — try again.</div>';
+    btn.textContent = '✦ AI Savings Tips';
+    btn.disabled = false;
   }
 }
 
