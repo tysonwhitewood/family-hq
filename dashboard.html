@@ -1542,16 +1542,11 @@ async function loadXeroData(dataEl) {
 
     if (accs.error || txns.error) {
       const err = accs.error || txns.error;
-      // Scope error — prompt reconnect with full scopes
-      if (err.includes('403') || err.includes('scope') || err.includes('AuthenticationUnsuccessful')) {
-        dataEl.innerHTML = `<div style="background:#FEF3C7;border:1px solid #FDE68A;border-radius:8px;padding:14px;font-size:13px">
-          <strong>⚠️ Accounting access not yet granted.</strong><br>
-          Your Xero connection needs to be refreshed to include bank data access.<br><br>
-          <a href="/api/xero/auth" style="background:#1B4332;color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-weight:600">Re-authorise Xero →</a>
-        </div>`;
-      } else {
-        dataEl.innerHTML = `<div style="color:#DC2626;font-size:13px">Error: ${err}</div>`;
-      }
+      dataEl.innerHTML = `<div style="background:#FEF3C7;border:1px solid #FDE68A;border-radius:8px;padding:14px;font-size:13px">
+        <strong>⚠️ Bank data unavailable.</strong><br>
+        Your Xero app needs accounting scope access enabled. Contact support or check your Xero developer app settings.<br>
+        <span style="color:#9CA3AF;font-size:11px;margin-top:4px;display:block">Error: ${err}</span>
+      </div>`;
       return;
     }
 

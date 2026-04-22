@@ -1306,7 +1306,7 @@ def api_stock_price(ticker):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-XERO_SCOPES = 'openid profile email offline_access accounting.transactions.read'
+XERO_SCOPES = 'openid profile email offline_access'
 XERO_REDIRECT_URI = 'https://family.edencommercial.au/api/xero/callback'
 XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize'
 XERO_TOKEN_URL = 'https://identity.xero.com/connect/token'
