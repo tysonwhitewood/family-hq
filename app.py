@@ -1258,21 +1258,31 @@ def _finance_context_summary(transactions, max_txns=80):
 
 
 CATEGORY_RULES = [
-    ('Groceries',       ['woolworth','coles','aldi','iga','supercheap','butcher','bakery','fruit','market']),
-    ('Dining Out',      ['mcdonald','hungry','kfc','subway','domino','pizza','cafe','coffee','restaurant','bar ','bistro','canteen','grill','burger','sushi','noodle','thai','chinese','indian','hangi']),
-    ('Fuel',            ['shell','bp ','caltex','7-eleven','ampol','puma fuel','petrol','servo']),
-    ('School / Kids',   ['rackley','swim','school','tutor','gym','sport','dance','martial','gymnastics','gymnastics']),
-    ('Subscriptions',   ['netflix','spotify','disney','apple','google','amazon','prime','adobe','canva','openai','anthropic','cloudflare','github','dropbox','cheesecake','starlink','godaddy','shopify','coolify','hetzner']),
-    ('Utilities',       ['agl','origin','energy','electricity','water','gas','telstra','optus','vodafone','internet','nbn']),
-    ('Business',        ['squareup','sq *','eftpos','payment receiv','invoice','stripe','xero','myob','accountant']),
-    ('Health',          ['chemist','pharmacy','doctor','medical','hospital','dental','physio','psych','health']),
-    ('Insurance',       ['racq','insurance','insur','iag','allianz','suncorp','nrma','gt insurance']),
-    ('Home & Garden',   ['bunning','mitre 10','hardware','nursery','garden','plumb','electric','reno','handyman']),
-    ('Clothing',        ['kmart','target','big w','myer','david jones','cotton on','uniqlo','h&m','country road','clothing','fashion']),
-    ('Travel',          ['airbnb','hotel','motel','flight','jetstar','qantas','virgin','uber','taxi','booking','expedia']),
-    ('Banking / Fees',  ['monthly fee','account fee','bank fee','interest charge','overdrawn','direct debit']),
-    ('Transfers',       ['transfer','payment receiv','pay id','osko','bpay']),
+    ('Groceries',       ['woolworth','coles','aldi','iga','supercheap','butcher','bakery','fruit','market','foodworks','spudshed']),
+    ('Dining Out',      ['mcdonald','hungry','kfc','subway','domino','pizza','cafe','coffee','restaurant','bistro','canteen','grill','burger','sushi','noodle','thai','chinese','indian','hangi','donut','pastry','bakehouse']),
+    ('Fuel',            ['shell','bp ','caltex','7-eleven','ampol','puma fuel','petrol','servo','united petroleum']),
+    ('School / Kids',   ['rackley','swim','school','tutor','gym','sport','dance','martial','gymnastics','montessori','preschool','daycare','child care','kindy']),
+    ('Software / SaaS', ['netflix','spotify','disney','apple.com','google','prime','adobe','canva','openai','anthropic','cloudflare','github','dropbox','starlink','godaddy','shopify','coolify','hetzner','notion','slack','zoom','microsoft','office 365','aws ']),
+    ('Utilities',       ['agl','origin energy','energy australia','electricity','council rates','water corp','synergy','tas networks','gas','telstra','optus','vodafone','internet','nbn','aussie broadband']),
+    ('Business Income', ['squareup','sq *','eftpos purchase','stripe','payment receiv','invoice paid','sale ']),
+    ('Business Expense',['xero','myob','accountant','bookkeeper','stationery','office','printing','postage','courier','linkedin','seek','domain.com','rept.ai']),
+    ('Health',          ['chemist','pharmacy','priceline','doctor','medical centre','hospital','dental','physio','psych','health fund','medibank','bupa','nib ']),
+    ('Insurance',       ['racq','insurance','insur','iag','allianz','suncorp','nrma','gt insurance','aami','cgu ']),
+    ('Home & Garden',   ['bunning','mitre 10','hardware','nursery','garden','plumber','electrician','reno','handyman','cleaners','cleaning','pool','pest']),
+    ('Clothing',        ['kmart','target','big w','myer','david jones','cotton on','uniqlo','h&m','country road','clothing','fashion','shoes','nike','adidas','rebel sport']),
+    ('Electronics',     ['jb hi-fi','harvey norman','officeworks','apple store','bing lee','dick smith','jaycar','dji','sony','samsung','the good guys']),
+    ('Travel',          ['airbnb','hotel','motel','flight','jetstar','qantas','virgin australia','uber','taxi','booking.com','expedia','wotif','car hire']),
+    ('Parking / Fines', ['parking','wilson parking','secure parking','care park','council fine','infringement','toll']),
+    ('ATM / Cash',      ['atm','cash out','cash withdrawal','currency exchange']),
+    ('Banking / Fees',  ['monthly fee','account fee','bank fee','interest charge','overdrawn','card fee','annual fee','dishonour']),
+    ('Transfers',       ['transfer to','transfer from','pay id','osko','bpay','direct credit','aba','autosave']),
 ]
+
+BUSINESS_ACCOUNT_KEYWORDS = ['eden', 'commercial', 'business', 'pty', 'company']
+
+def _is_business_account(account_name: str) -> bool:
+    lower = account_name.lower()
+    return any(kw in lower for kw in BUSINESS_ACCOUNT_KEYWORDS)
 
 def _categorise(description: str) -> str:
     desc_l = description.lower()
@@ -1303,19 +1313,24 @@ def api_finance_upload_csv():
 def api_finance_summary():
     from collections import defaultdict
     transactions = _parse_csv_files()
-    accounts = defaultdict(lambda: {'count': 0, 'balance': None, 'last_date': None})
+    accounts = defaultdict(lambda: {'count': 0, 'balance': None, 'last_date': None, 'is_credit': False})
     for t in transactions:
         acc = t['account']
         accounts[acc]['count'] += 1
+        is_cc = 'credit' in acc.lower()
+        accounts[acc]['is_credit'] = is_cc
         if accounts[acc]['balance'] is None and t['balance']:
-            accounts[acc]['balance'] = t['balance']
+            # Credit card: positive balance = debt, show as negative
+            accounts[acc]['balance'] = -abs(t['balance']) if is_cc else t['balance']
         if accounts[acc]['last_date'] is None:
             accounts[acc]['last_date'] = t['date']
 
-    # Category spending (last 90 days, expenses only)
+    # Category spending (last 90 days, expenses only) — split business vs personal
     from datetime import timedelta
+    SKIP_CATS = {'Transfers'}
     cutoff = (date.today() - timedelta(days=90)).isoformat()
-    cat_spend = defaultdict(float)
+    cat_spend_business = defaultdict(float)
+    cat_spend_personal = defaultdict(float)
     monthly_in = defaultdict(float)
     monthly_out = defaultdict(float)
     for t in transactions:
@@ -1323,10 +1338,14 @@ def api_finance_summary():
             continue
         cat = _categorise(t['description'])
         month = t['date'][:7]
-        if t['amount'] < 0:
-            cat_spend[cat] += abs(t['amount'])
+        is_biz = _is_business_account(t['account'])
+        if t['amount'] < 0 and cat not in SKIP_CATS:
+            if is_biz:
+                cat_spend_business[cat] += abs(t['amount'])
+            else:
+                cat_spend_personal[cat] += abs(t['amount'])
             monthly_out[month] += abs(t['amount'])
-        else:
+        elif t['amount'] > 0:
             monthly_in[month] += t['amount']
 
     # Annotate recent with category
@@ -1338,7 +1357,8 @@ def api_finance_summary():
         'accounts': [{'name': k, **v} for k, v in accounts.items()],
         'total_transactions': len(transactions),
         'recent': recent,
-        'category_spend': dict(sorted(cat_spend.items(), key=lambda x: -x[1])),
+        'category_spend_business': dict(sorted(cat_spend_business.items(), key=lambda x: -x[1])),
+        'category_spend_personal': dict(sorted(cat_spend_personal.items(), key=lambda x: -x[1])),
         'monthly_income': dict(sorted(monthly_in.items())),
         'monthly_expenses': dict(sorted(monthly_out.items())),
     })
