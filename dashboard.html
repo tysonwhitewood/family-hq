@@ -404,9 +404,6 @@ body {
     <div class="nav-item" onclick="showPage('property',this);loadProperty()">
       <span class="nav-icon">🏡</span> Property
     </div>
-    <div class="nav-item" onclick="showPage('finance',this);loadFinance()">
-      <span class="nav-icon">💰</span> Finance
-    </div>
   </div>
 
   <div class="nav-section">
@@ -699,32 +696,6 @@ body {
   </div>
 </div>
 
-<!-- FINANCE -->
-<div class="page" id="page-finance">
-  <div class="topbar"><div class="topbar-title">💰 Finance</div></div>
-  <div class="page-body">
-    <div class="card" id="xero-status-card">
-      <div id="xero-loading" style="padding:40px;text-align:center;color:#9CA3AF;font-size:13px">Checking Xero connection…</div>
-      <div id="xero-not-connected" style="display:none;padding:40px;text-align:center;color:#6B7280">
-        <div style="font-size:40px;margin-bottom:16px">💰</div>
-        <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:8px">Xero — Not Connected</div>
-        <p style="font-size:13px;max-width:400px;margin:0 auto 20px">Connect Xero to see bank accounts, transactions, and cashflow. You'll be redirected to Xero to authorise, then brought straight back.</p>
-        <a href="/api/xero/auth" style="display:inline-block;background:#1B4332;color:#fff;text-decoration:none;padding:10px 24px;border-radius:8px;font-weight:600;cursor:pointer">Connect Xero →</a>
-      </div>
-      <div id="xero-connected" style="display:none;padding:20px">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-          <span style="font-size:20px">✅</span>
-          <div>
-            <div style="font-weight:600;font-size:15px" id="xero-org-name">Connected to Xero</div>
-            <div style="font-size:12px;color:#6B7280">Bank accounts, transactions and cashflow active</div>
-          </div>
-          <a href="/api/xero/auth" style="margin-left:auto;font-size:12px;color:#6B7280;text-decoration:underline">Reconnect</a>
-        </div>
-        <div id="xero-data" style="color:#6B7280;font-size:13px">Loading data…</div>
-      </div>
-    </div>
-  </div>
-</div>
 
 <!-- SETTINGS -->
 <div class="page" id="page-settings">
@@ -742,10 +713,6 @@ body {
         2. Enable Google Calendar API<br>
         3. Create OAuth 2.0 credentials, add redirect URI: <code>your-url/google/callback</code><br>
         4. Add <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> to Coolify env vars<br><br>
-        <strong>Xero:</strong><br>
-        1. Go to <a href="https://developer.xero.com" target="_blank" style="color:#1B4332">developer.xero.com</a> → My Apps → New App<br>
-        2. Add redirect URI: <code>your-url/xero/callback</code><br>
-        3. Add <code>XERO_CLIENT_ID</code> and <code>XERO_CLIENT_SECRET</code> to Coolify env vars<br><br>
         <strong>Note:</strong> The Family Chat already has full context about your property, birthdays, and goals — it works without these integrations connected.
       </div>
     </div>
@@ -872,9 +839,6 @@ body {
     </div>
     <div class="mnav-item" onclick="showPage('wishlist',this);loadWishlist()" data-page="wishlist">
       <span class="micon">🛒</span><span>Wishlist</span>
-    </div>
-    <div class="mnav-item" onclick="showPage('finance',this);loadFinance()" data-page="finance">
-      <span class="micon">💰</span><span>Finance</span>
     </div>
     <div class="mnav-item" onclick="showPage('property',this);loadProperty()" data-page="property">
       <span class="micon">🏡</span><span>Property</span>
@@ -1480,7 +1444,6 @@ async function loadSettings() {
   const integrations = [
     {icon:'🤖', name: aiLabel, key:'ai_ready', desc: aiDesc, connectUrl: null},
     {icon:'📅', name:'Google Calendar', key:'google_calendar', desc:'See your week, upcoming events', connectUrl: '/google/auth'},
-    {icon:'💰', name:'Xero', key:'xero', desc:'Invoices, payments, cashflow', connectUrl: '/api/xero/auth'},
     {icon:'📧', name:'Outlook Calendar', key:'outlook', desc:'Work calendar (already configured)', connectUrl: null},
   ];
   document.getElementById('integrations-list').innerHTML = integrations.map(i => {
@@ -1498,131 +1461,6 @@ async function loadSettings() {
 
 function escHtml(s) {
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-// ── XERO ──────────────────────────────────────────────────────────────────────
-
-async function loadFinance() {
-  const loading = document.getElementById('xero-loading');
-  const notConn = document.getElementById('xero-not-connected');
-  const conn    = document.getElementById('xero-connected');
-  const dataEl  = document.getElementById('xero-data');
-  if (loading) loading.style.display = 'block';
-  if (notConn) notConn.style.display = 'none';
-  if (conn)    conn.style.display    = 'none';
-  try {
-    const r = await authFetch('/api/xero/connect', {method:'POST'});
-    const d = await r.json();
-    if (loading) loading.style.display = 'none';
-    if (d.ok) {
-      if (conn) conn.style.display = 'block';
-      const orgEl = document.getElementById('xero-org-name');
-      if (orgEl) orgEl.textContent = `Connected to ${d.org || 'Xero'}`;
-      if (dataEl) {
-        dataEl.innerHTML = '<span style="color:#9CA3AF">Loading accounts…</span>';
-        loadXeroData(dataEl);
-      }
-    } else {
-      if (notConn) notConn.style.display = 'block';
-    }
-  } catch(e) {
-    if (loading) loading.style.display = 'none';
-    if (notConn) notConn.style.display = 'block';
-  }
-}
-
-async function loadXeroData(dataEl) {
-  try {
-    const [accsR, txnsR] = await Promise.all([
-      authFetch('/api/xero/accounts'),
-      authFetch('/api/xero/transactions'),
-    ]);
-    const accs = await accsR.json();
-    const txns = await txnsR.json();
-
-    if (accs.error || txns.error) {
-      const err = accs.error || txns.error;
-      dataEl.innerHTML = `<div style="background:#FEF3C7;border:1px solid #FDE68A;border-radius:8px;padding:14px;font-size:13px">
-        <strong>⚠️ Bank data unavailable.</strong><br>
-        Your Xero app needs accounting scope access enabled. Contact support or check your Xero developer app settings.<br>
-        <span style="color:#9CA3AF;font-size:11px;margin-top:4px;display:block">Error: ${err}</span>
-      </div>`;
-      return;
-    }
-
-    // Build accounts summary
-    let html = '<div style="display:grid;gap:12px">';
-
-    if (Array.isArray(accs) && accs.length) {
-      html += '<div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:4px">Bank Accounts</div>';
-      html += '<div style="display:flex;flex-wrap:wrap;gap:10px">';
-      for (const a of accs) {
-        const bal = Number(a.balance || 0);
-        const color = bal >= 0 ? '#059669' : '#DC2626';
-        html += `<div style="border:1px solid #E5E7EB;border-radius:8px;padding:12px 16px;min-width:160px">
-          <div style="font-size:12px;color:#6B7280">${a.name}</div>
-          <div style="font-size:18px;font-weight:700;color:${color}">$${Math.abs(bal).toLocaleString('en-AU',{minimumFractionDigits:2})}</div>
-          <div style="font-size:11px;color:#9CA3AF">${a.currency}</div>
-        </div>`;
-      }
-      html += '</div>';
-    }
-
-    // Recent transactions
-    if (Array.isArray(txns) && txns.length) {
-      html += '<div style="font-weight:600;font-size:13px;color:#374151;margin:8px 0 4px">Recent Transactions (30 days)</div>';
-      html += '<div style="border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">';
-      for (const t of txns.slice(0, 15)) {
-        const amt = Number(t.amount || 0);
-        const sign = t.type === 'SPEND' ? -1 : 1;
-        const display = sign * amt;
-        const color = display >= 0 ? '#059669' : '#DC2626';
-        const dateStr = t.date ? t.date.substring(0,10) : '';
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 14px;border-bottom:1px solid #F3F4F6;font-size:13px">
-          <div>
-            <div style="color:#111">${t.contact || t.ref || '—'}</div>
-            <div style="font-size:11px;color:#9CA3AF">${dateStr}</div>
-          </div>
-          <div style="font-weight:600;color:${color}">${display>=0?'+':''}$${Math.abs(display).toLocaleString('en-AU',{minimumFractionDigits:2})}</div>
-        </div>`;
-      }
-      html += '</div>';
-    }
-
-    if (!Array.isArray(accs) || (!accs.length && !txns.length)) {
-      html += '<div style="color:#9CA3AF;font-size:13px;padding:10px 0">No bank data found in Xero.</div>';
-    }
-
-    html += '</div>';
-    dataEl.innerHTML = html;
-  } catch(e) {
-    dataEl.innerHTML = `<div style="color:#DC2626;font-size:13px">Could not load Xero data</div>`;
-  }
-}
-
-async function connectXero() {
-  const btn = document.getElementById('xero-connect-btn');
-  const status = document.getElementById('xero-connect-status');
-  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
-  if (status) status.innerHTML = '';
-  try {
-    const r = await fetch('/api/xero/connect', {
-      method: 'POST',
-      credentials: 'same-origin',
-    });
-    const d = await r.json();
-    if (d.ok) {
-      if (status) status.innerHTML = `<span style="color:#065F46">✓ Connected to ${d.org || 'Xero'}</span>`;
-      if (btn) { btn.textContent = '✓ Connected'; btn.style.background='#D1FAE5'; btn.style.color='#065F46'; }
-      setTimeout(() => loadSettings(), 1500);
-    } else {
-      if (status) status.innerHTML = `<span style="color:#DC2626">Error: ${d.error}</span>`;
-      if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
-    }
-  } catch(e) {
-    if (status) status.innerHTML = `<span style="color:#DC2626">Connection failed</span>`;
-    if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
-  }
 }
 
 // ── WISHLIST ─────────────────────────────────────────────────────────────────
