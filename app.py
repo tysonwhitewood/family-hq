@@ -1269,7 +1269,7 @@ CATEGORY_RULES = [
     ('School / Kids',     ['rackley','swim school','school fees','tutor','dance','martial arts','gymnastics','montessori','preschool','daycare','child care','kindy','little athletics','soccer club','football club','cricket club','netball','sport fee']),
     ('Health & Medical',  ['chemist','pharmacy','priceline','terry white','amcal','doctor','medical centre','hospital','dental','dentist','physio','psychologist','health fund','medibank','bupa','nib ','optical','hearing','specialist','pathology']),
     # ── Home ──────────────────────────────────────────────────────────────────
-    ('Home & Garden',     ['bunning','mitre 10','hardware store','nursery','garden centre','plumber','plumbing','electrician','reno','handyman','cleaners','cleaning service','pool ','pest control','locksmith','furniture','ikea','fantastic furn','nick scali','amart','harvey norm']),
+    ('Home & Garden',     ['bunning','mitre 10','hardware store','nursery','garden centre','plumber','plumbing','electrician','reno','handyman','cleaners','cleaning service','pool ','pest control','locksmith','furniture','ikea','fantastic furn','nick scali','amart','harvey norm','callaway homes','sq *callaway']),
     ('Home Utilities',    ['agl','origin energy','energy australia','electricity','ergon','endeavour energy','council rates','water corp','synergy','seqwater','unitywater','origin gas','nt power']),
     ('Rent / Mortgage',   ['home loan repay','mortgage repay','rental payment','strata levy','body corporate','property manager']),
     # ── Lifestyle ─────────────────────────────────────────────────────────────
@@ -1279,7 +1279,7 @@ CATEGORY_RULES = [
     ('Entertainment',     ['hoyts','event cinemas','village cinema','reading cinema','ticketek','ticketmaster','moshtix','oztix','theme park','dreamworld','movieworld','sea world','bowling','minigolf','escape room','laser tag','trampoline']),
     ('Beauty / Wellbeing',['salon','hairdresser','barber','nail bar','spa ','massage','waxing','blow dry','lash ','mecca cosme','sephora']),
     ('Sports / Fitness',  ['crossfit','f45','anytime fitness','jetts','goodlife','planet fitness','yoga','pilates','swim centre','aquatic centre','golf club','tennis club','sportsmans']),
-    ('Travel',            ['airbnb','hotel','motel','jetstar','qantas','virgin australia','tigerair','bonza','booking.com','expedia','wotif','trivago','car hire','hertz','budget rent','avis','campervan']),
+    ('Travel',            ['airbnb','hotel','motel','jetstar','qantas','virgin australia','tigerair','bonza','booking.com','expedia','wotif','trivago','car hire','hertz','budget rent','avis','campervan','hireace','rental car','thrifty','europcar']),
     ('Streaming / TV',    ['netflix','spotify','disney+','foxtel','binge','stan ','paramount','apple tv','youtube premium','amazon prime','kindle','audible']),
     # ── Insurance & Finance ───────────────────────────────────────────────────
     ('Insurance',         ['racq','insurance','insur','iag','allianz','suncorp','nrma','gt insurance','aami','cgu ','qbe','zurich','woolworths insurance','budget direct']),
@@ -1287,17 +1287,18 @@ CATEGORY_RULES = [
     ('ATM / Cash',        ['atm ','cash out','cash withdrawal','currency exchange','foreign atm']),
     # ── Digital / Software (personal + business) ─────────────────────────────
     ('AI & Cloud',        ['openai','anthropic','claude','perplexity','midjourney','runway','elevenlabs','aws ','google cloud','azure','digitalocean','linode','vultr','hetzner','coolify','cloudflare','vercel','railway']),
-    ('Software & Tools',  ['github','dropbox','notion','slack','zoom','figma','loom','canva','adobe','1password','lastpass','bitwarden','namecheap','godaddy','squarespace','wix','mailchimp','hubspot','salesforce','shopify','klaviyo','xero','myob','quickbooks','reckon']),
-    ('Telco / Internet',  ['telstra','optus','vodafone','boost mobile','amaysim','circles.life','belong','aussie broadband','superloop','nbn','kogan mobile','dodo','iinet','internode','starlink']),
+    ('Software & Tools',  ['github','dropbox','notion','slack','zoom','figma','loom','canva','adobe','1password','lastpass','bitwarden','namecheap','godaddy','squarespace','wix','mailchimp','hubspot','salesforce','shopify','klaviyo','xero','myob','quickbooks','reckon','property data solutions','propertyme','corelogic','pricefinder','rea group','domain.com.au','realestateview','pricespy']),
+    ('Telco / Internet',  ['telstra','optus','vodafone','boost mobile','amaysim','circles.life','belong','aussie broadband','superloop','nbn','kogan mobile','dodo','iinet','internode','starlink','click data','click wifi','click network']),
     # ── Business ──────────────────────────────────────────────────────────────
     ('Payroll / Super',   ['payroll','salary payment','wages','superannuation','australiansuper','rest super','hostplus','sunsuper','colonial first','amp super','bt super','cbus','hesta']),
+    ('ASIC / Compliance', ['asic ','asic/','company reg','business reg','abn reg','australian securities']),
     ('ATO / Tax',         ['ato ','australian taxation','bas payment','payg','gst payment','tax office','tax instalment','fringe benefit']),
     ('Commercial Rent',   ['commercial lease','shop lease','office lease','body corp levy','commercial property']),
     ('Marketing',         ['google ads','facebook ads','meta ads','instagram ads','tiktok ads','adwords','advertising','marketing agency','pr agency']),
-    ('Staff / Contractors',['contractor pay','freelance','labour hire','staffing agency','recruitment fee']),
-    ('Accounting & Legal',['accountant','bookkeeper','solicitor','legal fee','consulting fee','advisory fee','audit fee']),
-    ('POS & Payments',    ['squareup','sq *','tyro','eftpos merchant','stripe fee','pos system','rept.ai']),
-    ('Business Supplies', ['stationery','packaging','signage','uniform','workwear','office supplies']),
+    ('Staff / Contractors',['contractor pay','freelance','labour hire','staffing agency','recruitment fee','marina winterburn','imt nzd','nzd imt']),
+    ('Accounting & Legal',['accountant','bookkeeper','solicitor','legal fee','consulting fee','advisory fee','audit fee','legalvision','legalzoom','doculivery']),
+    ('POS & Payments',    ['squareup','tyro','eftpos merchant','stripe fee','pos system','rept.ai']),
+    ('Business Supplies', ['stationery','packaging','signage','uniform','workwear','office supplies','boonah hardware','boonah','mitre 10 trade','total tools','sydney tools']),
     ('Freight & Post',    ['australia post','sendle','startrack','fastway','toll ipec','tnt ','courier please','zoom2u','freight','shipping cost']),
     ('Transfers',         ['transfer to','transfer from','pay id','osko','bpay','direct credit','autosave','linked saver']),
 ]
