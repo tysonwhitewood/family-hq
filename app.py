@@ -329,6 +329,12 @@ def init_db():
                 run_date TEXT NOT NULL,
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS finance_chat (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
         ''')
         # Seed insurance records — insert each by policy_number if not already present
         now = datetime.now().isoformat()[:19]
@@ -1147,9 +1153,239 @@ def discord_webhook_test():
     return jsonify({'ok': ok})
 
 
-# ── Xero Integration ─────────────────────────────────────────────────────────
-
 TOKEN_DIR = DATA_DIR / 'tokens'
+
+# ── Finance CSV + AI Chat ─────────────────────────────────────────────────────
+
+FINANCE_CSV_DIR = Path('/home/claude/family-wealth/2. Financial Capital/Banking & Cash Flow')
+
+def _parse_csv_files():
+    """Parse all bank CSV files from the synced family-wealth folder. Returns list of transactions."""
+    import csv, glob
+    transactions = []
+    # Find the most recent dated subfolder
+    subdirs = sorted([d for d in FINANCE_CSV_DIR.glob('*') if d.is_dir()], reverse=True)
+    search_dirs = subdirs[:2] if subdirs else []  # check two most recent folders
+    if FINANCE_CSV_DIR.exists():
+        search_dirs.append(FINANCE_CSV_DIR)  # also check root
+
+    seen_files = set()
+    for folder in search_dirs:
+        for csv_path in sorted(folder.glob('*.csv')):
+            if csv_path.name in seen_files:
+                continue
+            seen_files.add(csv_path.name)
+            account = csv_path.stem
+            try:
+                with open(csv_path, newline='', encoding='utf-8-sig') as f:
+                    raw = f.read()
+                lines = [l for l in raw.splitlines() if l.strip()]
+                # Detect ING format (has header: Date,Description,Credit,Debit,Balance)
+                if lines and lines[0].startswith('Date,'):
+                    reader = csv.DictReader(lines[0:1] + lines[1:], fieldnames=None)
+                    for row in reader:
+                        try:
+                            d = datetime.strptime(row['Date'].strip(), '%d/%m/%Y').date()
+                            credit = float(row.get('Credit','').replace(',','') or 0)
+                            debit  = float(row.get('Debit','').replace(',','') or 0)
+                            amount = credit if credit else -abs(debit)
+                            balance = float(row.get('Balance','').replace(',','') or 0)
+                            transactions.append({
+                                'account': account, 'date': d.isoformat(),
+                                'amount': round(amount, 2),
+                                'description': row.get('Description','').strip(),
+                                'balance': round(balance, 2),
+                            })
+                        except Exception:
+                            continue
+                else:
+                    # CBA format: date, amount, description, balance (no header)
+                    for line in lines:
+                        parts = list(csv.reader([line]))[0]
+                        if len(parts) < 3:
+                            continue
+                        try:
+                            d = datetime.strptime(parts[0].strip(), '%d/%m/%Y').date()
+                            amount = float(parts[1].replace('"','').replace(',',''))
+                            desc   = parts[2].strip().strip('"')
+                            bal    = float(parts[3].replace('"','').replace('+','').replace(',','')) if len(parts) > 3 and parts[3].strip() else 0
+                            transactions.append({
+                                'account': account, 'date': d.isoformat(),
+                                'amount': round(amount, 2),
+                                'description': desc,
+                                'balance': round(bal, 2),
+                            })
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+    transactions.sort(key=lambda x: x['date'], reverse=True)
+    return transactions
+
+
+def _finance_context_summary(transactions, max_txns=80):
+    """Build a text summary of finances for LLM context."""
+    if not transactions:
+        return "No financial data available."
+    from collections import defaultdict
+    # Per-account summary
+    accounts = defaultdict(lambda: {'txns': [], 'latest_balance': None})
+    for t in transactions:
+        accounts[t['account']]['txns'].append(t)
+        if accounts[t['account']]['latest_balance'] is None and t['balance']:
+            accounts[t['account']]['latest_balance'] = t['balance']
+    lines = ['== BANK ACCOUNT SUMMARIES ==']
+    for acc, data in accounts.items():
+        txns = data['txns']
+        total_in  = sum(t['amount'] for t in txns if t['amount'] > 0)
+        total_out = sum(t['amount'] for t in txns if t['amount'] < 0)
+        bal = data['latest_balance']
+        lines.append(f'\n[{acc}]')
+        lines.append(f'  Transactions: {len(txns)}  |  Total in: +${total_in:,.2f}  |  Total out: -${abs(total_out):,.2f}')
+        if bal:
+            lines.append(f'  Latest balance: ${bal:,.2f}')
+    lines.append('\n== RECENT TRANSACTIONS (last 80) ==')
+    for t in transactions[:max_txns]:
+        sign = '+' if t['amount'] >= 0 else ''
+        lines.append(f"{t['date']}  {sign}{t['amount']:>10.2f}  [{t['account'][:20]}]  {t['description'][:60]}")
+    return '\n'.join(lines)
+
+
+@app.route('/api/finance/summary')
+@login_required
+def api_finance_summary():
+    transactions = _parse_csv_files()
+    from collections import defaultdict
+    accounts = defaultdict(lambda: {'count': 0, 'balance': None, 'last_date': None})
+    for t in transactions:
+        acc = t['account']
+        accounts[acc]['count'] += 1
+        if accounts[acc]['balance'] is None and t['balance']:
+            accounts[acc]['balance'] = t['balance']
+        if accounts[acc]['last_date'] is None:
+            accounts[acc]['last_date'] = t['date']
+    return jsonify({
+        'accounts': [{'name': k, **v} for k, v in accounts.items()],
+        'total_transactions': len(transactions),
+        'recent': transactions[:30],
+    })
+
+
+@app.route('/api/finance/chat', methods=['POST'])
+@login_required
+def api_finance_chat():
+    d = request.get_json(force=True)
+    message = (d.get('message') or '').strip()
+    history = d.get('history') or []
+    if not message:
+        return jsonify({'error': 'empty message'}), 400
+
+    transactions = _parse_csv_files()
+    context = _finance_context_summary(transactions)
+
+    system_prompt = f"""You are a personal finance assistant for the Whitewood family. You have access to their real bank transaction data below.
+
+Be concise, practical, and warm. When asked about spending, reference actual transactions. Format dollar amounts clearly. If asked about something not in the data, say so.
+
+{context}
+
+Today's date: {date.today().isoformat()}"""
+
+    messages = [{'role': 'system', 'content': system_prompt}]
+    for h in history[-10:]:  # last 10 turns for context
+        if h.get('role') in ('user', 'assistant') and h.get('content'):
+            messages.append({'role': h['role'], 'content': h['content']})
+    messages.append({'role': 'user', 'content': message})
+
+    # Save to DB
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO finance_chat (role, content, created_at) VALUES (?,?,?)',
+            ('user', message, now)
+        )
+
+    # Try free OpenRouter models in order
+    free_models = [
+        'deepseek/deepseek-r1:free',
+        'meta-llama/llama-3.3-70b-instruct:free',
+        'google/gemma-3-27b-it:free',
+        'mistralai/mistral-7b-instruct:free',
+    ]
+    api_key = OPENROUTER_API_KEY or ANTHROPIC_API_KEY
+    reply = None
+
+    if ANTHROPIC_API_KEY:
+        # Try Anthropic first (haiku — cheapest)
+        try:
+            body = json.dumps({
+                'model': 'claude-haiku-4-5-20251001',
+                'max_tokens': 1024,
+                'system': system_prompt,
+                'messages': [m for m in messages if m['role'] != 'system'],
+            }).encode()
+            req = urllib.request.Request(
+                'https://api.anthropic.com/v1/messages',
+                data=body,
+                headers={
+                    'x-api-key': ANTHROPIC_API_KEY,
+                    'anthropic-version': '2023-06-01',
+                    'content-type': 'application/json',
+                },
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                resp = json.loads(r.read())
+            reply = resp['content'][0]['text']
+        except Exception:
+            pass
+
+    if not reply and OPENROUTER_API_KEY:
+        for model in free_models:
+            try:
+                body = json.dumps({
+                    'model': model,
+                    'messages': messages,
+                    'max_tokens': 1024,
+                }).encode()
+                req = urllib.request.Request(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    data=body,
+                    headers={
+                        'Authorization': f'Bearer {OPENROUTER_API_KEY}',
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': 'https://family.edencommercial.au',
+                    },
+                    method='POST',
+                )
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    resp = json.loads(r.read())
+                reply = resp['choices'][0]['message']['content']
+                break
+            except Exception:
+                continue
+
+    if not reply:
+        return jsonify({'error': 'No AI model available. Add OPENROUTER_API_KEY or ANTHROPIC_API_KEY in Coolify.'}), 503
+
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO finance_chat (role, content, created_at) VALUES (?,?,?)',
+            ('assistant', reply, datetime.now().isoformat()[:19])
+        )
+
+    return jsonify({'reply': reply})
+
+
+@app.route('/api/finance/chat-history')
+@login_required
+def api_finance_chat_history():
+    with get_db() as db:
+        rows = db.execute(
+            'SELECT role, content, created_at FROM finance_chat ORDER BY id DESC LIMIT 50'
+        ).fetchall()
+    return jsonify([dict(r) for r in reversed(rows)])
+
 
 # ── Paper Trading & Screener ──────────────────────────────────────────────────
 
