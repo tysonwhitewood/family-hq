@@ -1695,7 +1695,7 @@ def api_screener_run():
 def api_screener_results():
     with get_db() as db:
         rows = db.execute(
-            'SELECT * FROM screener_cache ORDER BY score DESC'
+            'SELECT * FROM screener_cache WHERE run_date = (SELECT MAX(run_date) FROM screener_cache) ORDER BY score DESC'
         ).fetchall()
     if not rows:
         return jsonify({'results': [], 'run_date': None})
@@ -1764,16 +1764,24 @@ def _start_daily_screener():
     def _run_screener_now():
         from datetime import date as _date
         run_date = _date.today().isoformat()
-        results = [_cgg_score(t) for t in VALUE_WATCHLIST]
-        results.sort(key=lambda x: x['score'], reverse=True)
-        ts = datetime.now().isoformat()[:19]
-        with get_db() as db:
-            db.execute('DELETE FROM screener_cache WHERE run_date=?', (run_date,))
-            for r in results:
-                db.execute(
-                    'INSERT INTO screener_cache (ticker,company_name,score,quality,growth,value_score,momentum,archetype,current_price,details,run_date,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                    (r['ticker'],r['company_name'],r['score'],r['quality'],r['growth'],r['value_score'],r['momentum'],r['archetype'],r['current_price'],r['details'],run_date,ts)
-                )
+        print(f'[screener] running scan for {run_date}...', flush=True)
+        try:
+            results = [_cgg_score(t) for t in VALUE_WATCHLIST]
+            results.sort(key=lambda x: x['score'], reverse=True)
+            ts = datetime.now().isoformat()[:19]
+            with get_db() as db:
+                db.execute('DELETE FROM screener_cache WHERE run_date=?', (run_date,))
+                # Keep only the last 2 days of data to prevent duplicate display
+                db.execute("DELETE FROM screener_cache WHERE run_date < date('now', '-2 days')")
+                for r in results:
+                    db.execute(
+                        'INSERT INTO screener_cache (ticker,company_name,score,quality,growth,value_score,momentum,archetype,current_price,details,run_date,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                        (r['ticker'],r['company_name'],r['score'],r['quality'],r['growth'],r['value_score'],r['momentum'],r['archetype'],r['current_price'],r['details'],run_date,ts)
+                    )
+            print(f'[screener] scan complete — {len(results)} stocks scored for {run_date}', flush=True)
+        except Exception as e:
+            print(f'[screener] scan failed for {run_date}: {e}', flush=True)
+            raise
 
     def _loop():
         # On startup: if today's scan hasn't run yet and it's past 6am, catch up immediately
@@ -1784,9 +1792,10 @@ def _start_daily_screener():
                 row = db.execute('SELECT 1 FROM screener_cache WHERE run_date=? LIMIT 1', (today,)).fetchone()
             now = datetime.now(ZoneInfo('Australia/Brisbane'))
             if not row and now.hour >= 6:
+                print(f'[screener] catch-up: no scan for {today}, running now...', flush=True)
                 _run_screener_now()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f'[screener] catch-up failed: {e}', flush=True)
 
         while True:
             try:
@@ -1798,8 +1807,9 @@ def _start_daily_screener():
                 wait = (target - now).total_seconds()
                 time.sleep(wait)
                 _run_screener_now()
-            except Exception:
-                time.sleep(3600)  # retry in 1hr on error
+            except Exception as e:
+                print(f'[screener] loop error: {e} — retrying in 1hr', flush=True)
+                time.sleep(3600)
 
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
