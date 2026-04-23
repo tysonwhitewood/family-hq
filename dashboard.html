@@ -301,12 +301,19 @@ body {
 .wish-box.done .wish-box-done-btn { color: #1B4332; }
 .wish-box-done-btn:hover { color: #1B4332; }
 .wish-box-del {
-  position: absolute; top: 5px; right: 7px;
-  font-size: 10px; color: #E5E7EB; cursor: pointer; line-height: 1;
-  transition: color 0.15s; display: none;
+  font-size: 10px; color: #D1D5DB; cursor: pointer; line-height: 1;
+  transition: color 0.15s;
 }
-.wish-box:hover .wish-box-del, .wish-box:focus-within .wish-box-del { display: block; }
 .wish-box-del:hover { color: #EF4444; }
+.wish-box-edit {
+  font-size: 10px; color: #D1D5DB; cursor: pointer; line-height: 1;
+  transition: color 0.15s;
+}
+.wish-box-edit:hover { color: #1B4332; }
+.wish-box-actions {
+  position: absolute; top: 5px; right: 6px;
+  display: flex; gap: 5px; align-items: center;
+}
 .wish-box-cost { cursor: pointer; }
 .wish-box-cost:hover { text-decoration: underline; color: #059669; }
 .wish-filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -911,6 +918,56 @@ body {
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
       <button onclick="closeWishModal()" style="background:#F3F4F6;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Cancel</button>
       <button onclick="saveWishItem()" style="background:#1B4332;color:#fff;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Add to Wishlist</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT WISHLIST ITEM MODAL -->
+<div id="wish-edit-modal" onclick="if(event.target===this)closeWishEdit()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;align-items:center;justify-content:center">
+  <input type="hidden" id="wish-edit-id">
+  <div style="background:#fff;border-radius:16px;width:420px;max-width:95vw;padding:24px;max-height:90vh;overflow-y:auto">
+    <div style="font-size:16px;font-weight:700;margin-bottom:18px">Edit Item</div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">ITEM</div>
+      <input id="wish-edit-title" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">CATEGORY</div>
+        <select id="wish-edit-cat" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+          <option value="garden">🌿 Garden</option>
+          <option value="landscaping">🌳 Landscaping</option>
+          <option value="upgrades">🔨 Upgrades</option>
+          <option value="house">🏠 House Stuff</option>
+          <option value="tech">💻 Tech</option>
+          <option value="tools">🔧 Tools</option>
+          <option value="business">💼 Business</option>
+          <option value="other">📦 Other</option>
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">SEASON</div>
+        <select id="wish-edit-season" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+          <option value="now">Do Now</option>
+          <option value="spring">Spring (Sep 2026)</option>
+          <option value="winter">Winter</option>
+          <option value="anytime">Anytime</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">EST. COST ($)</div>
+        <input type="number" id="wish-edit-cost" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">TIMING NOTE</div>
+        <input id="wish-edit-timing" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px" placeholder="optional">
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button onclick="closeWishEdit()" style="background:#F3F4F6;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Cancel</button>
+      <button onclick="saveWishEdit()" style="background:#1B4332;color:#fff;border:none;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer">Save</button>
     </div>
   </div>
 </div>
@@ -1647,11 +1704,14 @@ function renderWishlist() {
     const sl = season(item.season);
     return `<div class="wish-box${done ? ' done' : ''}" id="wish-item-${item.id}">
       <div class="wish-box-done-btn" onclick="toggleWishDone(${item.id},'${item.status}')" title="Mark done">${done ? '✓' : '○'}</div>
+      <div class="wish-box-actions">
+        <span class="wish-box-edit" onclick="openWishEdit(${item.id})" title="Edit">✎</span>
+        <span class="wish-box-del" onclick="deleteWishItem(${item.id})" title="Remove">✕</span>
+      </div>
       <div class="wish-box-icon">${icon}</div>
       <div class="wish-box-title">${escHtml(item.title)}</div>
       <div class="wish-box-cost" onclick="inlineEditCost(event,${item.id},${item.estimated_cost || 0})">${fmtCost(item.estimated_cost)}</div>
       <div class="wish-box-season ${sl.cls}">${sl.label.replace(/^[^\s]+ /,'')}</div>
-      <div class="wish-box-del" onclick="deleteWishItem(${item.id})" title="Remove">✕</div>
     </div>`;
   }).join('') + '</div>';
 }
@@ -1737,7 +1797,43 @@ async function deleteWishItem(id) {
   await authFetch('/api/wishlist/' + id, {method: 'DELETE'});
   _wishItems = _wishItems.filter(i => i.id !== id);
   renderWishlist();
+  updateWishTabs();
   updateCashflowBar();
+}
+
+function openWishEdit(id) {
+  const item = _wishItems.find(i => i.id === id);
+  if (!item) return;
+  document.getElementById('wish-edit-id').value = id;
+  document.getElementById('wish-edit-title').value = item.title || '';
+  document.getElementById('wish-edit-cat').value = item.category || 'other';
+  document.getElementById('wish-edit-season').value = item.season || 'anytime';
+  document.getElementById('wish-edit-cost').value = item.estimated_cost || '';
+  document.getElementById('wish-edit-timing').value = item.timing_note || '';
+  document.getElementById('wish-edit-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('wish-edit-title').focus(), 50);
+}
+
+function closeWishEdit() {
+  document.getElementById('wish-edit-modal').style.display = 'none';
+}
+
+async function saveWishEdit() {
+  const id = parseInt(document.getElementById('wish-edit-id').value);
+  const title = document.getElementById('wish-edit-title').value.trim();
+  if (!title) { alert('Item name required'); return; }
+  await authFetch('/api/wishlist/' + id, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      title,
+      category: document.getElementById('wish-edit-cat').value,
+      season: document.getElementById('wish-edit-season').value,
+      estimated_cost: parseInt(document.getElementById('wish-edit-cost').value) || 0,
+      timing_note: document.getElementById('wish-edit-timing').value,
+    })
+  });
+  closeWishEdit();
+  await loadWishlist();
 }
 
 function showAddWishItem() {
