@@ -258,43 +258,58 @@ body {
 @media(max-width:768px){.home-bottom-row{grid-template-columns:1fr!important;}}
 
 /* WISHLIST */
-.wish-item {
-  padding: 14px 20px; border-bottom: 1px solid #F3F4F6;
-  display: flex; align-items: flex-start; gap: 14px;
+.wish-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px; padding: 14px;
 }
-.wish-item:last-child { border-bottom: none; }
-.wish-item.done { opacity: 0.5; }
-.wish-check {
-  width: 20px; height: 20px; border-radius: 50%; border: 2px solid #D1D5DB;
-  flex-shrink: 0; cursor: pointer; margin-top: 2px; transition: all 0.2s;
-  display: flex; align-items: center; justify-content: center; font-size: 11px;
+.wish-box {
+  background: #F9FAFB; border: 1.5px solid #E5E7EB; border-radius: 12px;
+  padding: 12px 8px 10px; display: flex; flex-direction: column;
+  align-items: center; text-align: center; cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s; position: relative;
+  min-height: 90px;
 }
-.wish-check.checked { background: #1B4332; border-color: #1B4332; color: #fff; }
-.wish-body { flex: 1; min-width: 0; }
-.wish-title { font-size: 13px; font-weight: 600; color: #111; margin-bottom: 4px; }
-.wish-timing { font-size: 11px; color: #6B7280; margin-bottom: 6px; line-height: 1.5; }
-.wish-badges { display: flex; gap: 6px; flex-wrap: wrap; }
-.season-badge {
-  font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 10px;
-  text-transform: uppercase; letter-spacing: 0.5px;
+.wish-box:hover { border-color: #1B4332; box-shadow: 0 2px 8px rgba(27,67,50,0.1); }
+.wish-box.done { opacity: 0.45; }
+.wish-box.done .wish-box-icon::after {
+  content: '✓'; position: absolute; top: 6px; right: 8px;
+  font-size: 11px; color: #1B4332; font-weight: 700;
+}
+.wish-box-icon { font-size: 26px; margin-bottom: 6px; line-height: 1; }
+.wish-box-title {
+  font-size: 11px; font-weight: 600; color: #111; line-height: 1.3;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; word-break: break-word; flex: 1;
+}
+.wish-box-cost {
+  font-size: 11px; font-weight: 700; color: #1B4332; margin-top: 6px;
+}
+.wish-box-season {
+  font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 8px;
+  text-transform: uppercase; letter-spacing: 0.4px; margin-top: 4px;
 }
 .season-now { background: #FEF3C7; color: #92400E; }
 .season-spring { background: #D1FAE5; color: #065F46; }
 .season-winter { background: #DBEAFE; color: #1E40AF; }
-.season-anytime { background: #F3F4F6; color: #6B7280; }
-.cat-badge {
-  font-size: 10px; padding: 2px 8px; border-radius: 10px;
-  background: #EDE9FE; color: #5B21B6; font-weight: 600;
+.season-anytime { background: #F3F4F6; color: #9CA3AF; }
+.wish-box-done-btn {
+  position: absolute; top: 5px; left: 7px;
+  font-size: 12px; color: #D1D5DB; cursor: pointer; line-height: 1; font-weight: 700;
+  transition: color 0.15s;
 }
-.wish-cost { font-size: 15px; font-weight: 700; color: #1B4332; flex-shrink: 0; text-align: right; }
-.wish-cost-range { font-size: 10px; color: #9CA3AF; }
-.wish-actions { display: flex; gap: 4px; margin-top: 6px; }
-.wish-act-btn {
-  font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;
-  border: 1px solid #E5E7EB; background: #fff; color: #6B7280;
+.wish-box.done .wish-box-done-btn { color: #1B4332; }
+.wish-box-done-btn:hover { color: #1B4332; }
+.wish-box-del {
+  position: absolute; top: 5px; right: 7px;
+  font-size: 10px; color: #E5E7EB; cursor: pointer; line-height: 1;
+  transition: color 0.15s; display: none;
 }
-.wish-act-btn:hover { border-color: #1B4332; color: #1B4332; }
-.wish-filter-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+.wish-box:hover .wish-box-del, .wish-box:focus-within .wish-box-del { display: block; }
+.wish-box-del:hover { color: #EF4444; }
+.wish-box-cost { cursor: pointer; }
+.wish-box-cost:hover { text-decoration: underline; color: #059669; }
+.wish-filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
 .cashflow-bar {
   background: #1B4332; color: #fff; border-radius: 12px; padding: 16px 20px;
   margin-bottom: 20px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
@@ -820,9 +835,14 @@ body {
     <!-- Filter tabs -->
     <div class="wish-filter-tabs">
       <button class="filter-btn active" onclick="setWishFilter('all',this)">All</button>
-      <button class="filter-btn" onclick="setWishFilter('now',this)">🔥 Do Now</button>
-      <button class="filter-btn" onclick="setWishFilter('spring',this)">🌱 Spring</button>
-      <button class="filter-btn" onclick="setWishFilter('anytime',this)">⏳ Anytime</button>
+      <button class="filter-btn" onclick="setWishFilter('garden',this)">🌿 Garden</button>
+      <button class="filter-btn" onclick="setWishFilter('landscaping',this)">🌳 Landscaping</button>
+      <button class="filter-btn" onclick="setWishFilter('upgrades',this)">🔨 Upgrades</button>
+      <button class="filter-btn" onclick="setWishFilter('house',this)">🏠 House Stuff</button>
+      <button class="filter-btn" onclick="setWishFilter('tech',this)">💻 Tech</button>
+      <button class="filter-btn" onclick="setWishFilter('tools',this)">🔧 Tools</button>
+      <button class="filter-btn" onclick="setWishFilter('business',this)">💼 Business</button>
+      <button class="filter-btn" onclick="setWishFilter('other',this)">📦 Other</button>
       <button class="filter-btn" onclick="setWishFilter('done',this)">✅ Done</button>
     </div>
 
@@ -848,11 +868,14 @@ body {
       <div>
         <div style="font-size:11px;font-weight:600;color:#6B7280;margin-bottom:5px">CATEGORY</div>
         <select id="wish-cat" style="width:100%;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-size:13px">
-          <option value="garden">Garden</option>
-          <option value="landscaping">Landscaping</option>
-          <option value="exterior">Exterior</option>
-          <option value="interior">Interior</option>
-          <option value="general">General</option>
+          <option value="garden">🌿 Garden</option>
+          <option value="landscaping">🌳 Landscaping</option>
+          <option value="upgrades">🔨 Upgrades</option>
+          <option value="house">🏠 House Stuff</option>
+          <option value="tech">💻 Tech</option>
+          <option value="tools">🔧 Tools</option>
+          <option value="business">💼 Business</option>
+          <option value="other">📦 Other</option>
         </select>
       </div>
       <div>
@@ -1550,9 +1573,17 @@ const SEASON_LABELS = {
   anytime: { cls: 'season-anytime', label: '⏳ Anytime' },
 };
 const CAT_LABELS = {
-  garden: 'Garden', landscaping: 'Landscaping', exterior: 'Exterior',
-  interior: 'Interior', general: 'General',
+  garden: 'Garden', landscaping: 'Landscaping', upgrades: 'Upgrades',
+  house: 'House Stuff', tech: 'Tech', tools: 'Tools', business: 'Business', other: 'Other',
+  exterior: 'Exterior', interior: 'Interior', general: 'Other',
 };
+const CAT_ICONS = {
+  garden: '🌿', landscaping: '🌳', upgrades: '🔨',
+  house: '🏠', tech: '💻', tools: '🔧', business: '💼', other: '📦',
+  exterior: '🏡', interior: '🛋️', general: '📦',
+};
+
+const WISH_CATS = ['garden','landscaping','upgrades','house','tech','tools','business','other'];
 
 function setWishFilter(f, btn) {
   _wishFilter = f;
@@ -1573,7 +1604,7 @@ function renderWishlist() {
   if (_wishFilter === 'done') {
     items = items.filter(i => i.status === 'done');
   } else if (_wishFilter !== 'all') {
-    items = items.filter(i => i.status !== 'done' && i.season === _wishFilter);
+    items = items.filter(i => i.status !== 'done' && (i.category === _wishFilter || (i.category === 'general' && _wishFilter === 'other')));
   } else {
     items = items.filter(i => i.status !== 'done');
   }
@@ -1581,30 +1612,20 @@ function renderWishlist() {
     el.innerHTML = '<div class="empty-state">No items in this view</div>';
     return;
   }
-  el.innerHTML = items.map(item => {
+  const season = s => SEASON_LABELS[s] || SEASON_LABELS.anytime;
+  el.innerHTML = '<div class="wish-grid">' + items.map(item => {
     const done = item.status === 'done';
-    const season = SEASON_LABELS[item.season] || SEASON_LABELS.anytime;
-    return `<div class="wish-item${done ? ' done' : ''}" id="wish-item-${item.id}">
-      <div class="wish-check${done ? ' checked' : ''}" onclick="toggleWishDone(${item.id},'${item.status}')">${done ? '✓' : ''}</div>
-      <div class="wish-body">
-        <div class="wish-title">${escHtml(item.title)}</div>
-        ${item.timing_note ? `<div class="wish-timing">${escHtml(item.timing_note)}</div>` : ''}
-        ${item.ai_note ? `<div class="wish-timing" style="color:#059669">💡 ${escHtml(item.ai_note)}</div>` : ''}
-        <div class="wish-badges">
-          <span class="season-badge ${season.cls}">${season.label}</span>
-          <span class="cat-badge">${CAT_LABELS[item.category] || item.category}</span>
-        </div>
-        <div class="wish-actions">
-          <button class="wish-act-btn" onclick="editWishCost(${item.id},${item.estimated_cost})">✏️ Edit cost</button>
-          <button class="wish-act-btn" onclick="deleteWishItem(${item.id})" style="color:#EF4444">✕ Remove</button>
-        </div>
-      </div>
-      <div style="text-align:right;flex-shrink:0">
-        <div class="wish-cost">${fmtCost(item.estimated_cost)}</div>
-        <div class="wish-cost-range">${escHtml(item.cost_range || '')}</div>
-      </div>
+    const icon = CAT_ICONS[item.category] || '📦';
+    const sl = season(item.season);
+    return `<div class="wish-box${done ? ' done' : ''}" id="wish-item-${item.id}">
+      <div class="wish-box-done-btn" onclick="toggleWishDone(${item.id},'${item.status}')" title="Mark done">${done ? '✓' : '○'}</div>
+      <div class="wish-box-icon">${icon}</div>
+      <div class="wish-box-title">${escHtml(item.title)}</div>
+      <div class="wish-box-cost" onclick="inlineEditCost(event,${item.id},${item.estimated_cost || 0})">${fmtCost(item.estimated_cost)}</div>
+      <div class="wish-box-season ${sl.cls}">${sl.label.replace(/^[^\s]+ /,'')}</div>
+      <div class="wish-box-del" onclick="deleteWishItem(${item.id})" title="Remove">✕</div>
     </div>`;
-  }).join('');
+  }).join('') + '</div>';
 }
 
 function updateCashflowBar() {
@@ -1646,6 +1667,29 @@ async function toggleWishDone(id, currentStatus) {
   if (item) item.status = newStatus;
   renderWishlist();
   updateCashflowBar();
+}
+
+function inlineEditCost(event, id, current) {
+  event.stopPropagation();
+  const costEl = event.target;
+  const inp = document.createElement('input');
+  inp.type = 'number'; inp.value = current || '';
+  inp.placeholder = '0';
+  inp.style.cssText = 'width:70px;font-size:11px;font-weight:700;color:#1B4332;border:1.5px solid #1B4332;border-radius:6px;padding:2px 5px;text-align:center;outline:none;background:#fff';
+  costEl.replaceWith(inp);
+  inp.focus(); inp.select();
+  const save = async () => {
+    const cost = parseInt(inp.value) || 0;
+    await authFetch('/api/wishlist/' + id, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({estimated_cost: cost})
+    });
+    const item = _wishItems.find(i => i.id === id);
+    if (item) item.estimated_cost = cost;
+    renderWishlist(); updateCashflowBar();
+  };
+  inp.addEventListener('blur', save);
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } if (e.key === 'Escape') { renderWishlist(); } });
 }
 
 async function editWishCost(id, current) {
