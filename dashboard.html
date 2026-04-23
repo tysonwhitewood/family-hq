@@ -834,16 +834,16 @@ body {
 
     <!-- Filter tabs -->
     <div class="wish-filter-tabs">
-      <button class="filter-btn active" onclick="setWishFilter('all',this)">All</button>
-      <button class="filter-btn" onclick="setWishFilter('garden',this)">🌿 Garden</button>
-      <button class="filter-btn" onclick="setWishFilter('landscaping',this)">🌳 Landscaping</button>
-      <button class="filter-btn" onclick="setWishFilter('upgrades',this)">🔨 Upgrades</button>
-      <button class="filter-btn" onclick="setWishFilter('house',this)">🏠 House Stuff</button>
-      <button class="filter-btn" onclick="setWishFilter('tech',this)">💻 Tech</button>
-      <button class="filter-btn" onclick="setWishFilter('tools',this)">🔧 Tools</button>
-      <button class="filter-btn" onclick="setWishFilter('business',this)">💼 Business</button>
-      <button class="filter-btn" onclick="setWishFilter('other',this)">📦 Other</button>
-      <button class="filter-btn" onclick="setWishFilter('done',this)">✅ Done</button>
+      <button class="filter-btn active" data-cat="all" onclick="setWishFilter('all',this)">All</button>
+      <button class="filter-btn" data-cat="garden" onclick="setWishFilter('garden',this)">🌿 Garden</button>
+      <button class="filter-btn" data-cat="landscaping" onclick="setWishFilter('landscaping',this)">🌳 Landscaping</button>
+      <button class="filter-btn" data-cat="upgrades" onclick="setWishFilter('upgrades',this)">🔨 Upgrades</button>
+      <button class="filter-btn" data-cat="house" onclick="setWishFilter('house',this)">🏠 House Stuff</button>
+      <button class="filter-btn" data-cat="tech" onclick="setWishFilter('tech',this)">💻 Tech</button>
+      <button class="filter-btn" data-cat="tools" onclick="setWishFilter('tools',this)">🔧 Tools</button>
+      <button class="filter-btn" data-cat="business" onclick="setWishFilter('business',this)">💼 Business</button>
+      <button class="filter-btn" data-cat="other" onclick="setWishFilter('other',this)">📦 Other</button>
+      <button class="filter-btn" data-cat="done" onclick="setWishFilter('done',this)">✅ Done</button>
     </div>
 
     <!-- Wishlist -->
@@ -1592,9 +1592,37 @@ function setWishFilter(f, btn) {
   renderWishlist();
 }
 
+const WISH_TAB_LABELS = {
+  all:'All', garden:'🌿 Garden', landscaping:'🌳 Landscaping', upgrades:'🔨 Upgrades',
+  house:'🏠 House Stuff', tech:'💻 Tech', tools:'🔧 Tools', business:'💼 Business',
+  other:'📦 Other', done:'✅ Done'
+};
+
+function updateWishTabs() {
+  const fmt = n => n >= 1000 ? '$' + (n/1000).toFixed(n%1000===0?0:1) + 'k' : '$' + n.toLocaleString();
+  const pending = _wishItems.filter(i => i.status !== 'done');
+  const done = _wishItems.filter(i => i.status === 'done');
+  document.querySelectorAll('#page-wishlist .filter-btn[data-cat]').forEach(btn => {
+    const cat = btn.dataset.cat;
+    const base = WISH_TAB_LABELS[cat] || cat;
+    if (cat === 'done') {
+      const t = done.reduce((s,i) => s + (i.estimated_cost||0), 0);
+      btn.textContent = base + (t > 0 ? ' · ' + fmt(t) : '');
+    } else if (cat === 'all') {
+      const t = pending.reduce((s,i) => s + (i.estimated_cost||0), 0);
+      btn.textContent = base + (t > 0 ? ' · ' + fmt(t) : '');
+    } else {
+      const catItems = pending.filter(i => i.category === cat || (cat === 'other' && i.category === 'general'));
+      const t = catItems.reduce((s,i) => s + (i.estimated_cost||0), 0);
+      btn.textContent = base + (t > 0 ? ' · ' + fmt(t) : '');
+    }
+  });
+}
+
 async function loadWishlist() {
   _wishItems = await authFetch('/api/wishlist').then(r => r.json()).catch(() => []);
   renderWishlist();
+  updateWishTabs();
   updateCashflowBar();
 }
 
@@ -1666,6 +1694,7 @@ async function toggleWishDone(id, currentStatus) {
   const item = _wishItems.find(i => i.id === id);
   if (item) item.status = newStatus;
   renderWishlist();
+  updateWishTabs();
   updateCashflowBar();
 }
 
@@ -1686,7 +1715,7 @@ function inlineEditCost(event, id, current) {
     });
     const item = _wishItems.find(i => i.id === id);
     if (item) item.estimated_cost = cost;
-    renderWishlist(); updateCashflowBar();
+    renderWishlist(); updateWishTabs(); updateCashflowBar();
   };
   inp.addEventListener('blur', save);
   inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } if (e.key === 'Escape') { renderWishlist(); } });
