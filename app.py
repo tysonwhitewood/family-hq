@@ -1229,7 +1229,15 @@ def _parse_csv_files():
             except Exception:
                 continue
     transactions.sort(key=lambda x: x['date'], reverse=True)
-    return transactions
+    # Deduplicate: same date + description + amount across different file snapshots
+    seen_txns = set()
+    deduped = []
+    for t in transactions:
+        key = (t['date'], t['description'][:60], t['amount'])
+        if key not in seen_txns:
+            seen_txns.add(key)
+            deduped.append(t)
+    return deduped
 
 
 def _finance_context_summary(transactions, max_txns=80):
