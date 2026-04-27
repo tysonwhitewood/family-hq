@@ -338,6 +338,14 @@ def init_db():
                 content TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS budget_targets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                monthly_target REAL NOT NULL,
+                type TEXT DEFAULT 'personal',
+                created_at TEXT,
+                updated_at TEXT
+            );
         ''')
         # Seed insurance records — insert each by policy_number if not already present
         now = datetime.now().isoformat()[:19]
@@ -1606,6 +1614,159 @@ def api_finance_chat_history():
             'SELECT role, content, created_at FROM finance_chat ORDER BY id DESC LIMIT 50'
         ).fetchall()
     return jsonify([dict(r) for r in reversed(rows)])
+
+
+# ── Budget Targets ────────────────────────────────────────────────────────────
+
+@app.route('/api/budget/targets', methods=['GET'])
+@login_required
+def api_budget_targets_get():
+    with get_db() as db:
+        rows = db.execute('SELECT * FROM budget_targets ORDER BY type, category').fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/budget/targets', methods=['POST'])
+@login_required
+def api_budget_targets_post():
+    data = request.json or {}
+    category = data.get('category', '').strip()
+    monthly_target = data.get('monthly_target')
+    btype = data.get('type', 'personal')
+    if not category or monthly_target is None:
+        return jsonify({'error': 'category and monthly_target required'}), 400
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO budget_targets (category, monthly_target, type, created_at, updated_at) VALUES (?,?,?,?,?)',
+            (category, float(monthly_target), btype, now, now)
+        )
+        row = db.execute('SELECT * FROM budget_targets WHERE category=? AND type=? ORDER BY id DESC LIMIT 1', (category, btype)).fetchone()
+    return jsonify(dict(row)), 201
+
+@app.route('/api/budget/targets/<int:target_id>', methods=['PUT'])
+@login_required
+def api_budget_target_put(target_id):
+    data = request.json or {}
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        row = db.execute('SELECT * FROM budget_targets WHERE id=?', (target_id,)).fetchone()
+        if not row:
+            return jsonify({'error': 'not found'}), 404
+        category = data.get('category', row['category'])
+        monthly_target = data.get('monthly_target', row['monthly_target'])
+        btype = data.get('type', row['type'])
+        db.execute(
+            'UPDATE budget_targets SET category=?, monthly_target=?, type=?, updated_at=? WHERE id=?',
+            (category, float(monthly_target), btype, now, target_id)
+        )
+        updated = db.execute('SELECT * FROM budget_targets WHERE id=?', (target_id,)).fetchone()
+    return jsonify(dict(updated))
+
+@app.route('/api/budget/targets/<int:target_id>', methods=['DELETE'])
+@login_required
+def api_budget_target_delete(target_id):
+    with get_db() as db:
+        db.execute('DELETE FROM budget_targets WHERE id=?', (target_id,))
+    return jsonify({'ok': True})
+
+@app.route('/api/budget/actuals')
+@login_required
+def api_budget_actuals():
+    """Return last 3 months of category actuals from parsed transactions."""
+    import csv as csv_module
+    from pathlib import Path as P
+    from datetime import date, timedelta
+
+    base = P('/home/claude/family-wealth/2. Financial Capital/Banking & Cash Flow')
+    CATS = [
+        ('Groceries', ['coles','woolworth','iga','ritchies','pricebuster','foodwork','aldi','costco']),
+        ('Fuel', ['shell','bp','mehar','petrol','fuel','ampol','caltex']),
+        ('Mortgage', ['mortgage','loan repay','home loan']),
+        ('Rates', ['rates','srrc','council']),
+        ('Utilities', ['energy','electricity','water','gas','origin','agl','ergon','actew']),
+        ('Insurance', ['racq','nrma','suncorp','insur','allianz','prisk','proris','gt insurance']),
+        ('Dining/Takeaway', ['mcdonald','guzman','zarraffa','cafe','coffee','pizza','kfc','hungry','subway','domino','nandos','mcdonalds','zomato','carter']),
+        ('Subscriptions', ['netflix','spotify','apple.com','disney','amazon','adobe','cursor','hetzner','claude','openai','chatgpt']),
+        ('Medical', ['pharmacy','chemist','doctor','medical','dental','physio']),
+        ('Legal/Professional', ['legalvision','legal','accounting','bookkeep','xero']),
+        ('Business Income', ['cheesecake','invoice','inv-']),
+        ('Transfers', ['transfer','osko','pay anyone','bpay','robyn whitewood','tyson whitewood']),
+    ]
+
+    def categorize(desc, amount):
+        dl = desc.lower()
+        if amount > 0 and any(kw in dl for kw in ['cheesecake','invoice','direct credit']):
+            return 'Business Income'
+        for cat, kws in CATS:
+            if any(kw in dl for kw in kws):
+                return cat
+        return 'Other Income' if amount > 0 else 'Other Expenses'
+
+    def parse_amount(s):
+        if not s: return 0.0
+        try: return float(str(s).strip().replace('"','').replace(',','').replace('+',''))
+        except: return 0.0
+
+    txns = []
+    seen = set()
+    cutoff = (date.today().replace(day=1) - timedelta(days=60)).replace(day=1)
+
+    for folder in sorted(base.iterdir()):
+        if not folder.is_dir(): continue
+        for csv_file in folder.glob('*.csv'):
+            name = csv_file.name.lower()
+            try:
+                with open(csv_file, encoding='utf-8-sig') as f:
+                    first = f.read(200)
+                if 'date' in first.lower() and 'credit' in first.lower():
+                    # ING format
+                    with open(csv_file, encoding='utf-8-sig') as f:
+                        for row in csv_module.DictReader(f):
+                            try:
+                                d = datetime.strptime(row['Date'].strip(), '%d/%m/%Y').date()
+                                if d < cutoff: continue
+                                credit = parse_amount(row.get('Credit',''))
+                                debit = parse_amount(row.get('Debit',''))
+                                amt = credit if credit else -abs(debit)
+                                desc = row.get('Description','').strip()
+                                key = (d.isoformat(), desc[:60], round(amt,2))
+                                if key not in seen:
+                                    seen.add(key)
+                                    txns.append({'date': d, 'amount': round(amt,2), 'desc': desc, 'type': 'personal'})
+                            except: pass
+                else:
+                    # CBA format
+                    with open(csv_file, encoding='utf-8-sig') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line: continue
+                            parts = list(csv_module.reader([line]))[0]
+                            if len(parts) < 3: continue
+                            try:
+                                d = datetime.strptime(parts[0].strip(), '%d/%m/%Y').date()
+                                if d < cutoff: continue
+                                amt = parse_amount(parts[1])
+                                desc = parts[2].strip().strip('"')
+                                key = (d.isoformat(), desc[:60], round(amt,2))
+                                if key not in seen:
+                                    seen.add(key)
+                                    txns.append({'date': d, 'amount': round(amt,2), 'desc': desc, 'type': 'personal'})
+                            except: pass
+            except: pass
+
+    # Aggregate by (year-month, category)
+    from collections import defaultdict
+    monthly = defaultdict(lambda: defaultdict(float))
+    for t in txns:
+        ym = t['date'].strftime('%Y-%m')
+        cat = categorize(t['desc'], t['amount'])
+        if t['amount'] < 0:
+            monthly[ym][cat] += abs(t['amount'])
+
+    result = {}
+    for ym, cats in monthly.items():
+        result[ym] = dict(cats)
+    return jsonify(result)
 
 
 # ── Paper Trading & Screener ──────────────────────────────────────────────────

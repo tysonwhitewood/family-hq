@@ -429,6 +429,9 @@ body {
     <div class="nav-item" onclick="showPage('finance',this);loadFinance()">
       <span class="nav-icon">💰</span> Finance
     </div>
+    <div class="nav-item" onclick="showPage('budget',this);loadBudget()">
+      <span class="nav-icon">📊</span> Budget
+    </div>
   </div>
 
   <div class="nav-section">
@@ -789,6 +792,83 @@ body {
   </div>
 </div>
 
+<!-- BUDGET -->
+<div class="page" id="page-budget">
+  <div class="topbar"><div class="topbar-title">📊 Budget</div></div>
+  <div class="page-body">
+
+    <!-- Targets vs Actuals -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <div class="card-title">Monthly Budget — Targets vs Actuals</div>
+        <button onclick="showBudgetForm()" style="background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add Target</button>
+      </div>
+      <div id="budget-add-form" style="display:none;padding:12px 16px;border-bottom:1px solid #F3F4F6;gap:8px;flex-wrap:wrap">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input id="bgt-cat" placeholder="Category (e.g. Groceries)" style="flex:1;min-width:160px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
+          <input id="bgt-amount" type="number" placeholder="$/month" style="width:110px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
+          <select id="bgt-type" style="padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
+            <option value="personal">Personal</option>
+            <option value="business">Business</option>
+          </select>
+          <button onclick="saveBudgetTarget()" style="background:#1B4332;color:#fff;border:none;padding:7px 14px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">Save</button>
+          <button onclick="document.getElementById('budget-add-form').style.display='none'" style="background:#F3F4F6;color:#374151;border:none;padding:7px 12px;border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>
+        </div>
+      </div>
+      <div id="budget-targets-body" style="padding:0">Loading…</div>
+    </div>
+
+    <!-- 3-month actuals summary -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">Last 3 Months — Spending by Category</div></div>
+      <div id="budget-actuals-body" style="padding:16px;color:#6B7280;font-size:13px">Loading…</div>
+    </div>
+
+    <!-- Savings goal calculator -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">Emergency Fund Calculator</div></div>
+      <div style="padding:16px">
+        <p style="font-size:13px;color:#6B7280;margin:0 0 12px">How many months of essentials to hold in savings?</p>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
+          <label style="font-size:13px;color:#374151">Months:</label>
+          <input type="number" id="savings-months" value="3" min="1" max="12" style="width:70px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;outline:none" oninput="calcSavingsGoal()">
+        </div>
+        <div id="savings-goal-body" style="font-size:13px;color:#374151"></div>
+      </div>
+    </div>
+
+    <!-- Upcoming known expenses -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">Upcoming Known Expenses</div></div>
+      <div style="padding:16px">
+        <div id="upcoming-expenses-body">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F3F4F6">
+            <div><div style="font-size:13px;font-weight:600">Car Service (15,000km)</div><div style="font-size:12px;color:#9CA3AF">Due imminently — booked</div></div>
+            <div style="font-weight:700;color:#DC2626">$300</div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F3F4F6">
+            <div><div style="font-size:13px;font-weight:600">Car Registration (996MX3)</div><div style="font-size:12px;color:#9CA3AF">Expires 15 Apr 2027 — paid $960.25</div></div>
+            <div style="font-weight:700;color:#6B7280">$0 due</div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F3F4F6">
+            <div><div style="font-size:13px;font-weight:600">Credit Card Payoff (CBA)</div><div style="font-size:12px;color:#9CA3AF">Current balance ~$5,000</div></div>
+            <div style="font-weight:700;color:#DC2626">$5,000+</div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F3F4F6">
+            <div><div style="font-size:13px;font-weight:600">Business Setup (new company + RE licences)</div><div style="font-size:12px;color:#9CA3AF">National real estate licence + company registration</div></div>
+            <div style="font-weight:700;color:#F59E0B">TBD</div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0">
+            <div><div style="font-size:13px;font-weight:600">Garden Project (tiller + excavator + plants)</div><div style="font-size:12px;color:#9CA3AF">Clay buster, soil, rocks, weekend hire</div></div>
+            <div style="font-weight:700;color:#F59E0B">TBD</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <!-- SETTINGS -->
 <div class="page" id="page-settings">
   <div class="topbar"><div class="topbar-title">⚙️ Integrations & Settings</div></div>
@@ -992,6 +1072,9 @@ body {
     </div>
     <div class="mnav-item" onclick="showPage('finance',this);loadFinance()" data-page="finance">
       <span class="micon">💰</span><span>Finance</span>
+    </div>
+    <div class="mnav-item" onclick="showPage('budget',this);loadBudget()" data-page="budget">
+      <span class="micon">📊</span><span>Budget</span>
     </div>
     <div class="mnav-item" onclick="showPage('property',this);loadProperty()" data-page="property">
       <span class="micon">🏡</span><span>Investments</span>
@@ -2329,6 +2412,157 @@ async function finSend() {
     msgs.innerHTML += finBubble('assistant', 'Connection error — please try again.');
   }
   msgs.scrollTop = msgs.scrollHeight;
+}
+
+// ── Budget ────────────────────────────────────────────────────────────────────
+let _budgetTargets = [];
+let _budgetActuals = {};
+
+async function loadBudget() {
+  const [tRes, aRes] = await Promise.all([
+    authFetch('/api/budget/targets'),
+    authFetch('/api/budget/actuals'),
+  ]);
+  _budgetTargets = tRes.ok ? await tRes.json() : [];
+  _budgetActuals = aRes.ok ? await aRes.json() : {};
+  renderBudgetTargets();
+  renderBudgetActuals();
+  calcSavingsGoal();
+}
+
+function renderBudgetTargets() {
+  const el = document.getElementById('budget-targets-body');
+  if (!el) return;
+  if (!_budgetTargets.length) {
+    el.innerHTML = '<div style="padding:16px;color:#9CA3AF;font-size:13px">No targets set yet. Add one above.</div>';
+    return;
+  }
+
+  // Get latest month actuals
+  const months = Object.keys(_budgetActuals).sort();
+  const latestMonth = months[months.length - 1] || '';
+  const latestActuals = _budgetActuals[latestMonth] || {};
+
+  const personal = _budgetTargets.filter(t => t.type === 'personal');
+  const business = _budgetTargets.filter(t => t.type === 'business');
+
+  function renderGroup(targets, label) {
+    if (!targets.length) return '';
+    const rows = targets.map(t => {
+      const actual = latestActuals[t.category] || 0;
+      const pct = t.monthly_target > 0 ? Math.min((actual / t.monthly_target) * 100, 150) : 0;
+      const over = actual > t.monthly_target;
+      const barColor = over ? '#DC2626' : pct > 80 ? '#F59E0B' : '#1B4332';
+      return `
+        <div style="padding:10px 16px;border-bottom:1px solid #F9FAFB">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="font-size:13px;font-weight:500;color:#374151">${t.category}</span>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:12px;color:${over?'#DC2626':'#6B7280'}">$${actual.toFixed(0)} / $${t.monthly_target.toFixed(0)}</span>
+              <button onclick="deleteBudgetTarget(${t.id})" style="background:none;border:none;color:#D1D5DB;cursor:pointer;font-size:14px;padding:0;line-height:1" title="Remove">×</button>
+            </div>
+          </div>
+          <div style="background:#F3F4F6;border-radius:4px;height:6px;overflow:hidden">
+            <div style="background:${barColor};height:100%;width:${Math.min(pct,100)}%;transition:width .3s"></div>
+          </div>
+        </div>`;
+    }).join('');
+    return `<div style="padding:10px 16px 4px;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.5px">${label} ${latestMonth ? '— '+latestMonth : ''}</div>${rows}`;
+  }
+
+  el.innerHTML = renderGroup(personal, '🏠 Personal') + renderGroup(business, '💼 Business');
+}
+
+function renderBudgetActuals() {
+  const el = document.getElementById('budget-actuals-body');
+  if (!el) return;
+  const months = Object.keys(_budgetActuals).sort().slice(-3);
+  if (!months.length) { el.innerHTML = '<div style="color:#9CA3AF;font-size:13px">No transaction data found.</div>'; return; }
+
+  const allCats = new Set();
+  months.forEach(m => Object.keys(_budgetActuals[m]).forEach(c => allCats.add(c)));
+  const cats = [...allCats].filter(c => !['Business Income','Other Income','Transfers'].includes(c)).sort();
+
+  let html = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="border-bottom:2px solid #E5E7EB">
+      <th style="text-align:left;padding:6px 8px;color:#6B7280;font-weight:600">Category</th>
+      ${months.map(m=>`<th style="text-align:right;padding:6px 8px;color:#6B7280;font-weight:600">${m}</th>`).join('')}
+    </tr></thead><tbody>`;
+
+  cats.forEach(cat => {
+    const vals = months.map(m => _budgetActuals[m][cat] || 0);
+    if (vals.every(v => v === 0)) return;
+    html += `<tr style="border-bottom:1px solid #F3F4F6">
+      <td style="padding:6px 8px;color:#374151">${cat}</td>
+      ${vals.map(v => `<td style="text-align:right;padding:6px 8px;color:#374151">$${v.toFixed(0)}</td>`).join('')}
+    </tr>`;
+  });
+
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
+}
+
+function calcSavingsGoal() {
+  const el = document.getElementById('savings-goal-body');
+  const monthsEl = document.getElementById('savings-months');
+  if (!el || !monthsEl) return;
+  const months = parseInt(monthsEl.value) || 3;
+
+  const essentialCats = ['Groceries','Fuel','Mortgage','Rates','Utilities','Insurance','Medical'];
+  const latestMonths = Object.keys(_budgetActuals).sort().slice(-3);
+  if (!latestMonths.length) { el.innerHTML = '<div style="color:#9CA3AF">No data yet — load Finance first.</div>'; return; }
+
+  const avgBycat = {};
+  essentialCats.forEach(cat => {
+    const sum = latestMonths.reduce((a, m) => a + (_budgetActuals[m]?.[cat] || 0), 0);
+    avgBycat[cat] = sum / (latestMonths.length || 1);
+  });
+
+  const totalMonthly = Object.values(avgBycat).reduce((a,b) => a+b, 0);
+  const goalAmount = totalMonthly * months;
+
+  let rows = essentialCats.filter(c => avgBycat[c] > 0).map(c =>
+    `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #F9FAFB">
+      <span style="color:#6B7280">${c}</span>
+      <span style="color:#374151">$${avgBycat[c].toFixed(0)}/mo</span>
+    </div>`
+  ).join('');
+
+  el.innerHTML = `
+    ${rows}
+    <div style="display:flex;justify-content:space-between;padding:8px 0 4px;font-weight:700;font-size:14px;border-top:2px solid #E5E7EB;margin-top:4px">
+      <span>Total essentials/mo</span><span style="color:#1B4332">$${totalMonthly.toFixed(0)}</span>
+    </div>
+    <div style="background:#ECFDF5;border-radius:8px;padding:12px;margin-top:8px">
+      <div style="font-size:15px;font-weight:700;color:#1B4332">${months}-month emergency fund target: $${goalAmount.toFixed(0)}</div>
+      <div style="font-size:12px;color:#6B7280;margin-top:4px">Based on avg of last ${latestMonths.length} months' essential spending</div>
+    </div>`;
+}
+
+function showBudgetForm() {
+  const f = document.getElementById('budget-add-form');
+  if (f) { f.style.display = f.style.display === 'none' ? 'flex' : 'none'; }
+}
+
+async function saveBudgetTarget() {
+  const cat = document.getElementById('bgt-cat')?.value.trim();
+  const amt = parseFloat(document.getElementById('bgt-amount')?.value);
+  const type = document.getElementById('bgt-type')?.value || 'personal';
+  if (!cat || isNaN(amt)) return;
+  await authFetch('/api/budget/targets', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({category: cat, monthly_target: amt, type})
+  });
+  document.getElementById('bgt-cat').value = '';
+  document.getElementById('bgt-amount').value = '';
+  document.getElementById('budget-add-form').style.display = 'none';
+  await loadBudget();
+}
+
+async function deleteBudgetTarget(id) {
+  await authFetch(`/api/budget/targets/${id}`, {method:'DELETE'});
+  await loadBudget();
 }
 
 </script>
