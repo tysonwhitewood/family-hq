@@ -1835,6 +1835,176 @@ def api_savings_goal_delete(goal_id):
     return jsonify({'ok': True})
 
 
+# /api/budget/savings aliases (canonical path per API spec)
+@app.route('/api/budget/savings', methods=['GET'])
+@login_required
+def api_budget_savings_get():
+    return api_savings_goals_get()
+
+@app.route('/api/budget/savings', methods=['POST'])
+@login_required
+def api_budget_savings_post():
+    return api_savings_goals_post()
+
+@app.route('/api/budget/savings/<int:goal_id>', methods=['PUT'])
+@login_required
+def api_budget_savings_put(goal_id):
+    return api_savings_goal_put(goal_id)
+
+@app.route('/api/budget/savings/<int:goal_id>', methods=['DELETE'])
+@login_required
+def api_budget_savings_delete(goal_id):
+    return api_savings_goal_delete(goal_id)
+
+
+# ── Budget Forecast ───────────────────────────────────────────────────────────
+
+@app.route('/api/budget/forecast')
+@login_required
+def api_budget_forecast():
+    """3-month forward projection: avg of last 3 months per category vs targets."""
+    import csv as csv_module
+    from pathlib import Path as P
+    from datetime import date, timedelta
+    from collections import defaultdict
+
+    base = P('/home/claude/family-wealth/2. Financial Capital/Banking & Cash Flow')
+    CATS = [
+        ('Groceries', ['coles','woolworth','iga','ritchies','pricebuster','foodwork','aldi','costco']),
+        ('Fuel', ['shell','bp','mehar','petrol','fuel','ampol','caltex']),
+        ('Mortgage', ['mortgage','loan repay','home loan']),
+        ('Rates', ['rates','srrc','council']),
+        ('Utilities', ['energy','electricity','water','gas','origin','agl','ergon','actew']),
+        ('Insurance', ['racq','nrma','suncorp','insur','allianz','prisk','proris','gt insurance']),
+        ('Dining/Takeaway', ['mcdonald','guzman','zarraffa','cafe','coffee','pizza','kfc','hungry','subway','domino','nandos','mcdonalds','zomato','carter']),
+        ('Subscriptions', ['netflix','spotify','apple.com','disney','amazon','adobe','cursor','hetzner','claude','openai','chatgpt']),
+        ('Medical', ['pharmacy','chemist','doctor','medical','dental','physio']),
+        ('Legal/Professional', ['legalvision','legal','accounting','bookkeep','xero']),
+        ('Transfers', ['transfer','osko','pay anyone','bpay','robyn whitewood','tyson whitewood']),
+    ]
+
+    def categorize(desc, amount):
+        dl = desc.lower()
+        if amount > 0 and any(kw in dl for kw in ['cheesecake','invoice','direct credit']):
+            return 'Business Income'
+        for cat, kws in CATS:
+            if any(kw in dl for kw in kws):
+                return cat
+        return 'Other Income' if amount > 0 else 'Other Expenses'
+
+    def parse_amount(s):
+        if not s: return 0.0
+        try: return float(str(s).strip().replace('"','').replace(',','').replace('+',''))
+        except: return 0.0
+
+    txns = []
+    seen = set()
+    cutoff = (date.today().replace(day=1) - timedelta(days=90)).replace(day=1)
+
+    for folder in sorted(base.iterdir()):
+        if not folder.is_dir(): continue
+        for csv_file in folder.glob('*.csv'):
+            try:
+                with open(csv_file, encoding='utf-8-sig') as f:
+                    first = f.read(200)
+                if 'date' in first.lower() and 'credit' in first.lower():
+                    with open(csv_file, encoding='utf-8-sig') as f:
+                        for row in csv_module.DictReader(f):
+                            try:
+                                d = datetime.strptime(row['Date'].strip(), '%d/%m/%Y').date()
+                                if d < cutoff: continue
+                                credit = parse_amount(row.get('Credit',''))
+                                debit = parse_amount(row.get('Debit',''))
+                                amt = credit if credit else -abs(debit)
+                                desc = row.get('Description','').strip()
+                                key = (d.isoformat(), desc[:60], round(amt,2))
+                                if key not in seen:
+                                    seen.add(key)
+                                    if amt < 0:
+                                        txns.append({'date': d, 'amount': abs(amt), 'desc': desc})
+                            except: pass
+                else:
+                    with open(csv_file, encoding='utf-8-sig') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line: continue
+                            parts = list(csv_module.reader([line]))[0]
+                            if len(parts) < 3: continue
+                            try:
+                                d = datetime.strptime(parts[0].strip(), '%d/%m/%Y').date()
+                                if d < cutoff: continue
+                                amt = parse_amount(parts[1])
+                                desc = parts[2].strip().strip('"')
+                                key = (d.isoformat(), desc[:60], round(amt,2))
+                                if key not in seen:
+                                    seen.add(key)
+                                    if amt < 0:
+                                        txns.append({'date': d, 'amount': abs(amt), 'desc': desc})
+                            except: pass
+            except: pass
+
+    # Monthly totals by category
+    monthly = defaultdict(lambda: defaultdict(float))
+    months_seen = set()
+    for t in txns:
+        ym = t['date'].strftime('%Y-%m')
+        months_seen.add(ym)
+        cat = categorize(t['desc'], -t['amount'])
+        monthly[ym][cat] += t['amount']
+
+    n_months = max(len(months_seen), 1)
+    all_cats = set()
+    for m in monthly.values():
+        all_cats.update(m.keys())
+
+    # Average per category
+    averages = {}
+    for cat in all_cats:
+        total = sum(monthly[ym].get(cat, 0) for ym in months_seen)
+        averages[cat] = round(total / n_months, 2)
+
+    # Load targets
+    with get_db() as db:
+        target_rows = db.execute('SELECT category, monthly_target FROM budget_targets').fetchall()
+    targets = {r['category']: r['monthly_target'] for r in target_rows}
+
+    # Build 3-month forecast
+    today = date.today()
+    forecast_months = []
+    for i in range(1, 4):
+        m = (today.replace(day=1) + timedelta(days=32*i)).replace(day=1)
+        forecast_months.append(m.strftime('%Y-%m'))
+
+    result = {
+        'based_on_months': sorted(months_seen)[-3:],
+        'n_months_averaged': n_months,
+        'forecast': {},
+        'category_summary': [],
+    }
+
+    cats_to_show = [c for c in sorted(averages.keys())
+                    if c not in ('Other Income','Business Income','Transfers') and averages[c] > 0]
+
+    for cat in cats_to_show:
+        avg = averages[cat]
+        target = targets.get(cat)
+        variance = round(avg - target, 2) if target else None
+        result['forecast'][cat] = {m: round(avg, 2) for m in forecast_months}
+        result['category_summary'].append({
+            'category': cat,
+            'avg_monthly': avg,
+            'target': target,
+            'variance': variance,
+            'status': ('over' if variance and variance > 0 else
+                      'under' if variance and variance < 0 else 'on_track'),
+        })
+
+    result['total_avg_monthly'] = round(sum(averages[c] for c in cats_to_show), 2)
+    result['total_target'] = round(sum(targets.get(c, averages[c]) for c in cats_to_show), 2)
+
+    return jsonify(result)
+
+
 # ── Paper Trading & Screener ──────────────────────────────────────────────────
 
 VALUE_WATCHLIST = [
