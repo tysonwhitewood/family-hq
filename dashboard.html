@@ -380,6 +380,45 @@ body {
 @media (max-width: 400px) {
   .stats-row { grid-template-columns: 1fr; }
 }
+
+/* ── Budget page styles ─────────────────────────────────────────────────────── */
+.bdgt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bdgt-table th { text-align: left; font-size: 11px; font-weight: 600; color: #6B7280; padding: 8px 6px; border-bottom: 1.5px solid #E5E7EB; }
+.bdgt-table td { padding: 10px 6px; border-bottom: 1px solid #F3F4F6; }
+.bdgt-bar-bg { width: 100%; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden; }
+.bdgt-bar-fill { height: 100%; border-radius: 4px; transition: width .4s; }
+.bdgt-green { background: #1B4332; }
+.bdgt-amber { background: #D4A017; }
+.bdgt-red { background: #DC2626; }
+.bdgt-actions { display: flex; gap: 6px; }
+.bdgt-actions button { background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 6px; border-radius: 4px; }
+.bdgt-actions button:hover { background: #F3F4F6; }
+.bdgt-goal-row { padding: 14px 0; border-bottom: 1px solid #F3F4F6; }
+.bdgt-goal-row:last-child { border-bottom: none; }
+.bdgt-goal-bar { width: 100%; height: 12px; background: #E5E7EB; border-radius: 6px; overflow: hidden; margin: 8px 0; }
+.bdgt-goal-fill { height: 100%; background: #1B4332; border-radius: 6px; transition: width .4s; }
+.bdgt-upcoming-row { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
+.bdgt-upcoming-row:last-child { border-bottom: none; }
+.bdgt-forecast-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 4px 0 8px; }
+.bdgt-forecast-card { border-radius: 12px; border: 2px solid #E5E7EB; padding: 16px 14px; background: #FAFAFA; }
+.bdgt-forecast-card.positive { border-color: #BBF7D0; background: #F0FDF4; }
+.bdgt-forecast-card.negative { border-color: #FECACA; background: #FFF5F5; }
+.bdgt-fc-month { font-size: 15px; font-weight: 700; color: #111827; margin-bottom: 12px; }
+.bdgt-fc-year { font-size: 11px; font-weight: 400; color: #9CA3AF; margin-left: 4px; }
+.bdgt-fc-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; font-size: 13px; }
+.bdgt-fc-row:last-child { margin-bottom: 0; border-top: 1px dashed #E5E7EB; padding-top: 7px; margin-top: 4px; }
+.bdgt-fc-label { color: #6B7280; display: flex; align-items: center; gap: 5px; }
+.bdgt-fc-val { font-weight: 600; }
+.bdgt-fc-val.in { color: #16a34a; }
+.bdgt-fc-val.out { color: #DC2626; }
+.bdgt-fc-val.save { font-size: 14px; font-weight: 700; }
+.bdgt-fc-val.save.pos { color: #16a34a; }
+.bdgt-fc-val.save.neg { color: #DC2626; }
+@media (max-width: 600px) {
+  .bdgt-table { font-size: 12px; }
+  .bdgt-table th, .bdgt-table td { padding: 6px 4px; }
+  .bdgt-forecast-grid { grid-template-columns: 1fr; gap: 10px; }
+}
 </style>
 </head>
 <body>
@@ -792,111 +831,6 @@ body {
   </div>
 </div>
 
-<!-- BUDGET -->
-<div class="page" id="page-budget">
-  <div class="topbar"><div class="topbar-title">📊 Budget</div></div>
-  <div class="page-body">
-
-    <!-- Targets vs Actuals -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header">
-        <div class="card-title">Monthly Budget — Targets vs Actuals</div>
-        <button onclick="showBudgetForm()" style="background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add Target</button>
-      </div>
-      <div id="budget-add-form" style="display:none;padding:12px 16px;border-bottom:1px solid #F3F4F6;gap:8px;flex-wrap:wrap">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input id="bgt-cat" placeholder="Category (e.g. Groceries)" style="flex:1;min-width:160px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
-          <input id="bgt-amount" type="number" placeholder="$/month" style="width:110px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
-          <select id="bgt-type" style="padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
-            <option value="personal">Personal</option>
-            <option value="business">Business</option>
-          </select>
-          <button onclick="saveBudgetTarget()" style="background:#1B4332;color:#fff;border:none;padding:7px 14px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">Save</button>
-          <button onclick="document.getElementById('budget-add-form').style.display='none'" style="background:#F3F4F6;color:#374151;border:none;padding:7px 12px;border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>
-        </div>
-      </div>
-      <div id="budget-targets-body" style="padding:0">Loading…</div>
-    </div>
-
-    <!-- 3-month actuals summary -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><div class="card-title">Last 3 Months — Spending by Category</div></div>
-      <div id="budget-actuals-body" style="padding:16px;color:#6B7280;font-size:13px">Loading…</div>
-    </div>
-
-    <!-- Savings goal calculator -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><div class="card-title">Emergency Fund Calculator</div></div>
-      <div style="padding:16px">
-        <p style="font-size:13px;color:#6B7280;margin:0 0 12px">How many months of essentials to hold in savings?</p>
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
-          <label style="font-size:13px;color:#374151">Months:</label>
-          <input type="number" id="savings-months" value="3" min="1" max="12" style="width:70px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;outline:none" oninput="calcSavingsGoal()">
-        </div>
-        <div id="savings-goal-body" style="font-size:13px;color:#374151"></div>
-      </div>
-    </div>
-
-    <!-- Savings Goals -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header">
-        <div class="card-title">Savings Goals</div>
-        <button onclick="showSavingsForm()" style="background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add Goal</button>
-      </div>
-      <div id="savings-add-form" style="display:none;padding:12px 16px;border-bottom:1px solid #F3F4F6">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input id="sg-name" placeholder="Goal name (e.g. Emergency Fund)" style="flex:1;min-width:160px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
-          <input id="sg-target" type="number" placeholder="Target $" style="width:110px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
-          <input id="sg-current" type="number" placeholder="Saved so far $" style="width:130px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
-          <input id="sg-date" type="date" style="padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
-          <button onclick="saveSavingsGoal()" style="background:#1B4332;color:#fff;border:none;padding:7px 14px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">Save</button>
-          <button onclick="document.getElementById('savings-add-form').style.display='none'" style="background:#F3F4F6;color:#374151;border:none;padding:7px 12px;border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>
-        </div>
-      </div>
-      <div id="savings-goals-body" style="padding:0">Loading…</div>
-    </div>
-
-    <!-- 3-Month Forecast -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header">
-        <div class="card-title">3-Month Spending Forecast</div>
-        <span style="font-size:11px;color:#9CA3AF">Based on last 3 months avg</span>
-      </div>
-      <div id="budget-forecast-body" style="padding:16px;color:#6B7280;font-size:13px">Loading…</div>
-    </div>
-
-    <!-- Upcoming known expenses -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><div class="card-title">Upcoming Known Expenses</div></div>
-      <div style="padding:16px">
-        <div id="upcoming-expenses-body">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F3F4F6">
-            <div><div style="font-size:13px;font-weight:600">Car Service (15,000km)</div><div style="font-size:12px;color:#9CA3AF">Due imminently — booked</div></div>
-            <div style="font-weight:700;color:#DC2626">$300</div>
-          </div>
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F3F4F6">
-            <div><div style="font-size:13px;font-weight:600">Car Registration (996MX3)</div><div style="font-size:12px;color:#9CA3AF">Expires 15 Apr 2027 — paid $960.25</div></div>
-            <div style="font-weight:700;color:#6B7280">$0 due</div>
-          </div>
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F3F4F6">
-            <div><div style="font-size:13px;font-weight:600">Credit Card Payoff (CBA)</div><div style="font-size:12px;color:#9CA3AF">Current balance ~$5,000</div></div>
-            <div style="font-weight:700;color:#DC2626">$5,000+</div>
-          </div>
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F3F4F6">
-            <div><div style="font-size:13px;font-weight:600">Business Setup (new company + RE licences)</div><div style="font-size:12px;color:#9CA3AF">National real estate licence + company registration</div></div>
-            <div style="font-weight:700;color:#F59E0B">TBD</div>
-          </div>
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0">
-            <div><div style="font-size:13px;font-weight:600">Garden Project (tiller + excavator + plants)</div><div style="font-size:12px;color:#9CA3AF">Clay buster, soil, rocks, weekend hire</div></div>
-            <div style="font-weight:700;color:#F59E0B">TBD</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </div>
-</div>
-
 <!-- SETTINGS -->
 <div class="page" id="page-settings">
   <div class="topbar"><div class="topbar-title">⚙️ Integrations & Settings</div></div>
@@ -964,6 +898,82 @@ body {
     <!-- Wishlist -->
     <div class="card" id="wishlist-container">
       <div class="empty-state">Loading…</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── BUDGET PAGE ──────────────────────────────────────────────────────────── -->
+<div class="page" id="page-budget">
+  <div class="topbar">
+    <div class="topbar-title">📊 Budget & Cash Flow</div>
+  </div>
+  <div class="page-body">
+
+    <!-- Monthly Summary -->
+    <div class="cashflow-bar" id="bdgt-summary-bar">
+      <div class="cf-item"><div class="cf-val" id="bdgt-income">—</div><div class="cf-lbl">Income</div></div>
+      <div class="cf-item"><div class="cf-val" id="bdgt-expenses">—</div><div class="cf-lbl">Expenses</div></div>
+      <div class="cf-item"><div class="cf-val" id="bdgt-net">—</div><div class="cf-lbl">Net</div></div>
+    </div>
+
+    <!-- 50/30/20 Gauge -->
+    <div class="card" style="padding:16px 20px">
+      <div style="font-size:12px;font-weight:600;color:#6B7280;margin-bottom:8px">50 / 30 / 20 RULE</div>
+      <div id="bdgt-gauge" style="display:flex;height:18px;border-radius:9px;overflow:hidden;background:#E5E7EB">
+        <div id="bdgt-g-needs" style="background:#1B4332;transition:width .4s" title="Needs (50%)"></div>
+        <div id="bdgt-g-wants" style="background:#D4A017;transition:width .4s" title="Wants (30%)"></div>
+        <div id="bdgt-g-savings" style="background:#6B7280;transition:width .4s" title="Savings (20%)"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:#6B7280">
+        <span>🟢 Needs <span id="bdgt-g-needs-pct">—</span></span>
+        <span>🟡 Wants <span id="bdgt-g-wants-pct">—</span></span>
+        <span>⚫ Savings <span id="bdgt-g-savings-pct">—</span></span>
+      </div>
+    </div>
+
+    <!-- Budget vs Actuals — Personal -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Personal Budget vs Actuals</div>
+        <button onclick="bdgtAddTarget('personal')" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
+      </div>
+      <div id="bdgt-personal-table" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </div>
+
+    <!-- Budget vs Actuals — Business -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Business Budget vs Actuals</div>
+        <button onclick="bdgtAddTarget('business')" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
+      </div>
+      <div id="bdgt-business-table" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </div>
+
+    <!-- Savings Goals -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Savings Goals</div>
+        <button onclick="bdgtAddGoal()" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add Goal</button>
+      </div>
+      <div id="bdgt-goals-container" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </div>
+
+    <!-- Upcoming Expenses -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Upcoming Known Expenses</div>
+        <button onclick="bdgtAddUpcoming()" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
+      </div>
+      <div id="bdgt-upcoming-container" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </div>
+
+    <!-- 3-Month Forecast -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">3-Month Cash Flow Forecast</div>
+      </div>
+      <div id="bdgt-forecast-container" style="padding:16px"><div class="empty-state">Loading…</div></div>
     </div>
 
   </div>
@@ -2442,286 +2452,299 @@ async function finSend() {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
-// ── Budget ────────────────────────────────────────────────────────────────────
-let _budgetTargets = [];
-let _budgetActuals = {};
+// ── BUDGET ────────────────────────────────────────��───────────────────────────
+
+let _bdgtData = null;
 
 async function loadBudget() {
-  const [tRes, aRes] = await Promise.all([
-    authFetch('/api/budget/targets'),
-    authFetch('/api/budget/actuals'),
-  ]);
-  _budgetTargets = tRes.ok ? await tRes.json() : [];
-  _budgetActuals = aRes.ok ? await aRes.json() : {};
-  renderBudgetTargets();
-  renderBudgetActuals();
-  calcSavingsGoal();
-  await loadSavingsGoals();
-  await loadForecast();
+  try {
+    const r = await authFetch('/api/budget/summary');
+    const d = await r.json();
+    _bdgtData = d;
+    bdgtRenderSummary(d);
+    bdgtRenderGauge(d);
+    bdgtRenderActuals(d);
+    bdgtRenderGoals(d);
+    bdgtRenderUpcoming(d);
+    bdgtRenderForecast(d);
+  } catch (e) {
+    console.error('Budget load error:', e);
+  }
 }
 
-function renderBudgetTargets() {
-  const el = document.getElementById('budget-targets-body');
-  if (!el) return;
-  if (!_budgetTargets.length) {
-    el.innerHTML = '<div style="padding:16px;color:#9CA3AF;font-size:13px">No targets set yet. Add one above.</div>';
-    return;
-  }
-
-  // Get latest month actuals
-  const months = Object.keys(_budgetActuals).sort();
-  const latestMonth = months[months.length - 1] || '';
-  const latestActuals = _budgetActuals[latestMonth] || {};
-
-  const personal = _budgetTargets.filter(t => t.type === 'personal');
-  const business = _budgetTargets.filter(t => t.type === 'business');
-
-  function renderGroup(targets, label) {
-    if (!targets.length) return '';
-    const rows = targets.map(t => {
-      const actual = latestActuals[t.category] || 0;
-      const pct = t.monthly_target > 0 ? Math.min((actual / t.monthly_target) * 100, 150) : 0;
-      const over = actual > t.monthly_target;
-      const barColor = over ? '#DC2626' : pct > 80 ? '#F59E0B' : '#1B4332';
-      return `
-        <div style="padding:10px 16px;border-bottom:1px solid #F9FAFB">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-size:13px;font-weight:500;color:#374151">${t.category}</span>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span style="font-size:12px;color:${over?'#DC2626':'#6B7280'}">$${actual.toFixed(0)} / $${t.monthly_target.toFixed(0)}</span>
-              <button onclick="deleteBudgetTarget(${t.id})" style="background:none;border:none;color:#D1D5DB;cursor:pointer;font-size:14px;padding:0;line-height:1" title="Remove">×</button>
-            </div>
-          </div>
-          <div style="background:#F3F4F6;border-radius:4px;height:6px;overflow:hidden">
-            <div style="background:${barColor};height:100%;width:${Math.min(pct,100)}%;transition:width .3s"></div>
-          </div>
-        </div>`;
-    }).join('');
-    return `<div style="padding:10px 16px 4px;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.5px">${label} ${latestMonth ? '— '+latestMonth : ''}</div>${rows}`;
-  }
-
-  el.innerHTML = renderGroup(personal, '🏠 Personal') + renderGroup(business, '💼 Business');
+function bdgtRenderSummary(d) {
+  document.getElementById('bdgt-income').textContent = fmt(d.income);
+  document.getElementById('bdgt-expenses').textContent = fmt(d.expenses);
+  const netEl = document.getElementById('bdgt-net');
+  netEl.textContent = fmt(d.net);
+  netEl.style.color = d.net >= 0 ? '#16a34a' : '#DC2626';
 }
 
-function renderBudgetActuals() {
-  const el = document.getElementById('budget-actuals-body');
-  if (!el) return;
-  const months = Object.keys(_budgetActuals).sort().slice(-3);
-  if (!months.length) { el.innerHTML = '<div style="color:#9CA3AF;font-size:13px">No transaction data found.</div>'; return; }
+function bdgtRenderGauge(d) {
+  // Simple 50/30/20 — categorise budget targets into needs/wants
+  const needs_cats = ['Groceries','Mortgage','Fuel','Home Utilities','Rent / Mortgage','Health & Medical','Insurance','Car Rego'];
+  let needs = 0, wants = 0;
+  if (d.budget_vs_actuals) {
+    d.budget_vs_actuals.forEach(b => {
+      if (needs_cats.includes(b.category)) needs += b.actual;
+      else wants += b.actual;
+    });
+  }
+  const total = d.income || 1;
+  const savings = Math.max(0, d.income - d.expenses);
+  const nPct = Math.min(100, Math.round(needs / total * 100));
+  const wPct = Math.min(100 - nPct, Math.round(wants / total * 100));
+  const sPct = Math.max(0, 100 - nPct - wPct);
+  document.getElementById('bdgt-g-needs').style.width = nPct + '%';
+  document.getElementById('bdgt-g-wants').style.width = wPct + '%';
+  document.getElementById('bdgt-g-savings').style.width = sPct + '%';
+  document.getElementById('bdgt-g-needs-pct').textContent = nPct + '%';
+  document.getElementById('bdgt-g-wants-pct').textContent = wPct + '%';
+  document.getElementById('bdgt-g-savings-pct').textContent = sPct + '%';
+}
 
-  const allCats = new Set();
-  months.forEach(m => Object.keys(_budgetActuals[m]).forEach(c => allCats.add(c)));
-  const cats = [...allCats].filter(c => !['Business Income','Other Income','Transfers'].includes(c)).sort();
+function bdgtRenderActuals(d) {
+  const personal = d.budget_vs_actuals.filter(b => b.type === 'personal');
+  const business = d.budget_vs_actuals.filter(b => b.type === 'business');
+  document.getElementById('bdgt-personal-table').innerHTML = bdgtBuildTable(personal);
+  document.getElementById('bdgt-business-table').innerHTML = business.length
+    ? bdgtBuildTable(business)
+    : '<div style="padding:12px;color:#9CA3AF;font-size:13px">No business budget targets set yet.</div>';
+}
 
-  let html = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
-    <thead><tr style="border-bottom:2px solid #E5E7EB">
-      <th style="text-align:left;padding:6px 8px;color:#6B7280;font-weight:600">Category</th>
-      ${months.map(m=>`<th style="text-align:right;padding:6px 8px;color:#6B7280;font-weight:600">${m}</th>`).join('')}
-    </tr></thead><tbody>`;
-
-  cats.forEach(cat => {
-    const vals = months.map(m => _budgetActuals[m][cat] || 0);
-    if (vals.every(v => v === 0)) return;
-    html += `<tr style="border-bottom:1px solid #F3F4F6">
-      <td style="padding:6px 8px;color:#374151">${cat}</td>
-      ${vals.map(v => `<td style="text-align:right;padding:6px 8px;color:#374151">$${v.toFixed(0)}</td>`).join('')}
+function bdgtBuildTable(items) {
+  if (!items.length) return '<div style="padding:12px;color:#9CA3AF;font-size:13px">No targets set yet.</div>';
+  let html = `<table class="bdgt-table">
+    <thead><tr><th>Category</th><th>Budget</th><th>Actual</th><th>Remaining</th><th style="width:120px">% Used</th><th></th></tr></thead><tbody>`;
+  items.forEach(b => {
+    const pct = Math.min(b.percent_used, 100);
+    const cls = b.percent_used > 100 ? 'bdgt-red' : b.percent_used >= 80 ? 'bdgt-amber' : 'bdgt-green';
+    const remColor = b.remaining < 0 ? 'color:#DC2626;font-weight:600' : '';
+    html += `<tr>
+      <td style="font-weight:600">${b.category}</td>
+      <td>${fmt(b.target)}</td>
+      <td>${fmt(b.actual)}</td>
+      <td style="${remColor}">${fmt(b.remaining)}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div class="bdgt-bar-bg"><div class="bdgt-bar-fill ${cls}" style="width:${pct}%"></div></div>
+          <span style="font-size:11px;color:#6B7280;white-space:nowrap">${Math.round(b.percent_used)}%</span>
+        </div>
+      </td>
+      <td class="bdgt-actions">
+        <button onclick="bdgtEditTarget(${b.id},'${b.category}',${b.target},'${b.type}')" title="Edit">✏��</button>
+        <button onclick="bdgtDeleteTarget(${b.id})" title="Delete">🗑️</button>
+      </td>
     </tr>`;
   });
-
-  html += '</tbody></table></div>';
-  el.innerHTML = html;
+  html += '</tbody></table>';
+  return html;
 }
 
-function calcSavingsGoal() {
-  const el = document.getElementById('savings-goal-body');
-  const monthsEl = document.getElementById('savings-months');
-  if (!el || !monthsEl) return;
-  const months = parseInt(monthsEl.value) || 3;
-
-  const essentialCats = ['Groceries','Fuel','Mortgage','Rates','Utilities','Insurance','Medical'];
-  const latestMonths = Object.keys(_budgetActuals).sort().slice(-3);
-  if (!latestMonths.length) { el.innerHTML = '<div style="color:#9CA3AF">No data yet — load Finance first.</div>'; return; }
-
-  const avgBycat = {};
-  essentialCats.forEach(cat => {
-    const sum = latestMonths.reduce((a, m) => a + (_budgetActuals[m]?.[cat] || 0), 0);
-    avgBycat[cat] = sum / (latestMonths.length || 1);
-  });
-
-  const totalMonthly = Object.values(avgBycat).reduce((a,b) => a+b, 0);
-  const goalAmount = totalMonthly * months;
-
-  let rows = essentialCats.filter(c => avgBycat[c] > 0).map(c =>
-    `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #F9FAFB">
-      <span style="color:#6B7280">${c}</span>
-      <span style="color:#374151">$${avgBycat[c].toFixed(0)}/mo</span>
-    </div>`
-  ).join('');
-
-  el.innerHTML = `
-    ${rows}
-    <div style="display:flex;justify-content:space-between;padding:8px 0 4px;font-weight:700;font-size:14px;border-top:2px solid #E5E7EB;margin-top:4px">
-      <span>Total essentials/mo</span><span style="color:#1B4332">$${totalMonthly.toFixed(0)}</span>
-    </div>
-    <div style="background:#ECFDF5;border-radius:8px;padding:12px;margin-top:8px">
-      <div style="font-size:15px;font-weight:700;color:#1B4332">${months}-month emergency fund target: $${goalAmount.toFixed(0)}</div>
-      <div style="font-size:12px;color:#6B7280;margin-top:4px">Based on avg of last ${latestMonths.length} months' essential spending</div>
-    </div>`;
-}
-
-function showBudgetForm() {
-  const f = document.getElementById('budget-add-form');
-  if (f) { f.style.display = f.style.display === 'none' ? 'flex' : 'none'; }
-}
-
-async function saveBudgetTarget() {
-  const cat = document.getElementById('bgt-cat')?.value.trim();
-  const amt = parseFloat(document.getElementById('bgt-amount')?.value);
-  const type = document.getElementById('bgt-type')?.value || 'personal';
-  if (!cat || isNaN(amt)) return;
-  await authFetch('/api/budget/targets', {
+function bdgtAddTarget(btype) {
+  const cat = prompt('Category name (e.g. Groceries, Fuel, Insurance):');
+  if (!cat) return;
+  const target = prompt('Monthly budget target ($):');
+  if (!target) return;
+  authFetch('/api/budget/targets', {
     method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({category: cat, monthly_target: amt, type})
-  });
-  document.getElementById('bgt-cat').value = '';
-  document.getElementById('bgt-amount').value = '';
-  document.getElementById('budget-add-form').style.display = 'none';
-  await loadBudget();
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ category: cat.trim(), monthly_target: parseFloat(target), type: btype })
+  }).then(() => loadBudget());
 }
 
-async function deleteBudgetTarget(id) {
-  await authFetch(`/api/budget/targets/${id}`, {method:'DELETE'});
-  await loadBudget();
+function bdgtEditTarget(id, cat, target, btype) {
+  const newCat = prompt('Category:', cat);
+  if (!newCat) return;
+  const newTarget = prompt('Monthly budget ($):', target);
+  if (!newTarget) return;
+  authFetch('/api/budget/targets', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ id: id, category: newCat.trim(), monthly_target: parseFloat(newTarget), type: btype })
+  }).then(() => loadBudget());
 }
 
-// ── Savings Goals ─────────────────────────────────────────────────────────────
-let _savingsGoals = [];
-
-async function loadSavingsGoals() {
-  const r = await authFetch('/api/savings-goals');
-  _savingsGoals = r.ok ? await r.json() : [];
-  renderSavingsGoals();
+function bdgtDeleteTarget(id) {
+  if (!confirm('Delete this budget target?')) return;
+  authFetch('/api/budget/targets/' + id, { method: 'DELETE' }).then(() => loadBudget());
 }
 
-function renderSavingsGoals() {
-  const el = document.getElementById('savings-goals-body');
-  if (!el) return;
-  if (!_savingsGoals.length) {
-    el.innerHTML = '<div style="padding:16px;color:#9CA3AF;font-size:13px">No savings goals yet. Add one above.</div>';
+// ── Savings Goals ──
+
+function bdgtRenderGoals(d) {
+  const container = document.getElementById('bdgt-goals-container');
+  if (!d.savings_goals || !d.savings_goals.length) {
+    container.innerHTML = '<div style="padding:12px;color:#9CA3AF;font-size:13px">No savings goals yet. Click + Add Goal to start.</div>';
     return;
   }
-  el.innerHTML = _savingsGoals.map(g => {
-    const pct = g.target_amount > 0 ? Math.min((g.current_amount / g.target_amount) * 100, 100) : 0;
-    const remaining = Math.max(g.target_amount - g.current_amount, 0);
-    const barColor = pct >= 100 ? '#1B4332' : pct >= 60 ? '#F59E0B' : '#3B82F6';
-    const daysLeft = g.target_date ? Math.ceil((new Date(g.target_date) - new Date()) / 86400000) : null;
-    return `
-      <div style="padding:12px 16px;border-bottom:1px solid #F9FAFB">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-          <div>
-            <span style="font-size:13px;font-weight:600;color:#374151">${g.name}</span>
-            ${g.target_date ? `<span style="font-size:11px;color:#9CA3AF;margin-left:8px">${daysLeft > 0 ? daysLeft+' days left' : 'overdue'}</span>` : ''}
-          </div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:12px;color:#374151">$${g.current_amount.toFixed(0)} / $${g.target_amount.toFixed(0)}</span>
-            <button onclick="updateSavingsAmount(${g.id}, ${g.current_amount})" style="background:#EFF6FF;border:none;color:#3B82F6;font-size:11px;font-weight:600;padding:3px 8px;border-radius:5px;cursor:pointer">Update</button>
-            <button onclick="deleteSavingsGoal(${g.id})" style="background:none;border:none;color:#D1D5DB;cursor:pointer;font-size:14px;padding:0">×</button>
-          </div>
+  let html = '';
+  d.savings_goals.forEach(g => {
+    const pct = g.target_amount > 0 ? Math.min(100, Math.round(g.current_amount / g.target_amount * 100)) : 0;
+    html += `<div class="bdgt-goal-row">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span style="font-weight:600;font-size:14px">${g.name}</span>
+          ${g.target_date ? '<span style="font-size:11px;color:#9CA3AF;margin-left:8px">Target: ' + g.target_date + '</span>' : ''}
         </div>
-        <div style="background:#F3F4F6;border-radius:4px;height:8px;overflow:hidden;margin-bottom:4px">
-          <div style="background:${barColor};height:100%;width:${pct}%;transition:width .3s"></div>
+        <div class="bdgt-actions">
+          <button onclick="bdgtContributeGoal(${g.id})" title="Add contribution">💰</button>
+          <button onclick="bdgtEditGoal(${g.id},'${g.name.replace(/'/g,"\\'")}',${g.target_amount},'${g.target_date||''}')" title="Edit">✏️</button>
+          <button onclick="bdgtDeleteGoal(${g.id})" title="Delete">🗑��</button>
         </div>
-        <div style="font-size:11px;color:#9CA3AF">$${remaining.toFixed(0)} remaining · ${pct.toFixed(0)}% complete</div>
-      </div>`;
-  }).join('');
-}
-
-function showSavingsForm() {
-  const f = document.getElementById('savings-add-form');
-  if (f) f.style.display = f.style.display === 'none' ? 'flex' : 'none';
-}
-
-async function saveSavingsGoal() {
-  const name = document.getElementById('sg-name')?.value.trim();
-  const target = parseFloat(document.getElementById('sg-target')?.value);
-  const current = parseFloat(document.getElementById('sg-current')?.value) || 0;
-  const date = document.getElementById('sg-date')?.value || null;
-  if (!name || isNaN(target)) return;
-  await authFetch('/api/savings-goals', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name, target_amount: target, current_amount: current, target_date: date})
+      </div>
+      <div class="bdgt-goal-bar"><div class="bdgt-goal-fill" style="width:${pct}%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:#6B7280">
+        <span>${fmt(g.current_amount)} / ${fmt(g.target_amount)}</span>
+        <span style="font-weight:600;color:${pct >= 100 ? '#16a34a' : '#1B4332'}">${pct}%</span>
+      </div>
+    </div>`;
   });
-  document.getElementById('sg-name').value = '';
-  document.getElementById('sg-target').value = '';
-  document.getElementById('sg-current').value = '';
-  document.getElementById('sg-date').value = '';
-  document.getElementById('savings-add-form').style.display = 'none';
-  await loadSavingsGoals();
+  container.innerHTML = html;
 }
 
-async function updateSavingsAmount(id, current) {
-  const amt = prompt('Current saved amount ($):', current);
-  if (amt === null) return;
-  await authFetch(`/api/savings-goals/${id}`, {
-    method:'PUT', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({current_amount: parseFloat(amt) || 0})
+function bdgtAddGoal() {
+  const name = prompt('Goal name (e.g. Emergency Fund):');
+  if (!name) return;
+  const target = prompt('Target amount ($):');
+  if (!target) return;
+  const targetDate = prompt('Target date (YYYY-MM-DD, or leave blank):', '');
+  authFetch('/api/budget/goals', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: name.trim(), target_amount: parseFloat(target), target_date: targetDate || '' })
+  }).then(() => loadBudget());
+}
+
+function bdgtEditGoal(id, name, target, targetDate) {
+  const newName = prompt('Goal name:', name);
+  if (!newName) return;
+  const newTarget = prompt('Target amount ($):', target);
+  if (!newTarget) return;
+  const newDate = prompt('Target date (YYYY-MM-DD):', targetDate);
+  authFetch('/api/budget/goals', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ id: id, name: newName.trim(), target_amount: parseFloat(newTarget), target_date: newDate || '' })
+  }).then(() => loadBudget());
+}
+
+function bdgtDeleteGoal(id) {
+  if (!confirm('Delete this savings goal?')) return;
+  authFetch('/api/budget/goals/' + id, { method: 'DELETE' }).then(() => loadBudget());
+}
+
+function bdgtContributeGoal(id) {
+  const amt = prompt('Contribution amount ($):');
+  if (!amt || parseFloat(amt) <= 0) return;
+  authFetch('/api/budget/goals/' + id + '/contribute', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ amount: parseFloat(amt) })
+  }).then(() => loadBudget());
+}
+
+// ─�� Upcoming Expenses ──
+
+function bdgtRenderUpcoming(d) {
+  const container = document.getElementById('bdgt-upcoming-container');
+  if (!d.upcoming_expenses || !d.upcoming_expenses.length) {
+    container.innerHTML = '<div style="padding:12px;color:#9CA3AF;font-size:13px">No upcoming expenses tracked. Click + Add to start.</div>';
+    return;
+  }
+  let html = '';
+  let total = 0;
+  d.upcoming_expenses.forEach(u => {
+    total += u.amount;
+    const due = u.due_date || '—';
+    html += `<div class="bdgt-upcoming-row">
+      <div style="min-width:80px;font-size:12px;color:#6B7280">${due}</div>
+      <div style="flex:1;font-weight:600;font-size:13px">${u.description}${u.recurring ? ' 🔄' : ''}</div>
+      <div style="font-weight:700;font-size:13px;color:#1B4332">${fmt(u.amount)}</div>
+      <div class="bdgt-actions">
+        <button onclick="bdgtEditUpcoming(${u.id},'${u.description.replace(/'/g,"\\'")}',${u.amount},'${u.due_date||''}')" title="Edit">✏️</button>
+        <button onclick="bdgtDeleteUpcoming(${u.id})" title="Delete">🗑️</button>
+      </div>
+    </div>`;
   });
-  await loadSavingsGoals();
+  html += `<div style="display:flex;justify-content:space-between;padding:12px 0 0;border-top:2px solid #E5E7EB;font-weight:700;font-size:14px">
+    <span>Total Expected</span><span style="color:#DC2626">${fmt(total)}</span>
+  </div>`;
+  container.innerHTML = html;
 }
 
-async function deleteSavingsGoal(id) {
-  await authFetch(`/api/savings-goals/${id}`, {method:'DELETE'});
-  await loadSavingsGoals();
+function bdgtAddUpcoming() {
+  const desc = prompt('Description (e.g. Car Service):');
+  if (!desc) return;
+  const amt = prompt('Amount ($):');
+  if (!amt) return;
+  const due = prompt('Due date (YYYY-MM-DD):', new Date().toISOString().slice(0,10));
+  if (!due) return;
+  authFetch('/api/budget/upcoming', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ description: desc.trim(), amount: parseFloat(amt), due_date: due })
+  }).then(() => loadBudget());
 }
 
-async function loadForecast() {
-  const el = document.getElementById('budget-forecast-body');
-  if (!el) return;
-  const r = await authFetch('/api/budget/forecast');
-  if (!r.ok) { el.innerHTML = '<span style="color:#DC2626">Could not load forecast</span>'; return; }
-  const d = await r.json();
-  const cats = d.category_summary || [];
-  if (!cats.length) { el.innerHTML = '<span style="color:#9CA3AF">No transaction data yet.</span>'; return; }
+function bdgtEditUpcoming(id, desc, amt, due) {
+  const newDesc = prompt('Description:', desc);
+  if (!newDesc) return;
+  const newAmt = prompt('Amount ($):', amt);
+  if (!newAmt) return;
+  const newDue = prompt('Due date (YYYY-MM-DD):', due);
+  if (!newDue) return;
+  authFetch('/api/budget/upcoming', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ id: id, description: newDesc.trim(), amount: parseFloat(newAmt), due_date: newDue })
+  }).then(() => loadBudget());
+}
 
-  const months = Object.keys(d.forecast[cats[0]?.category] || {});
+function bdgtDeleteUpcoming(id) {
+  if (!confirm('Delete this upcoming expense?')) return;
+  authFetch('/api/budget/upcoming/' + id, { method: 'DELETE' }).then(() => loadBudget());
+}
 
-  let html = `
-    <div style="font-size:11px;color:#9CA3AF;margin-bottom:10px">
-      Averaged from ${d.n_months_averaged} months of data · ${d.based_on_months.join(', ')}
-    </div>
-    <div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead><tr style="border-bottom:2px solid #E5E7EB">
-        <th style="text-align:left;padding:5px 8px;color:#6B7280;font-weight:600">Category</th>
-        <th style="text-align:right;padding:5px 8px;color:#6B7280;font-weight:600">Avg/mo</th>
-        <th style="text-align:right;padding:5px 8px;color:#6B7280;font-weight:600">Target</th>
-        ${months.map(m => `<th style="text-align:right;padding:5px 8px;color:#6B7280;font-weight:600">${m}</th>`).join('')}
-        <th style="text-align:right;padding:5px 8px;color:#6B7280;font-weight:600">vs Target</th>
-      </tr></thead><tbody>`;
+// ── 3-Month Forecast ──
 
-  cats.forEach(c => {
-    const varColor = !c.variance ? '#6B7280' : c.variance > 0 ? '#DC2626' : '#1B4332';
-    const varText = !c.variance ? '—' : (c.variance > 0 ? '+' : '') + '$' + Math.abs(c.variance).toFixed(0);
-    html += `<tr style="border-bottom:1px solid #F3F4F6">
-      <td style="padding:5px 8px;color:#374151">${c.category}</td>
-      <td style="text-align:right;padding:5px 8px;color:#374151">$${c.avg_monthly.toFixed(0)}</td>
-      <td style="text-align:right;padding:5px 8px;color:#9CA3AF">${c.target ? '$'+c.target.toFixed(0) : '—'}</td>
-      ${months.map(m => `<td style="text-align:right;padding:5px 8px;color:#374151">$${(d.forecast[c.category]?.[m] || 0).toFixed(0)}</td>`).join('')}
-      <td style="text-align:right;padding:5px 8px;font-weight:600;color:${varColor}">${varText}</td>
-    </tr>`;
+function bdgtRenderForecast(d) {
+  const container = document.getElementById('bdgt-forecast-container');
+  if (!d.forecast || !d.forecast.length) {
+    container.innerHTML = '<div style="color:#9CA3AF;font-size:13px">Not enough data for forecast.</div>';
+    return;
+  }
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  let html = '<div class="bdgt-forecast-grid">';
+  d.forecast.forEach(f => {
+    const mIdx = parseInt(f.month.slice(5)) - 1;
+    const mName = monthNames[mIdx];
+    const yr = f.month.slice(0,4);
+    const isPos = f.net >= 0;
+    const cardCls = isPos ? 'positive' : 'negative';
+    const savingsSign = isPos ? '+' : '';
+    const saveCls = isPos ? 'pos' : 'neg';
+    html += `<div class="bdgt-forecast-card ${cardCls}">
+      <div class="bdgt-fc-month">${mName}<span class="bdgt-fc-year">${yr}</span></div>
+      <div class="bdgt-fc-row">
+        <span class="bdgt-fc-label">💰 Income</span>
+        <span class="bdgt-fc-val in">${fmt(f.income)}</span>
+      </div>
+      <div class="bdgt-fc-row">
+        <span class="bdgt-fc-label">💸 Expenses</span>
+        <span class="bdgt-fc-val out">${fmt(f.expenses)}</span>
+      </div>
+      <div class="bdgt-fc-row">
+        <span class="bdgt-fc-label">${isPos ? '📈' : '📉'} Savings</span>
+        <span class="bdgt-fc-val save ${saveCls}">${savingsSign}${fmt(f.net)}</span>
+      </div>
+    </div>`;
   });
-
-  html += `<tr style="border-top:2px solid #E5E7EB;font-weight:700">
-    <td style="padding:6px 8px">Total</td>
-    <td style="text-align:right;padding:6px 8px">$${d.total_avg_monthly.toFixed(0)}</td>
-    <td style="text-align:right;padding:6px 8px;color:#9CA3AF">$${d.total_target.toFixed(0)}</td>
-    ${months.map(() => `<td style="text-align:right;padding:6px 8px;color:#6B7280">—</td>`).join('')}
-    <td></td>
-  </tr>`;
-
-  html += '</tbody></table></div>';
-  el.innerHTML = html;
+  html += '</div>';
+  html += '<div style="font-size:11px;color:#9CA3AF;margin-top:8px;text-align:center">Based on last 3 months · Known upcoming expenses factored in</div>';
+  container.innerHTML = html;
 }
 
 </script>

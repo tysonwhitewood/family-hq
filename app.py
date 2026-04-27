@@ -357,6 +357,16 @@ def init_db():
                 created_at TEXT,
                 updated_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS upcoming_expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                description TEXT NOT NULL,
+                amount REAL NOT NULL,
+                due_date TEXT NOT NULL,
+                recurring INTEGER DEFAULT 0,
+                category TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT
+            );
         ''')
         # Seed insurance records — insert each by policy_number if not already present
         now = datetime.now().isoformat()[:19]
@@ -467,6 +477,51 @@ def init_db():
             for capital, title, desc, target, progress in default_goals:
                 db.execute('INSERT INTO goals (capital, title, description, target_date, progress, created_at) VALUES (?,?,?,?,?,?)',
                            (capital, title, desc, target, progress, now))
+        # Seed budget targets if empty
+        bt_count = db.execute('SELECT COUNT(*) FROM budget_targets').fetchone()[0]
+        if bt_count == 0:
+            now = datetime.now().isoformat()[:19]
+            budget_seed = [
+                ('Groceries',     1400, 'personal'),
+                ('Mortgage',      3700, 'personal'),
+                ('Fuel',           399, 'personal'),
+                ('Home Utilities', 205, 'personal'),
+                ('Subscriptions',  415, 'personal'),
+                ('Dining Out',     378, 'personal'),
+                ('Car Rego',        80, 'personal'),
+            ]
+            for cat, target, btype in budget_seed:
+                db.execute(
+                    'INSERT INTO budget_targets (category, monthly_target, type, created_at, updated_at) VALUES (?,?,?,?,?)',
+                    (cat, target, btype, now, now)
+                )
+        # Seed savings goals if empty
+        sg_count = db.execute('SELECT COUNT(*) FROM savings_goals').fetchone()[0]
+        if sg_count == 0:
+            now = datetime.now().isoformat()[:19]
+            savings_seed = [
+                ('Emergency Fund',    7000, 0, 1, 'active', '2026-12-31'),
+                ('Credit Card Payoff', 5000, 0, 2, 'active', '2026-09-30'),
+            ]
+            for name, target_amt, current, priority, status, target_dt in savings_seed:
+                db.execute(
+                    'INSERT INTO savings_goals (name, target_amount, current_amount, priority, status, target_date, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
+                    (name, target_amt, current, priority, status, target_dt, now, now)
+                )
+        # Seed upcoming expenses if empty
+        ue_count = db.execute('SELECT COUNT(*) FROM upcoming_expenses').fetchone()[0]
+        if ue_count == 0:
+            now = datetime.now().isoformat()[:19]
+            upcoming_seed = [
+                ('Car Service',    299, '2026-05-15', 0, 'Fuel'),
+                ('Adobe Renewal',  384, '2026-05-01', 1, 'Software & Tools'),
+                ('ATO BAS',       1500, '2026-05-28', 0, 'ATO / Tax'),
+            ]
+            for desc, amt, due, recurring, cat in upcoming_seed:
+                db.execute(
+                    'INSERT INTO upcoming_expenses (description, amount, due_date, recurring, category, status, created_at) VALUES (?,?,?,?,?,?,?)',
+                    (desc, amt, due, recurring, cat, 'pending', now)
+                )
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -1627,382 +1682,242 @@ def api_finance_chat_history():
     return jsonify([dict(r) for r in reversed(rows)])
 
 
-# ── Budget Targets ────────────────────────────────────────────────────────────
+# ── Budget ───────────────────────────────────────────────────────────────────
 
-@app.route('/api/budget/targets', methods=['GET'])
+def _bdgt_detect_recurring(transactions):
+    """Detect recurring expenses: transactions with similar descriptions appearing in 2+ months."""
+    from collections import defaultdict
+    desc_months = defaultdict(lambda: {'months': set(), 'amounts': []})
+    for t in transactions:
+        if t['amount'] >= 0:
+            continue
+        # Normalise description: strip digits/spaces, lowercase, first 40 chars
+        norm = re.sub(r'[0-9]+', '', t['description']).strip().lower()[:40]
+        if len(norm) < 4:
+            continue
+        month = t['date'][:7]
+        desc_months[norm]['months'].add(month)
+        desc_months[norm]['amounts'].append(abs(t['amount']))
+    recurring = []
+    for desc, data in desc_months.items():
+        if len(data['months']) >= 2:
+            avg_amt = round(sum(data['amounts']) / len(data['amounts']), 2)
+            recurring.append({
+                'description': desc,
+                'avg_amount': avg_amt,
+                'frequency': len(data['months']),
+            })
+    recurring.sort(key=lambda x: -x['avg_amount'])
+    return recurring[:20]
+
+
+@app.route('/api/budget/summary')
 @login_required
-def api_budget_targets_get():
+def api_budget_summary():
+    """Main budget endpoint — returns everything the Budget page needs."""
+    from collections import defaultdict
+    transactions = _parse_csv_files()
+    today = date.today()
+    current_month = today.strftime('%Y-%m')
+
+    # ── Current month income/expenses ──
+    month_income = 0.0
+    month_expenses = 0.0
+    cat_actuals = defaultdict(float)  # category -> total spend (positive number)
+    SKIP_CATS = {'Transfers'}
+
+    for t in transactions:
+        if t['date'][:7] != current_month:
+            continue
+        cat = _categorise(t['description'])
+        is_biz = _is_business_account(t['account'])
+        if t['amount'] < 0 and cat not in SKIP_CATS:
+            cat_actuals[(cat, 'business' if is_biz else 'personal')] += abs(t['amount'])
+            month_expenses += abs(t['amount'])
+        elif t['amount'] > 0:
+            month_income += t['amount']
+
+    # ── Budget targets from SQLite ──
     with get_db() as db:
-        rows = db.execute('SELECT * FROM budget_targets ORDER BY type, category').fetchall()
-    return jsonify([dict(r) for r in rows])
+        targets = db.execute('SELECT * FROM budget_targets ORDER BY monthly_target DESC').fetchall()
+        goals = db.execute("SELECT * FROM savings_goals WHERE status='active' ORDER BY priority").fetchall()
+        upcoming = db.execute("SELECT * FROM upcoming_expenses WHERE status='pending' ORDER BY due_date").fetchall()
+
+    budget_vs_actuals = []
+    for tgt in targets:
+        cat = tgt['category']
+        btype = tgt['type'] or 'personal'
+        actual = round(cat_actuals.get((cat, btype), 0), 2)
+        target_val = tgt['monthly_target']
+        remaining = round(target_val - actual, 2)
+        pct = round((actual / target_val * 100), 1) if target_val > 0 else 0
+        budget_vs_actuals.append({
+            'id': tgt['id'],
+            'category': cat,
+            'type': btype,
+            'target': target_val,
+            'actual': actual,
+            'remaining': remaining,
+            'percent_used': pct,
+        })
+
+    # ── 3-month forecast (average of last 3 months) ──
+    monthly_in = defaultdict(float)
+    monthly_out = defaultdict(float)
+    for t in transactions:
+        month = t['date'][:7]
+        if t['amount'] > 0:
+            monthly_in[month] += t['amount']
+        elif t['amount'] < 0 and _categorise(t['description']) not in SKIP_CATS:
+            monthly_out[month] += abs(t['amount'])
+
+    # Get last 3 complete months (not current month)
+    past_months = sorted([m for m in monthly_in.keys() if m < current_month], reverse=True)[:3]
+    avg_in = round(sum(monthly_in[m] for m in past_months) / max(len(past_months), 1), 2)
+    avg_out = round(sum(monthly_out[m] for m in past_months) / max(len(past_months), 1), 2)
+
+    # Sum upcoming expenses per future month
+    upcoming_by_month = defaultdict(float)
+    for ue in upcoming:
+        m = ue['due_date'][:7] if ue['due_date'] else ''
+        if m:
+            upcoming_by_month[m] += ue['amount']
+
+    forecast = []
+    for i in range(1, 4):
+        fm = (today.replace(day=1) + timedelta(days=32 * i)).strftime('%Y-%m')
+        proj_out = round(avg_out + upcoming_by_month.get(fm, 0), 2)
+        net = round(avg_in - proj_out, 2)
+        forecast.append({
+            'month': fm,
+            'income': avg_in,
+            'expenses': proj_out,
+            'net': net,
+            'flagged': net < 0,
+        })
+
+    # ── Recurring detection ──
+    recurring = _bdgt_detect_recurring(transactions)
+
+    return jsonify({
+        'current_month': current_month,
+        'income': round(month_income, 2),
+        'expenses': round(month_expenses, 2),
+        'net': round(month_income - month_expenses, 2),
+        'budget_vs_actuals': budget_vs_actuals,
+        'savings_goals': [dict(g) for g in goals],
+        'upcoming_expenses': [dict(u) for u in upcoming],
+        'recurring_detected': recurring,
+        'forecast': forecast,
+    })
+
 
 @app.route('/api/budget/targets', methods=['POST'])
 @login_required
-def api_budget_targets_post():
-    data = request.json or {}
-    category = data.get('category', '').strip()
-    monthly_target = data.get('monthly_target')
+def api_budget_targets_save():
+    """Create or update a budget target."""
+    data = request.get_json(force=True)
+    cat = data.get('category', '').strip()
+    target = data.get('monthly_target', 0)
     btype = data.get('type', 'personal')
-    if not category or monthly_target is None:
+    tid = data.get('id')
+    now = datetime.now().isoformat()[:19]
+    if not cat or not target:
         return jsonify({'error': 'category and monthly_target required'}), 400
-    now = datetime.now().isoformat()[:19]
     with get_db() as db:
-        db.execute(
-            'INSERT INTO budget_targets (category, monthly_target, type, created_at, updated_at) VALUES (?,?,?,?,?)',
-            (category, float(monthly_target), btype, now, now)
-        )
-        row = db.execute('SELECT * FROM budget_targets WHERE category=? AND type=? ORDER BY id DESC LIMIT 1', (category, btype)).fetchone()
-    return jsonify(dict(row)), 201
-
-@app.route('/api/budget/targets/<int:target_id>', methods=['PUT'])
-@login_required
-def api_budget_target_put(target_id):
-    data = request.json or {}
-    now = datetime.now().isoformat()[:19]
-    with get_db() as db:
-        row = db.execute('SELECT * FROM budget_targets WHERE id=?', (target_id,)).fetchone()
-        if not row:
-            return jsonify({'error': 'not found'}), 404
-        category = data.get('category', row['category'])
-        monthly_target = data.get('monthly_target', row['monthly_target'])
-        btype = data.get('type', row['type'])
-        db.execute(
-            'UPDATE budget_targets SET category=?, monthly_target=?, type=?, updated_at=? WHERE id=?',
-            (category, float(monthly_target), btype, now, target_id)
-        )
-        updated = db.execute('SELECT * FROM budget_targets WHERE id=?', (target_id,)).fetchone()
-    return jsonify(dict(updated))
-
-@app.route('/api/budget/targets/<int:target_id>', methods=['DELETE'])
-@login_required
-def api_budget_target_delete(target_id):
-    with get_db() as db:
-        db.execute('DELETE FROM budget_targets WHERE id=?', (target_id,))
+        if tid:
+            db.execute('UPDATE budget_targets SET category=?, monthly_target=?, type=?, updated_at=? WHERE id=?',
+                       (cat, target, btype, now, tid))
+        else:
+            db.execute('INSERT INTO budget_targets (category, monthly_target, type, created_at, updated_at) VALUES (?,?,?,?,?)',
+                       (cat, target, btype, now, now))
     return jsonify({'ok': True})
 
-@app.route('/api/budget/actuals')
+
+@app.route('/api/budget/targets/<int:tid>', methods=['DELETE'])
 @login_required
-def api_budget_actuals():
-    """Return last 3 months of category actuals from parsed transactions."""
-    import csv as csv_module
-    from pathlib import Path as P
-    from datetime import date, timedelta
-
-    base = P('/home/claude/family-wealth/2. Financial Capital/Banking & Cash Flow')
-    CATS = [
-        ('Groceries', ['coles','woolworth','iga','ritchies','pricebuster','foodwork','aldi','costco']),
-        ('Fuel', ['shell','bp','mehar','petrol','fuel','ampol','caltex']),
-        ('Mortgage', ['mortgage','loan repay','home loan']),
-        ('Rates', ['rates','srrc','council']),
-        ('Utilities', ['energy','electricity','water','gas','origin','agl','ergon','actew']),
-        ('Insurance', ['racq','nrma','suncorp','insur','allianz','prisk','proris','gt insurance']),
-        ('Dining/Takeaway', ['mcdonald','guzman','zarraffa','cafe','coffee','pizza','kfc','hungry','subway','domino','nandos','mcdonalds','zomato','carter']),
-        ('Subscriptions', ['netflix','spotify','apple.com','disney','amazon','adobe','cursor','hetzner','claude','openai','chatgpt']),
-        ('Medical', ['pharmacy','chemist','doctor','medical','dental','physio']),
-        ('Legal/Professional', ['legalvision','legal','accounting','bookkeep','xero']),
-        ('Business Income', ['cheesecake','invoice','inv-']),
-        ('Transfers', ['transfer','osko','pay anyone','bpay','robyn whitewood','tyson whitewood']),
-    ]
-
-    def categorize(desc, amount):
-        dl = desc.lower()
-        if amount > 0 and any(kw in dl for kw in ['cheesecake','invoice','direct credit']):
-            return 'Business Income'
-        for cat, kws in CATS:
-            if any(kw in dl for kw in kws):
-                return cat
-        return 'Other Income' if amount > 0 else 'Other Expenses'
-
-    def parse_amount(s):
-        if not s: return 0.0
-        try: return float(str(s).strip().replace('"','').replace(',','').replace('+',''))
-        except: return 0.0
-
-    txns = []
-    seen = set()
-    cutoff = (date.today().replace(day=1) - timedelta(days=60)).replace(day=1)
-
-    for folder in sorted(base.iterdir()):
-        if not folder.is_dir(): continue
-        for csv_file in folder.glob('*.csv'):
-            name = csv_file.name.lower()
-            try:
-                with open(csv_file, encoding='utf-8-sig') as f:
-                    first = f.read(200)
-                if 'date' in first.lower() and 'credit' in first.lower():
-                    # ING format
-                    with open(csv_file, encoding='utf-8-sig') as f:
-                        for row in csv_module.DictReader(f):
-                            try:
-                                d = datetime.strptime(row['Date'].strip(), '%d/%m/%Y').date()
-                                if d < cutoff: continue
-                                credit = parse_amount(row.get('Credit',''))
-                                debit = parse_amount(row.get('Debit',''))
-                                amt = credit if credit else -abs(debit)
-                                desc = row.get('Description','').strip()
-                                key = (d.isoformat(), desc[:60], round(amt,2))
-                                if key not in seen:
-                                    seen.add(key)
-                                    txns.append({'date': d, 'amount': round(amt,2), 'desc': desc, 'type': 'personal'})
-                            except: pass
-                else:
-                    # CBA format
-                    with open(csv_file, encoding='utf-8-sig') as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line: continue
-                            parts = list(csv_module.reader([line]))[0]
-                            if len(parts) < 3: continue
-                            try:
-                                d = datetime.strptime(parts[0].strip(), '%d/%m/%Y').date()
-                                if d < cutoff: continue
-                                amt = parse_amount(parts[1])
-                                desc = parts[2].strip().strip('"')
-                                key = (d.isoformat(), desc[:60], round(amt,2))
-                                if key not in seen:
-                                    seen.add(key)
-                                    txns.append({'date': d, 'amount': round(amt,2), 'desc': desc, 'type': 'personal'})
-                            except: pass
-            except: pass
-
-    # Aggregate by (year-month, category)
-    from collections import defaultdict
-    monthly = defaultdict(lambda: defaultdict(float))
-    for t in txns:
-        ym = t['date'].strftime('%Y-%m')
-        cat = categorize(t['desc'], t['amount'])
-        if t['amount'] < 0:
-            monthly[ym][cat] += abs(t['amount'])
-
-    result = {}
-    for ym, cats in monthly.items():
-        result[ym] = dict(cats)
-    return jsonify(result)
-
-
-# ── Savings Goals ─────────────────────────────────────────────────────────────
-
-@app.route('/api/savings-goals', methods=['GET'])
-@login_required
-def api_savings_goals_get():
+def api_budget_targets_delete(tid):
     with get_db() as db:
-        rows = db.execute('SELECT * FROM savings_goals ORDER BY priority, name').fetchall()
-    return jsonify([dict(r) for r in rows])
+        db.execute('DELETE FROM budget_targets WHERE id=?', (tid,))
+    return jsonify({'ok': True})
 
-@app.route('/api/savings-goals', methods=['POST'])
+
+@app.route('/api/budget/goals', methods=['POST'])
 @login_required
-def api_savings_goals_post():
-    data = request.json or {}
+def api_budget_goals_save():
+    """Create or update a savings goal."""
+    data = request.get_json(force=True)
     name = data.get('name', '').strip()
-    target = data.get('target_amount')
-    if not name or target is None:
+    target_amount = data.get('target_amount', 0)
+    gid = data.get('id')
+    now = datetime.now().isoformat()[:19]
+    if not name or not target_amount:
         return jsonify({'error': 'name and target_amount required'}), 400
-    now = datetime.now().isoformat()[:19]
     with get_db() as db:
-        db.execute(
-            'INSERT INTO savings_goals (name, target_amount, current_amount, priority, status, target_date, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
-            (name, float(target), float(data.get('current_amount', 0)),
-             int(data.get('priority', 1)), data.get('status', 'active'),
-             data.get('target_date'), now, now)
-        )
-        row = db.execute('SELECT * FROM savings_goals ORDER BY id DESC LIMIT 1').fetchone()
-    return jsonify(dict(row)), 201
-
-@app.route('/api/savings-goals/<int:goal_id>', methods=['PUT'])
-@login_required
-def api_savings_goal_put(goal_id):
-    data = request.json or {}
-    now = datetime.now().isoformat()[:19]
-    with get_db() as db:
-        row = db.execute('SELECT * FROM savings_goals WHERE id=?', (goal_id,)).fetchone()
-        if not row:
-            return jsonify({'error': 'not found'}), 404
-        db.execute(
-            'UPDATE savings_goals SET name=?, target_amount=?, current_amount=?, priority=?, status=?, target_date=?, updated_at=? WHERE id=?',
-            (data.get('name', row['name']), float(data.get('target_amount', row['target_amount'])),
-             float(data.get('current_amount', row['current_amount'])),
-             int(data.get('priority', row['priority'])), data.get('status', row['status']),
-             data.get('target_date', row['target_date']), now, goal_id)
-        )
-        updated = db.execute('SELECT * FROM savings_goals WHERE id=?', (goal_id,)).fetchone()
-    return jsonify(dict(updated))
-
-@app.route('/api/savings-goals/<int:goal_id>', methods=['DELETE'])
-@login_required
-def api_savings_goal_delete(goal_id):
-    with get_db() as db:
-        db.execute('DELETE FROM savings_goals WHERE id=?', (goal_id,))
+        if gid:
+            db.execute('UPDATE savings_goals SET name=?, target_amount=?, target_date=?, updated_at=? WHERE id=?',
+                       (name, target_amount, data.get('target_date', ''), now, gid))
+        else:
+            db.execute(
+                'INSERT INTO savings_goals (name, target_amount, current_amount, priority, status, target_date, created_at, updated_at) VALUES (?,?,0,1,\'active\',?,?,?)',
+                (name, target_amount, data.get('target_date', ''), now, now)
+            )
     return jsonify({'ok': True})
 
 
-# /api/budget/savings aliases (canonical path per API spec)
-@app.route('/api/budget/savings', methods=['GET'])
+@app.route('/api/budget/goals/<int:gid>', methods=['DELETE'])
 @login_required
-def api_budget_savings_get():
-    return api_savings_goals_get()
-
-@app.route('/api/budget/savings', methods=['POST'])
-@login_required
-def api_budget_savings_post():
-    return api_savings_goals_post()
-
-@app.route('/api/budget/savings/<int:goal_id>', methods=['PUT'])
-@login_required
-def api_budget_savings_put(goal_id):
-    return api_savings_goal_put(goal_id)
-
-@app.route('/api/budget/savings/<int:goal_id>', methods=['DELETE'])
-@login_required
-def api_budget_savings_delete(goal_id):
-    return api_savings_goal_delete(goal_id)
-
-
-# ── Budget Forecast ───────────────────────────────────────────────────────────
-
-@app.route('/api/budget/forecast')
-@login_required
-def api_budget_forecast():
-    """3-month forward projection: avg of last 3 months per category vs targets."""
-    import csv as csv_module
-    from pathlib import Path as P
-    from datetime import date, timedelta
-    from collections import defaultdict
-
-    base = P('/home/claude/family-wealth/2. Financial Capital/Banking & Cash Flow')
-    CATS = [
-        ('Groceries', ['coles','woolworth','iga','ritchies','pricebuster','foodwork','aldi','costco']),
-        ('Fuel', ['shell','bp','mehar','petrol','fuel','ampol','caltex']),
-        ('Mortgage', ['mortgage','loan repay','home loan']),
-        ('Rates', ['rates','srrc','council']),
-        ('Utilities', ['energy','electricity','water','gas','origin','agl','ergon','actew']),
-        ('Insurance', ['racq','nrma','suncorp','insur','allianz','prisk','proris','gt insurance']),
-        ('Dining/Takeaway', ['mcdonald','guzman','zarraffa','cafe','coffee','pizza','kfc','hungry','subway','domino','nandos','mcdonalds','zomato','carter']),
-        ('Subscriptions', ['netflix','spotify','apple.com','disney','amazon','adobe','cursor','hetzner','claude','openai','chatgpt']),
-        ('Medical', ['pharmacy','chemist','doctor','medical','dental','physio']),
-        ('Legal/Professional', ['legalvision','legal','accounting','bookkeep','xero']),
-        ('Transfers', ['transfer','osko','pay anyone','bpay','robyn whitewood','tyson whitewood']),
-    ]
-
-    def categorize(desc, amount):
-        dl = desc.lower()
-        if amount > 0 and any(kw in dl for kw in ['cheesecake','invoice','direct credit']):
-            return 'Business Income'
-        for cat, kws in CATS:
-            if any(kw in dl for kw in kws):
-                return cat
-        return 'Other Income' if amount > 0 else 'Other Expenses'
-
-    def parse_amount(s):
-        if not s: return 0.0
-        try: return float(str(s).strip().replace('"','').replace(',','').replace('+',''))
-        except: return 0.0
-
-    txns = []
-    seen = set()
-    cutoff = (date.today().replace(day=1) - timedelta(days=90)).replace(day=1)
-
-    for folder in sorted(base.iterdir()):
-        if not folder.is_dir(): continue
-        for csv_file in folder.glob('*.csv'):
-            try:
-                with open(csv_file, encoding='utf-8-sig') as f:
-                    first = f.read(200)
-                if 'date' in first.lower() and 'credit' in first.lower():
-                    with open(csv_file, encoding='utf-8-sig') as f:
-                        for row in csv_module.DictReader(f):
-                            try:
-                                d = datetime.strptime(row['Date'].strip(), '%d/%m/%Y').date()
-                                if d < cutoff: continue
-                                credit = parse_amount(row.get('Credit',''))
-                                debit = parse_amount(row.get('Debit',''))
-                                amt = credit if credit else -abs(debit)
-                                desc = row.get('Description','').strip()
-                                key = (d.isoformat(), desc[:60], round(amt,2))
-                                if key not in seen:
-                                    seen.add(key)
-                                    if amt < 0:
-                                        txns.append({'date': d, 'amount': abs(amt), 'desc': desc})
-                            except: pass
-                else:
-                    with open(csv_file, encoding='utf-8-sig') as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line: continue
-                            parts = list(csv_module.reader([line]))[0]
-                            if len(parts) < 3: continue
-                            try:
-                                d = datetime.strptime(parts[0].strip(), '%d/%m/%Y').date()
-                                if d < cutoff: continue
-                                amt = parse_amount(parts[1])
-                                desc = parts[2].strip().strip('"')
-                                key = (d.isoformat(), desc[:60], round(amt,2))
-                                if key not in seen:
-                                    seen.add(key)
-                                    if amt < 0:
-                                        txns.append({'date': d, 'amount': abs(amt), 'desc': desc})
-                            except: pass
-            except: pass
-
-    # Monthly totals by category
-    monthly = defaultdict(lambda: defaultdict(float))
-    months_seen = set()
-    for t in txns:
-        ym = t['date'].strftime('%Y-%m')
-        months_seen.add(ym)
-        cat = categorize(t['desc'], -t['amount'])
-        monthly[ym][cat] += t['amount']
-
-    n_months = max(len(months_seen), 1)
-    all_cats = set()
-    for m in monthly.values():
-        all_cats.update(m.keys())
-
-    # Average per category
-    averages = {}
-    for cat in all_cats:
-        total = sum(monthly[ym].get(cat, 0) for ym in months_seen)
-        averages[cat] = round(total / n_months, 2)
-
-    # Load targets
+def api_budget_goals_delete(gid):
     with get_db() as db:
-        target_rows = db.execute('SELECT category, monthly_target FROM budget_targets').fetchall()
-    targets = {r['category']: r['monthly_target'] for r in target_rows}
+        db.execute('DELETE FROM savings_goals WHERE id=?', (gid,))
+    return jsonify({'ok': True})
 
-    # Build 3-month forecast
-    today = date.today()
-    forecast_months = []
-    for i in range(1, 4):
-        m = (today.replace(day=1) + timedelta(days=32*i)).replace(day=1)
-        forecast_months.append(m.strftime('%Y-%m'))
 
-    result = {
-        'based_on_months': sorted(months_seen)[-3:],
-        'n_months_averaged': n_months,
-        'forecast': {},
-        'category_summary': [],
-    }
+@app.route('/api/budget/goals/<int:gid>/contribute', methods=['POST'])
+@login_required
+def api_budget_goals_contribute(gid):
+    """Add a contribution to a savings goal."""
+    data = request.get_json(force=True)
+    amount = data.get('amount', 0)
+    if not amount or amount <= 0:
+        return jsonify({'error': 'positive amount required'}), 400
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute('UPDATE savings_goals SET current_amount = current_amount + ?, updated_at=? WHERE id=?',
+                   (amount, now, gid))
+    return jsonify({'ok': True})
 
-    cats_to_show = [c for c in sorted(averages.keys())
-                    if c not in ('Other Income','Business Income','Transfers') and averages[c] > 0]
 
-    for cat in cats_to_show:
-        avg = averages[cat]
-        target = targets.get(cat)
-        variance = round(avg - target, 2) if target else None
-        result['forecast'][cat] = {m: round(avg, 2) for m in forecast_months}
-        result['category_summary'].append({
-            'category': cat,
-            'avg_monthly': avg,
-            'target': target,
-            'variance': variance,
-            'status': ('over' if variance and variance > 0 else
-                      'under' if variance and variance < 0 else 'on_track'),
-        })
+@app.route('/api/budget/upcoming', methods=['POST'])
+@login_required
+def api_budget_upcoming_save():
+    """Create or update an upcoming expense."""
+    data = request.get_json(force=True)
+    desc = data.get('description', '').strip()
+    amount = data.get('amount', 0)
+    due_date = data.get('due_date', '')
+    uid = data.get('id')
+    now = datetime.now().isoformat()[:19]
+    if not desc or not amount or not due_date:
+        return jsonify({'error': 'description, amount, and due_date required'}), 400
+    with get_db() as db:
+        if uid:
+            db.execute('UPDATE upcoming_expenses SET description=?, amount=?, due_date=?, recurring=?, category=?, status=? WHERE id=?',
+                       (desc, amount, due_date, data.get('recurring', 0), data.get('category', ''), 'pending', uid))
+        else:
+            db.execute(
+                'INSERT INTO upcoming_expenses (description, amount, due_date, recurring, category, status, created_at) VALUES (?,?,?,?,?,?,?)',
+                (desc, amount, due_date, data.get('recurring', 0), data.get('category', ''), 'pending', now)
+            )
+    return jsonify({'ok': True})
 
-    result['total_avg_monthly'] = round(sum(averages[c] for c in cats_to_show), 2)
-    result['total_target'] = round(sum(targets.get(c, averages[c]) for c in cats_to_show), 2)
 
-    return jsonify(result)
+@app.route('/api/budget/upcoming/<int:uid>', methods=['DELETE'])
+@login_required
+def api_budget_upcoming_delete(uid):
+    with get_db() as db:
+        db.execute('DELETE FROM upcoming_expenses WHERE id=?', (uid,))
+    return jsonify({'ok': True})
 
 
 # ── Paper Trading & Screener ──────────────────────────────────────────────────
