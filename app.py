@@ -1733,9 +1733,10 @@ def api_budget_summary():
         is_biz = _is_business_account(t['account'])
         if t['amount'] < 0 and cat not in SKIP_CATS:
             cat_actuals[(cat, 'business' if is_biz else 'personal')] += abs(t['amount'])
-            month_expenses += abs(t['amount'])
-        elif t['amount'] > 0:
-            month_income += t['amount']
+            if not is_biz:
+                month_expenses += abs(t['amount'])  # personal expenses only
+        elif t['amount'] > 0 and not is_biz:
+            month_income += t['amount']  # personal income only (ING)
 
     # ── Budget targets from SQLite ──
     with get_db() as db:
@@ -1761,18 +1762,20 @@ def api_budget_summary():
             'percent_used': pct,
         })
 
-    # ── 3-month forecast (average of last 3 months) ──
+    # ── 3-month forecast — ING personal account only ──
     monthly_in = defaultdict(float)
     monthly_out = defaultdict(float)
     for t in transactions:
+        if _is_business_account(t['account']):
+            continue  # personal forecast only — exclude CBA/business accounts
         month = t['date'][:7]
         if t['amount'] > 0:
-            monthly_in[month] += t['amount']
+            monthly_in[month] += t['amount']  # includes transfers in from business (salary)
         elif t['amount'] < 0 and _categorise(t['description']) not in SKIP_CATS:
             monthly_out[month] += abs(t['amount'])
 
     # Get last 3 complete months (not current month)
-    past_months = sorted([m for m in monthly_in.keys() if m < current_month], reverse=True)[:3]
+    past_months = sorted([m for m in set(list(monthly_in.keys()) + list(monthly_out.keys())) if m < current_month], reverse=True)[:3]
     avg_in = round(sum(monthly_in[m] for m in past_months) / max(len(past_months), 1), 2)
     avg_out = round(sum(monthly_out[m] for m in past_months) / max(len(past_months), 1), 2)
 
