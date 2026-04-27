@@ -837,6 +837,25 @@ body {
       </div>
     </div>
 
+    <!-- Savings Goals -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <div class="card-title">Savings Goals</div>
+        <button onclick="showSavingsForm()" style="background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add Goal</button>
+      </div>
+      <div id="savings-add-form" style="display:none;padding:12px 16px;border-bottom:1px solid #F3F4F6">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input id="sg-name" placeholder="Goal name (e.g. Emergency Fund)" style="flex:1;min-width:160px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
+          <input id="sg-target" type="number" placeholder="Target $" style="width:110px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
+          <input id="sg-current" type="number" placeholder="Saved so far $" style="width:130px;padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
+          <input id="sg-date" type="date" style="padding:7px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;font-family:inherit;outline:none">
+          <button onclick="saveSavingsGoal()" style="background:#1B4332;color:#fff;border:none;padding:7px 14px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">Save</button>
+          <button onclick="document.getElementById('savings-add-form').style.display='none'" style="background:#F3F4F6;color:#374151;border:none;padding:7px 12px;border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>
+        </div>
+      </div>
+      <div id="savings-goals-body" style="padding:0">Loading…</div>
+    </div>
+
     <!-- Upcoming known expenses -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-header"><div class="card-title">Upcoming Known Expenses</div></div>
@@ -2428,6 +2447,7 @@ async function loadBudget() {
   renderBudgetTargets();
   renderBudgetActuals();
   calcSavingsGoal();
+  await loadSavingsGoals();
 }
 
 function renderBudgetTargets() {
@@ -2563,6 +2583,86 @@ async function saveBudgetTarget() {
 async function deleteBudgetTarget(id) {
   await authFetch(`/api/budget/targets/${id}`, {method:'DELETE'});
   await loadBudget();
+}
+
+// ── Savings Goals ─────────────────────────────────────────────────────────────
+let _savingsGoals = [];
+
+async function loadSavingsGoals() {
+  const r = await authFetch('/api/savings-goals');
+  _savingsGoals = r.ok ? await r.json() : [];
+  renderSavingsGoals();
+}
+
+function renderSavingsGoals() {
+  const el = document.getElementById('savings-goals-body');
+  if (!el) return;
+  if (!_savingsGoals.length) {
+    el.innerHTML = '<div style="padding:16px;color:#9CA3AF;font-size:13px">No savings goals yet. Add one above.</div>';
+    return;
+  }
+  el.innerHTML = _savingsGoals.map(g => {
+    const pct = g.target_amount > 0 ? Math.min((g.current_amount / g.target_amount) * 100, 100) : 0;
+    const remaining = Math.max(g.target_amount - g.current_amount, 0);
+    const barColor = pct >= 100 ? '#1B4332' : pct >= 60 ? '#F59E0B' : '#3B82F6';
+    const daysLeft = g.target_date ? Math.ceil((new Date(g.target_date) - new Date()) / 86400000) : null;
+    return `
+      <div style="padding:12px 16px;border-bottom:1px solid #F9FAFB">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+          <div>
+            <span style="font-size:13px;font-weight:600;color:#374151">${g.name}</span>
+            ${g.target_date ? `<span style="font-size:11px;color:#9CA3AF;margin-left:8px">${daysLeft > 0 ? daysLeft+' days left' : 'overdue'}</span>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:12px;color:#374151">$${g.current_amount.toFixed(0)} / $${g.target_amount.toFixed(0)}</span>
+            <button onclick="updateSavingsAmount(${g.id}, ${g.current_amount})" style="background:#EFF6FF;border:none;color:#3B82F6;font-size:11px;font-weight:600;padding:3px 8px;border-radius:5px;cursor:pointer">Update</button>
+            <button onclick="deleteSavingsGoal(${g.id})" style="background:none;border:none;color:#D1D5DB;cursor:pointer;font-size:14px;padding:0">×</button>
+          </div>
+        </div>
+        <div style="background:#F3F4F6;border-radius:4px;height:8px;overflow:hidden;margin-bottom:4px">
+          <div style="background:${barColor};height:100%;width:${pct}%;transition:width .3s"></div>
+        </div>
+        <div style="font-size:11px;color:#9CA3AF">$${remaining.toFixed(0)} remaining · ${pct.toFixed(0)}% complete</div>
+      </div>`;
+  }).join('');
+}
+
+function showSavingsForm() {
+  const f = document.getElementById('savings-add-form');
+  if (f) f.style.display = f.style.display === 'none' ? 'flex' : 'none';
+}
+
+async function saveSavingsGoal() {
+  const name = document.getElementById('sg-name')?.value.trim();
+  const target = parseFloat(document.getElementById('sg-target')?.value);
+  const current = parseFloat(document.getElementById('sg-current')?.value) || 0;
+  const date = document.getElementById('sg-date')?.value || null;
+  if (!name || isNaN(target)) return;
+  await authFetch('/api/savings-goals', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, target_amount: target, current_amount: current, target_date: date})
+  });
+  document.getElementById('sg-name').value = '';
+  document.getElementById('sg-target').value = '';
+  document.getElementById('sg-current').value = '';
+  document.getElementById('sg-date').value = '';
+  document.getElementById('savings-add-form').style.display = 'none';
+  await loadSavingsGoals();
+}
+
+async function updateSavingsAmount(id, current) {
+  const amt = prompt('Current saved amount ($):', current);
+  if (amt === null) return;
+  await authFetch(`/api/savings-goals/${id}`, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({current_amount: parseFloat(amt) || 0})
+  });
+  await loadSavingsGoals();
+}
+
+async function deleteSavingsGoal(id) {
+  await authFetch(`/api/savings-goals/${id}`, {method:'DELETE'});
+  await loadSavingsGoals();
 }
 
 </script>

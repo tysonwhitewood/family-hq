@@ -346,6 +346,17 @@ def init_db():
                 created_at TEXT,
                 updated_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS savings_goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                target_amount REAL NOT NULL,
+                current_amount REAL DEFAULT 0,
+                priority INTEGER DEFAULT 1,
+                status TEXT DEFAULT 'active',
+                target_date TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            );
         ''')
         # Seed insurance records — insert each by policy_number if not already present
         now = datetime.now().isoformat()[:19]
@@ -1767,6 +1778,61 @@ def api_budget_actuals():
     for ym, cats in monthly.items():
         result[ym] = dict(cats)
     return jsonify(result)
+
+
+# ── Savings Goals ─────────────────────────────────────────────────────────────
+
+@app.route('/api/savings-goals', methods=['GET'])
+@login_required
+def api_savings_goals_get():
+    with get_db() as db:
+        rows = db.execute('SELECT * FROM savings_goals ORDER BY priority, name').fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/savings-goals', methods=['POST'])
+@login_required
+def api_savings_goals_post():
+    data = request.json or {}
+    name = data.get('name', '').strip()
+    target = data.get('target_amount')
+    if not name or target is None:
+        return jsonify({'error': 'name and target_amount required'}), 400
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO savings_goals (name, target_amount, current_amount, priority, status, target_date, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
+            (name, float(target), float(data.get('current_amount', 0)),
+             int(data.get('priority', 1)), data.get('status', 'active'),
+             data.get('target_date'), now, now)
+        )
+        row = db.execute('SELECT * FROM savings_goals ORDER BY id DESC LIMIT 1').fetchone()
+    return jsonify(dict(row)), 201
+
+@app.route('/api/savings-goals/<int:goal_id>', methods=['PUT'])
+@login_required
+def api_savings_goal_put(goal_id):
+    data = request.json or {}
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        row = db.execute('SELECT * FROM savings_goals WHERE id=?', (goal_id,)).fetchone()
+        if not row:
+            return jsonify({'error': 'not found'}), 404
+        db.execute(
+            'UPDATE savings_goals SET name=?, target_amount=?, current_amount=?, priority=?, status=?, target_date=?, updated_at=? WHERE id=?',
+            (data.get('name', row['name']), float(data.get('target_amount', row['target_amount'])),
+             float(data.get('current_amount', row['current_amount'])),
+             int(data.get('priority', row['priority'])), data.get('status', row['status']),
+             data.get('target_date', row['target_date']), now, goal_id)
+        )
+        updated = db.execute('SELECT * FROM savings_goals WHERE id=?', (goal_id,)).fetchone()
+    return jsonify(dict(updated))
+
+@app.route('/api/savings-goals/<int:goal_id>', methods=['DELETE'])
+@login_required
+def api_savings_goal_delete(goal_id):
+    with get_db() as db:
+        db.execute('DELETE FROM savings_goals WHERE id=?', (goal_id,))
+    return jsonify({'ok': True})
 
 
 # ── Paper Trading & Screener ──────────────────────────────────────────────────
