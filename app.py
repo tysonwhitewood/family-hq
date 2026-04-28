@@ -1997,8 +1997,8 @@ def api_screener_run():
     """Run CGG screener on value watchlist and cache results."""
     import threading
     def _run():
-        from datetime import date as _date
-        run_date = _date.today().isoformat()
+        from zoneinfo import ZoneInfo
+        run_date = datetime.now(ZoneInfo('Australia/Brisbane')).date().isoformat()
         results = [_cgg_score(t) for t in VALUE_WATCHLIST]
         results.sort(key=lambda x: x['score'], reverse=True)
         now = datetime.now().isoformat()[:19]
@@ -2085,8 +2085,7 @@ def _start_daily_screener():
     from zoneinfo import ZoneInfo
 
     def _run_screener_now():
-        from datetime import date as _date
-        run_date = _date.today().isoformat()
+        run_date = datetime.now(ZoneInfo('Australia/Brisbane')).date().isoformat()
         print(f'[screener] running scan for {run_date}...', flush=True)
         try:
             results = [_cgg_score(t) for t in VALUE_WATCHLIST]
@@ -2109,11 +2108,10 @@ def _start_daily_screener():
     def _loop():
         # On startup: if today's scan hasn't run yet and it's past 6am, catch up immediately
         try:
-            from datetime import date as _date
-            today = _date.today().isoformat()
+            now = datetime.now(ZoneInfo('Australia/Brisbane'))
+            today = now.date().isoformat()
             with get_db() as db:
                 row = db.execute('SELECT 1 FROM screener_cache WHERE run_date=? LIMIT 1', (today,)).fetchone()
-            now = datetime.now(ZoneInfo('Australia/Brisbane'))
             if not row and now.hour >= 6:
                 print(f'[screener] catch-up: no scan for {today}, running now...', flush=True)
                 _run_screener_now()
