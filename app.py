@@ -482,13 +482,35 @@ def init_db():
         if bt_count == 0:
             now = datetime.now().isoformat()[:19]
             budget_seed = [
-                ('Groceries',     1400, 'personal'),
-                ('Mortgage',      3700, 'personal'),
-                ('Fuel',           399, 'personal'),
-                ('Home Utilities', 205, 'personal'),
-                ('Subscriptions',  415, 'personal'),
-                ('Dining Out',     378, 'personal'),
-                ('Car Rego',        80, 'personal'),
+                # Business
+                ('LegalVision',              1981.76, 'business'),
+                ('Property Data Solutions',   194.23, 'business'),
+                ('Claude.ai',                 154.54, 'business'),
+                ('Starlink',                  139.00, 'business'),
+                ('Google Cloud & Workspace',  128.78, 'business'),
+                ('Car Insurance RACQ',        112.58, 'business'),
+                ('ChatGPT / OpenAI',           68.84, 'business'),
+                ('Microsoft 365',              49.37, 'business'),
+                ('GoDaddy',                    48.00, 'business'),
+                ('Xero',                       33.25, 'business'),
+                ('OpenRouter',                 30.00, 'business'),
+                ('Optus Mobile',               29.00, 'business'),
+                ('Cursor AI',                  28.00, 'business'),
+                ('Spotify (business)',         27.99, 'business'),
+                # Personal
+                ('Mortgage (GSB)',           3700.00, 'personal'),
+                ('Groceries',               1500.00, 'personal'),
+                ('Council Rates',            397.00, 'personal'),
+                ('Dining Out',               300.00, 'personal'),
+                ('Electricity (Alinta)',     280.00, 'personal'),
+                ('Fuel (personal)',          200.00, 'personal'),
+                ('Home & Contents (RACQ)',   165.90, 'personal'),
+                ('Rackley Swimming',         107.00, 'personal'),
+                ('GloBird Energy',           100.00, 'personal'),
+                ('Kids Gym',                  80.00, 'personal'),
+                ('Apple Subscriptions',       29.00, 'personal'),
+                ('Netflix',                   20.99, 'personal'),
+                ('Audible',                   16.45, 'personal'),
             ]
             for cat, target, btype in budget_seed:
                 db.execute(
@@ -513,9 +535,11 @@ def init_db():
         if ue_count == 0:
             now = datetime.now().isoformat()[:19]
             upcoming_seed = [
-                ('Car Service',    299, '2026-05-15', 0, 'Fuel'),
-                ('Adobe Renewal',  384, '2026-05-01', 1, 'Software & Tools'),
-                ('ATO BAS',       1500, '2026-05-28', 0, 'ATO / Tax'),
+                ('Adobe Renewal',   384.00, '2026-05-01', 1, 'Software & Tools'),
+                ('Car Service',     299.00, '2026-05-15', 0, 'Fuel'),
+                ('ATO BAS',        1500.00, '2026-05-28', 0, 'ATO / Tax'),
+                ('SMS Insurance',  2955.00, '2026-09-01', 0, 'Insurance'),
+                ('ASIC Annual Fee', 1798.00, '2027-04-14', 1, 'ASIC / Compliance'),
             ]
             for desc, amt, due, recurring, cat in upcoming_seed:
                 db.execute(
@@ -1242,13 +1266,64 @@ _FINANCE_CSV_CANDIDATES = [
 ]
 FINANCE_CSV_DIR = next((p for p in _FINANCE_CSV_CANDIDATES if p.exists()), _FINANCE_CSV_CANDIDATES[1])
 
+def _parse_date_flexible(s: str):
+    """Try multiple date formats: dd/mm/yyyy, dd Mmm yyyy, yyyy-mm-dd."""
+    s = (s or '').strip()
+    for fmt in ('%d/%m/%Y', '%d %b %Y', '%d-%m-%Y', '%Y-%m-%d', '%d/%m/%y'):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f'date {s!r} not in any recognised format')
+
+
+def _parse_amount(s: str) -> float:
+    """Strip $, commas, +, spaces. Empty/whitespace returns 0."""
+    if not s:
+        return 0.0
+    cleaned = s.replace('$', '').replace(',', '').replace('+', '').strip().strip('"')
+    if not cleaned:
+        return 0.0
+    return float(cleaned)
+
+
+def _parse_balance(s: str) -> float:
+    """Like _parse_amount but handles ' DR' (negative) and ' CR' (positive) suffixes."""
+    if not s:
+        return 0.0
+    cleaned = s.replace('$', '').replace(',', '').replace('+', '').strip().strip('"')
+    if not cleaned:
+        return 0.0
+    sign = 1.0
+    if cleaned.endswith(' DR') or cleaned.endswith('DR'):
+        cleaned = cleaned.rsplit('DR', 1)[0].strip()
+        sign = -1.0
+    elif cleaned.endswith(' CR') or cleaned.endswith('CR'):
+        cleaned = cleaned.rsplit('CR', 1)[0].strip()
+    if not cleaned:
+        return 0.0
+    return sign * float(cleaned)
+
+
+def _folder_sort_key(p):
+    """Sort dated subfolders chronologically. Supports dd.mm.yyyy and yyyy-mm-dd; falls back to name."""
+    name = p.name
+    for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%Y.%m.%d'):
+        try:
+            return datetime.strptime(name, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return name
+
+
 def _parse_csv_files():
     """Parse all bank CSV files from the synced family-wealth folder. Returns list of transactions."""
     import csv, glob
     transactions = []
-    # Find the most recent dated subfolder
-    subdirs = sorted([d for d in FINANCE_CSV_DIR.glob('*') if d.is_dir()], reverse=True)
-    search_dirs = subdirs[:2] if subdirs else []  # check two most recent folders
+    # Find the most recent dated subfolders (chronologically — not lexically)
+    subdirs = sorted([d for d in FINANCE_CSV_DIR.glob('*') if d.is_dir()],
+                     key=_folder_sort_key, reverse=True)
+    search_dirs = subdirs[:3] if subdirs else []  # check three most recent folders
     if FINANCE_CSV_DIR.exists():
         search_dirs.append(FINANCE_CSV_DIR)  # also check root
 
@@ -1263,16 +1338,19 @@ def _parse_csv_files():
                 with open(csv_path, newline='', encoding='utf-8-sig') as f:
                     raw = f.read()
                 lines = [l for l in raw.splitlines() if l.strip()]
-                # Detect ING format (has header: Date,Description,Credit,Debit,Balance)
+                # Header-based format (ING, Great Southern Bank, etc — column order varies)
                 if lines and lines[0].startswith('Date,'):
                     reader = csv.DictReader(lines[0:1] + lines[1:], fieldnames=None)
                     for row in reader:
                         try:
-                            d = datetime.strptime(row['Date'].strip(), '%d/%m/%Y').date()
-                            credit = float(row.get('Credit','').replace(',','') or 0)
-                            debit  = float(row.get('Debit','').replace(',','') or 0)
+                            d = _parse_date_flexible(row.get('Date', ''))
+                            credit = _parse_amount(row.get('Credit', ''))
+                            debit  = _parse_amount(row.get('Debit', ''))
+                            # Skip rows with neither Credit nor Debit (info-only rows like "RATE CHANGED")
+                            if credit == 0 and debit == 0:
+                                continue
                             amount = credit if credit else -abs(debit)
-                            balance = float(row.get('Balance','').replace(',','') or 0)
+                            balance = _parse_balance(row.get('Balance', ''))
                             transactions.append({
                                 'account': account, 'date': d.isoformat(),
                                 'amount': round(amount, 2),
@@ -1288,10 +1366,10 @@ def _parse_csv_files():
                         if len(parts) < 3:
                             continue
                         try:
-                            d = datetime.strptime(parts[0].strip(), '%d/%m/%Y').date()
-                            amount = float(parts[1].replace('"','').replace(',',''))
+                            d = _parse_date_flexible(parts[0])
+                            amount = _parse_amount(parts[1])
                             desc   = parts[2].strip().strip('"')
-                            bal    = float(parts[3].replace('"','').replace('+','').replace(',','')) if len(parts) > 3 and parts[3].strip() else 0
+                            bal    = _parse_balance(parts[3]) if len(parts) > 3 else 0
                             transactions.append({
                                 'account': account, 'date': d.isoformat(),
                                 'amount': round(amount, 2),
