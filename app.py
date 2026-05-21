@@ -155,7 +155,7 @@ def llm_chat(messages: list, system: str = '', max_tokens: int = 1024) -> str:
     if anthropic_key:
         import anthropic
         client = anthropic.Anthropic(api_key=anthropic_key)
-        kwargs = dict(model='claude-haiku-4-5-20251001', max_tokens=max_tokens, messages=messages)
+        kwargs = dict(model='claude-sonnet-4-6', max_tokens=max_tokens, messages=messages)
         if system:
             kwargs['system'] = system
         response = client.messages.create(**kwargs)
@@ -839,7 +839,7 @@ def api_chat():
         db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('user', user_msg, now))
         db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('assistant', reply, now))
 
-    model = 'claude-haiku' if _anthropic_key() else 'llama-3.3-70b (openrouter)'
+    model = 'claude-sonnet-4-6' if _anthropic_key() else 'llama-3.3-70b (openrouter)'
     return jsonify({'reply': reply, 'model': model})
 
 @app.route('/api/chat/history')
@@ -1586,7 +1586,7 @@ Return ONLY valid JSON array, nothing else. Example:
     if _anthropic_key():
         try:
             body = json.dumps({
-                'model': 'claude-haiku-4-5-20251001',
+                'model': 'claude-sonnet-4-6',
                 'max_tokens': 1500,
                 'messages': messages,
             }).encode()
@@ -1692,7 +1692,7 @@ Today's date: {date.today().isoformat()}"""
         # Try Anthropic first (haiku — cheapest)
         try:
             body = json.dumps({
-                'model': 'claude-haiku-4-5-20251001',
+                'model': 'claude-sonnet-4-6',
                 'max_tokens': 1024,
                 'system': system_prompt,
                 'messages': [m for m in messages if m['role'] != 'system'],
