@@ -1,4 +1,4 @@
-# Family HQ 12-Week Cash-Flow Forecast Design
+# Family HQ Six-Month Cash-Flow Forecast Design
 
 **Date:** 3 August 2026
 
@@ -10,12 +10,12 @@
 
 ## 1. Objective
 
-Extend Family HQ so the family can see whether it will have enough cash to meet personal and business commitments four, eight and twelve weeks ahead.
+Extend Family HQ so the family can see whether it will have enough cash to meet personal and business commitments across a rolling six-month window, presented in four-week planning cycles.
 
 The product must answer:
 
 1. What cash is available today?
-2. What money is expected to enter and leave each account over the next 84 days?
+2. What money is expected to enter and leave each account over the next 182 days?
 3. What is the lowest projected balance, and when will it occur?
 4. Are upcoming camps, birthdays and other one-off expenses adequately funded?
 5. How much is safe to spend after committed and protected amounts?
@@ -30,7 +30,7 @@ Retain the existing Flask, SQLite and single-page Family HQ application. Rebuild
 Do not replace Family HQ with Actual Budget, Firefly III, Maybe Finance or Ghostfolio. Those projects provide useful design patterns, but none supplies the required combination of:
 
 - an Australian personal and business workflow;
-- an explicit 4/8/12-week running cash forecast;
+- an explicit rolling six-month cash forecast presented in four-week cycles;
 - personal-first presentation;
 - linked business-to-personal transfers;
 - Xero business data;
@@ -52,8 +52,8 @@ Implement the required concepts independently rather than incorporating AGPL-lic
 - Recurring income and expense detection.
 - Manually entered one-off expenses and income.
 - Camps, birthdays and other savings envelopes.
-- Daily cash projection for 84 days.
-- Weekly summaries for weeks 1–4, 5–8 and 9–12.
+- Daily cash projection for 182 days.
+- Four-week cycle summaries across the complete six-month window.
 - Separate personal and business forecasts.
 - Linked transfers between business and personal accounts.
 - Xero read-only integration for Eden Commercial.
@@ -88,14 +88,13 @@ It displays:
 - protected cash;
 - safe-to-spend amount;
 - lowest projected balance and its date;
-- weeks 1–4;
-- weeks 5–8;
-- weeks 9–12;
+- each four-week cycle across the next six months;
+- the final partial cycle covering any remaining days after the six complete four-week cycles;
 - upcoming camps, birthdays and other one-off commitments;
 - projected shortfalls;
 - data freshness and forecast confidence.
 
-Each four-week group is collapsible. Weeks 1–4 open by default. Later groups may be collapsed to keep the page easy to scan.
+Each four-week cycle is collapsible. Cycle 1 opens by default. Later cycles are collapsed to keep the page easy to scan. A rolling 182-day window contains six complete 28-day cycles and a final partial cycle of up to 14 days.
 
 ### 4.2 Eden Commercial
 
@@ -307,7 +306,7 @@ Variable categories such as groceries and fuel use weekly allowances rather than
 
 ### 8.1 Calculation
 
-The engine calculates each account daily for 84 days:
+The engine calculates each account daily for 182 days:
 
 `closing balance = opening balance + inflows - outflows`
 
@@ -464,8 +463,8 @@ A forecast with missing balances or material unresolved imports is marked incomp
 
 ### 13.3 Forecast
 
-- Each forecast contains exactly 84 sequential daily positions.
-- Week groups contain weeks 1–4, 5–8 and 9–12 without duplicate or missing dates.
+- Each forecast contains exactly 182 sequential daily positions.
+- The presentation contains six complete 28-day cycles and one final partial cycle without duplicate or missing dates.
 - One-off expenses appear on the correct date.
 - Recurring weekly, fortnightly, monthly and annual examples appear correctly.
 - Linked business-to-personal transfers occur on both sides on the same date.
@@ -491,7 +490,7 @@ A forecast with missing balances or material unresolved imports is marked incomp
 
 The design is successful when Mrs Whitewood can open the Personal Cash Flow card and, without interpreting accounting reports:
 
-- see whether the family remains above its safety buffer for 12 weeks;
+- see whether the family remains above its safety buffer for six months;
 - see whether every planned camp and birthday is funded;
 - identify the exact week of any shortfall;
 - understand how much is safe to spend;
@@ -507,13 +506,13 @@ The design is successful when Mrs Whitewood can open the Personal Cash Flow card
 - Correct deduplication and transfer handling.
 - Automated parser and ledger tests.
 
-### Phase 2: Personal 12-week forecast
+### Phase 2: Personal six-month forecast
 
 - Three-month history import.
 - Account and category confirmation.
 - Recurring-event confirmation.
 - Camps, birthdays and savings envelopes.
-- 84-day forecast and 4/8/12-week interface.
+- 182-day forecast and four-week cycle interface.
 - Safe-to-spend and shortfall warnings.
 
 ### Phase 3: Eden Commercial
