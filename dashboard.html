@@ -257,6 +257,80 @@ body {
 .ins-field .value { color:#111;margin-top:1px; }
 @media(max-width:768px){.home-bottom-row{grid-template-columns:1fr!important;}}
 
+/* FINANCE STATEMENT RECEIPT */
+.fin-action {
+  border: 1px solid #1B4332; border-radius: 7px; background: #fff; color: #1B4332;
+  cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; padding: 6px 11px;
+}
+.fin-action.primary { background: #1B4332; color: #fff; }
+.fin-action:disabled { cursor: not-allowed; opacity: .45; }
+.fin-action:focus-visible, .fin-field:focus-visible {
+  outline: 3px solid rgba(37,99,235,.25); outline-offset: 2px;
+}
+.fin-field {
+  width: 100%; margin-top: 5px; padding: 9px 11px; border: 1.5px solid #D1D5DB;
+  border-radius: 8px; background: #fff; color: #111827; font: inherit; font-size: 13px;
+}
+.fin-field-label {
+  display: block; color: #4B5563; font-size: 11px; font-weight: 700;
+  letter-spacing: .45px; text-transform: uppercase;
+}
+.fin-modal {
+  display: none; position: fixed; inset: 0; z-index: 1000; align-items: center;
+  justify-content: center; padding: 18px; background: rgba(17,24,39,.58);
+}
+.fin-modal-panel {
+  width: 480px; max-width: 100%; max-height: 90vh; overflow-y: auto;
+  border-radius: 14px; background: #fff; box-shadow: 0 24px 60px rgba(17,24,39,.22);
+  padding: 24px;
+}
+.fin-account-badge {
+  display: inline-flex; align-items: center; border-radius: 99px; padding: 3px 8px;
+  background: #F3F4F6; color: #4B5563; font-size: 10px; font-weight: 700;
+  letter-spacing: .3px; text-transform: uppercase;
+}
+.fin-account-badge.ownership { background: #DBEAFE; color: #1E40AF; }
+.fin-receipt {
+  border-top: 1px solid #E5E7EB; background: #F8FAFC; padding: 12px 16px 14px;
+  transition: background .2s, border-color .2s;
+}
+.fin-receipt-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  color: #374151; font-size: 12px;
+}
+.fin-receipt-label {
+  flex-shrink: 0; color: #6B7280; font-size: 10px; font-weight: 800;
+  letter-spacing: .7px; text-transform: uppercase;
+}
+.fin-receipt-message { flex: 1; font-weight: 600; }
+.fin-receipt-percent {
+  min-width: 34px; text-align: right; color: #6B7280; font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.fin-receipt-track {
+  height: 5px; margin-top: 9px; overflow: hidden; border-radius: 99px; background: #E5E7EB;
+}
+.fin-receipt-fill {
+  width: 0; height: 100%; border-radius: inherit; background: #2563EB;
+  transition: width .2s ease, background .2s;
+}
+.fin-receipt[data-state="uploading"], .fin-receipt[data-state="processing"] {
+  background: #EFF6FF; border-color: #BFDBFE;
+}
+.fin-receipt[data-state="success"] { background: #F0FDF4; border-color: #BBF7D0; }
+.fin-receipt[data-state="success"] .fin-receipt-fill { background: #059669; }
+.fin-receipt[data-state="error"] { background: #FEF2F2; border-color: #FECACA; }
+.fin-receipt[data-state="error"] .fin-receipt-fill { background: #DC2626; }
+@media (prefers-reduced-motion: reduce) {
+  .fin-receipt, .fin-receipt-fill { transition: none; }
+}
+@media (max-width: 520px) {
+  .fin-modal-panel { padding: 20px 16px; }
+  .fin-receipt-head { align-items: flex-start; flex-wrap: wrap; gap: 5px 10px; }
+  .fin-receipt-message { flex-basis: calc(100% - 50px); order: 2; }
+  .fin-receipt-percent { order: 3; }
+}
+
 /* WISHLIST */
 .wish-grid {
   display: grid;
@@ -842,12 +916,21 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     <div class="card" style="margin-bottom:16px">
       <div class="card-header">
         <div class="card-title">Recent Transactions</div>
-        <label style="font-size:12px;color:#1B4332;cursor:pointer;font-weight:600">
-          + Upload CSV <input type="file" accept=".csv" onchange="finUploadCsv(this)" style="display:none">
-        </label>
+        <button class="fin-action" type="button" onclick="document.getElementById('fin-upload-file').click()">Upload CSV</button>
+        <input id="fin-upload-file" type="file" accept=".csv,text/csv" onchange="finSelectUploadFile(this)" style="display:none">
       </div>
       <div id="fin-txns-body" style="max-height:280px;overflow-y:auto">
         <div style="padding:16px;color:#6B7280;font-size:13px">Loading…</div>
+      </div>
+      <div id="fin-upload-status" class="fin-receipt" data-state="idle" role="status" aria-live="polite" aria-atomic="true">
+        <div class="fin-receipt-head">
+          <span class="fin-receipt-label">Statement receipt</span>
+          <span id="fin-upload-message" class="fin-receipt-message">Ready for the next bank statement.</span>
+          <span id="fin-upload-percent" class="fin-receipt-percent">0%</span>
+        </div>
+        <div class="fin-receipt-track" aria-hidden="true">
+          <div id="fin-upload-progress" class="fin-receipt-fill"></div>
+        </div>
       </div>
     </div>
 
@@ -860,6 +943,106 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
       <div id="fin-wishlist-body" style="padding:4px 0">Loading…</div>
     </div>
 
+  </div>
+</div>
+
+<!-- Finance upload modal -->
+<div id="fin-upload-modal" class="fin-modal" role="dialog" aria-modal="true" aria-labelledby="fin-upload-title">
+  <div class="fin-modal-panel">
+    <div id="fin-upload-title" style="font-size:17px;font-weight:750;color:#111827">Add a bank statement</div>
+    <p style="margin-top:5px;color:#6B7280;font-size:12px;line-height:1.5">Choose the account this statement belongs to before it is loaded.</p>
+
+    <div style="margin-top:18px;padding:11px 12px;border:1px solid #E5E7EB;border-radius:8px;background:#F9FAFB">
+      <div style="color:#6B7280;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase">Selected file</div>
+      <div id="fin-upload-filename" style="margin-top:3px;color:#111827;font-size:13px;font-weight:650;overflow-wrap:anywhere">No file selected</div>
+    </div>
+
+    <div style="margin-top:16px">
+      <label class="fin-field-label" for="fin-upload-account">Account</label>
+      <select id="fin-upload-account" class="fin-field" onchange="finToggleUploadAccountFields()">
+        <option value="">Choose an account</option>
+        <option value="new">Create a new account</option>
+      </select>
+    </div>
+
+    <div id="fin-upload-new-account" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid #E5E7EB">
+      <div>
+        <label class="fin-field-label" for="fin-upload-account-name">New account name</label>
+        <input id="fin-upload-account-name" class="fin-field" type="text" maxlength="120" placeholder="e.g. Family everyday account" oninput="finUpdateUploadValidity()">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+        <div>
+          <label class="fin-field-label" for="fin-upload-ownership">Ownership</label>
+          <select id="fin-upload-ownership" class="fin-field" onchange="finUpdateUploadValidity()">
+            <option value="personal">Personal</option>
+            <option value="business">Business</option>
+          </select>
+        </div>
+        <div>
+          <label class="fin-field-label" for="fin-upload-type">Account type</label>
+          <select id="fin-upload-type" class="fin-field" onchange="finUpdateUploadValidity()">
+            <option value="cash">Cash</option>
+            <option value="credit">Credit card</option>
+            <option value="loan">Loan</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="fin-upload-error" role="alert" style="display:none;margin-top:13px;padding:9px 11px;border-radius:7px;background:#FEF2F2;color:#991B1B;font-size:12px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:9px;margin-top:20px">
+      <button class="fin-action" type="button" onclick="finCloseUploadModal()">Cancel</button>
+      <button id="fin-upload-submit" class="fin-action primary" type="button" onclick="finSubmitUpload()" disabled>Upload statement</button>
+    </div>
+  </div>
+</div>
+
+<!-- Finance account classification modal -->
+<div id="fin-account-modal" class="fin-modal" role="dialog" aria-modal="true" aria-labelledby="fin-account-title">
+  <div class="fin-modal-panel">
+    <div id="fin-account-title" style="font-size:17px;font-weight:750;color:#111827">Edit classification</div>
+    <p id="fin-account-help" style="margin-top:5px;color:#6B7280;font-size:12px;line-height:1.5"></p>
+
+    <div id="fin-account-edit-fields" style="display:grid;gap:13px;margin-top:18px">
+      <div>
+        <label class="fin-field-label" for="fin-account-name">Account name</label>
+        <input id="fin-account-name" class="fin-field" type="text" maxlength="120">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label class="fin-field-label" for="fin-account-ownership">Ownership</label>
+          <select id="fin-account-ownership" class="fin-field">
+            <option value="personal">Personal</option>
+            <option value="business">Business</option>
+          </select>
+        </div>
+        <div>
+          <label class="fin-field-label" for="fin-account-type">Account type</label>
+          <select id="fin-account-type" class="fin-field">
+            <option value="cash">Cash</option>
+            <option value="credit">Credit card</option>
+            <option value="loan">Loan</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="fin-account-link-fields" style="display:none;margin-top:18px">
+      <div style="padding:11px 12px;border:1px solid #DBEAFE;border-radius:8px;background:#EFF6FF">
+        <div style="color:#1E40AF;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase">Unclassified statement</div>
+        <div id="fin-account-legacy-name" style="margin-top:3px;color:#111827;font-size:13px;font-weight:650"></div>
+      </div>
+      <div style="margin-top:13px">
+        <label class="fin-field-label" for="fin-account-link-target">Link to registered account</label>
+        <select id="fin-account-link-target" class="fin-field"></select>
+      </div>
+    </div>
+
+    <div id="fin-account-error" role="alert" style="display:none;margin-top:13px;padding:9px 11px;border-radius:7px;background:#FEF2F2;color:#991B1B;font-size:12px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:9px;margin-top:20px">
+      <button class="fin-action" type="button" onclick="finCloseAccountModal()">Cancel</button>
+      <button id="fin-account-save" class="fin-action primary" type="button" onclick="finSaveAccountClassification()">Save classification</button>
+    </div>
   </div>
 </div>
 
@@ -2279,6 +2462,64 @@ loadWarranties();
 // ── FINANCE ───────────────────────────────────────────────────────────────────
 
 let _finHistory = [];
+let _finAccounts = [];
+let _finUploadFile = null;
+let _finEditingAccount = null;
+
+function _finEsc(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _finAccountKey(account) {
+  return account.id == null
+    ? 'legacy:' + String(account.name || '').trim().toLowerCase()
+    : 'registered:' + account.id;
+}
+
+function finFormatDate(isoDate) {
+  if (!isoDate) return 'date unavailable';
+  const date = new Date(String(isoDate).slice(0, 10) + 'T00:00:00');
+  if (Number.isNaN(date.getTime())) return 'date unavailable';
+  return date.toLocaleDateString('en-AU', {day:'numeric', month:'short', year:'numeric'});
+}
+
+function finRenderAccounts(summaryAccounts) {
+  const byKey = new Map((summaryAccounts || []).map(account => [account.account_key, account]));
+  _finAccounts.forEach(account => {
+    const key = _finAccountKey(account);
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        name: account.name, account_key: key, count: 0, balance: null, last_date: null,
+        ownership: account.ownership, account_type: account.account_type
+      });
+    }
+  });
+  const accounts = Array.from(byKey.values());
+  if (!accounts.length) {
+    return '<span style="color:#9CA3AF;font-size:13px">No accounts yet. Upload a CSV to add the first statement.</span>';
+  }
+  const typeLabels = {cash:'Cash', credit:'Credit card', loan:'Loan'};
+  return '<div style="display:flex;flex-wrap:wrap;gap:12px;padding:4px 0">' +
+    accounts.map(account => {
+      const balance = account.balance != null
+        ? (account.balance < 0 ? '-$' + Math.abs(account.balance).toLocaleString('en-AU', {minimumFractionDigits:2})
+          : '$' + Number(account.balance).toLocaleString('en-AU', {minimumFractionDigits:2}))
+        : '—';
+      const balanceColour = account.balance != null && account.balance < 0 ? '#DC2626' : '#111';
+      const lastDate = account.last_date ? finFormatDate(account.last_date) : '—';
+      return `<div style="border:1px solid #E5E7EB;border-radius:9px;padding:13px 15px;min-width:210px;flex:1;max-width:300px">
+        <div style="font-size:12px;color:#4B5563;margin-bottom:7px;font-weight:650">${_finEsc(account.name)}</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:9px">
+          <span class="fin-account-badge ownership">${_finEsc(account.ownership || 'personal')}</span>
+          <span class="fin-account-badge">${_finEsc(typeLabels[account.account_type] || account.account_type || 'cash')}</span>
+        </div>
+        <div style="font-size:17px;font-weight:700;color:${balanceColour};font-variant-numeric:tabular-nums">${balance}</div>
+        <div style="font-size:11px;color:#9CA3AF;margin-top:2px">${Number(account.count || 0)} transactions · last ${lastDate}</div>
+        <button class="fin-action" type="button" data-account-key="${_finEsc(account.account_key)}" onclick="finEditAccount(this.dataset.accountKey)" style="margin-top:10px;border-color:#D1D5DB;color:#374151;padding:4px 8px">Edit classification</button>
+      </div>`;
+    }).join('') + '</div>';
+}
 
 function _renderCatBars(cats, barColor) {
   if (!cats.length) return '<span style="color:#9CA3AF;font-size:12px">No data</span>';
@@ -2308,29 +2549,19 @@ async function loadFinance() {
   if (perEl)  perEl.innerHTML  = '<span style="color:#9CA3AF;font-size:13px">Loading…</span>';
 
   try {
-    const [finR, wlR] = await Promise.all([
+    const [finR, wlR, accountsR] = await Promise.all([
       authFetch('/api/finance/summary'),
       authFetch('/api/wishlist'),
+      authFetch('/api/finance/accounts'),
     ]);
     const d  = await finR.json();
     const wl = await wlR.json();
+    const accountPayload = await accountsR.json();
+    _finAccounts = accountPayload.accounts || [];
 
     // Accounts
     if (accsEl) {
-      if (!d.accounts || !d.accounts.length) {
-        accsEl.innerHTML = '<span style="color:#9CA3AF;font-size:13px">No CSV files found in Syncthing family-wealth folder. Add CSVs to the Banking & Cash Flow folder and they\'ll appear here.</span>';
-      } else {
-        accsEl.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:12px;padding:4px 0">' +
-          d.accounts.map(a => {
-            const bal = a.balance != null ? (a.balance < 0 ? '-$' + Math.abs(a.balance).toLocaleString('en-AU', {minimumFractionDigits:2}) : '$' + Number(a.balance).toLocaleString('en-AU', {minimumFractionDigits:2})) : '—';
-            const balColor = a.balance != null && a.balance < 0 ? '#DC2626' : '#111';
-            return `<div style="border:1px solid #E5E7EB;border-radius:8px;padding:12px 16px;min-width:180px">
-              <div style="font-size:12px;color:#6B7280;margin-bottom:4px">${a.name}</div>
-              <div style="font-size:17px;font-weight:700;color:${balColor}">${bal}</div>
-              <div style="font-size:11px;color:#9CA3AF">${a.count} transactions · last ${a.last_date||'—'}</div>
-            </div>`;
-          }).join('') + '</div>';
-      }
+      accsEl.innerHTML = finRenderAccounts(d.accounts);
     }
     if (cntEl) cntEl.textContent = d.total_transactions + ' total';
 
@@ -2387,22 +2618,251 @@ async function loadFinance() {
   }
 }
 
-async function finUploadCsv(input) {
-  const file = input.files[0];
+function finSetUploadStatus(state, message, percent) {
+  const status = document.getElementById('fin-upload-status');
+  const messageEl = document.getElementById('fin-upload-message');
+  const progress = document.getElementById('fin-upload-progress');
+  const percentEl = document.getElementById('fin-upload-percent');
+  if (!status || !messageEl || !progress || !percentEl) return;
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  status.dataset.state = state;
+  messageEl.textContent = message;
+  progress.style.width = safePercent + '%';
+  percentEl.textContent = Math.round(safePercent) + '%';
+}
+
+function finPopulateUploadAccounts() {
+  const select = document.getElementById('fin-upload-account');
+  if (!select) return;
+  const registered = _finAccounts.filter(account => account.id != null);
+  select.replaceChildren(new Option('Choose an account', ''));
+  registered.forEach(account => select.add(new Option(account.name, String(account.id))));
+  select.add(new Option('Create a new account', 'new'));
+  select.value = registered.length ? '' : 'new';
+  finToggleUploadAccountFields();
+}
+
+async function finSelectUploadFile(input) {
+  const file = input.files && input.files[0];
   if (!file) return;
-  const fd = new FormData();
-  fd.append('file', file);
-  const txnsEl = document.getElementById('fin-txns-body');
-  if (txnsEl) txnsEl.innerHTML = '<div style="padding:16px;color:#9CA3AF;font-size:13px">Uploading ' + file.name + '…</div>';
-  try {
-    const r = await authFetch('/api/finance/upload-csv', {method:'POST', body:fd});
-    const d = await r.json();
-    if (d.ok) { loadFinance(); }
-    else if (txnsEl) txnsEl.innerHTML = '<div style="padding:16px;color:#DC2626;font-size:13px">Upload failed: ' + (d.error||'unknown') + '</div>';
-  } catch(e) {
-    if (txnsEl) txnsEl.innerHTML = '<div style="padding:16px;color:#DC2626;font-size:13px">Upload error</div>';
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    finSetUploadStatus('error', 'Upload failed — choose a CSV file.', 0);
+    input.value = '';
+    return;
   }
-  input.value = '';
+  _finUploadFile = file;
+  document.getElementById('fin-upload-filename').textContent = file.name;
+  document.getElementById('fin-upload-error').style.display = 'none';
+  if (!_finAccounts.length) {
+    try {
+      const response = await authFetch('/api/finance/accounts');
+      const payload = await response.json();
+      _finAccounts = payload.accounts || [];
+    } catch (error) {
+      finSetUploadStatus('error', 'Could not load account choices. Try again.', 0);
+    }
+  }
+  finPopulateUploadAccounts();
+  const modal = document.getElementById('fin-upload-modal');
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('fin-upload-account').focus(), 0);
+}
+
+function finToggleUploadAccountFields() {
+  const accountSelect = document.getElementById('fin-upload-account');
+  const newFields = document.getElementById('fin-upload-new-account');
+  if (!accountSelect || !newFields) return;
+  newFields.style.display = accountSelect.value === 'new' ? 'block' : 'none';
+  finUpdateUploadValidity();
+}
+
+function finUpdateUploadValidity() {
+  const accountValue = document.getElementById('fin-upload-account')?.value || '';
+  const newName = document.getElementById('fin-upload-account-name')?.value.trim() || '';
+  const validAccount = accountValue && (accountValue !== 'new' || newName);
+  const submit = document.getElementById('fin-upload-submit');
+  if (submit) submit.disabled = !(_finUploadFile && validAccount);
+}
+
+function finCloseUploadModal() {
+  document.getElementById('fin-upload-modal').style.display = 'none';
+  document.getElementById('fin-upload-file').value = '';
+  document.getElementById('fin-upload-account-name').value = '';
+  _finUploadFile = null;
+}
+
+function finSubmitUpload() {
+  const file = _finUploadFile;
+  const accountSelect = document.getElementById('fin-upload-account');
+  const errorEl = document.getElementById('fin-upload-error');
+  const submit = document.getElementById('fin-upload-submit');
+  const accountValue = accountSelect.value;
+  const accountName = document.getElementById('fin-upload-account-name').value.trim();
+  if (!file || !accountValue || (accountValue === 'new' && !accountName)) {
+    errorEl.textContent = 'Choose an existing account or enter a new account name.';
+    errorEl.style.display = 'block';
+    finUpdateUploadValidity();
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  if (accountValue === 'new') {
+    formData.append('account_name', accountName);
+    formData.append('ownership', document.getElementById('fin-upload-ownership').value);
+    formData.append('account_type', document.getElementById('fin-upload-type').value);
+  } else {
+    formData.append('account_id', accountValue);
+  }
+
+  errorEl.style.display = 'none';
+  submit.disabled = true;
+  submit.textContent = 'Uploading…';
+  finSetUploadStatus('uploading', `Uploading ${file.name} — 0%`, 0);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/finance/upload-csv');
+  xhr.withCredentials = true;
+  xhr.upload.onprogress = event => {
+    if (!event.lengthComputable) return;
+    const percent = Math.round((event.loaded / event.total) * 100);
+    finSetUploadStatus('uploading', `Uploading ${file.name} — ${percent}%`, percent);
+  };
+  xhr.upload.onload = () => {
+    finSetUploadStatus('processing', 'Processing transactions…', 100);
+  };
+  xhr.onload = () => {
+    let payload = {};
+    try {
+      payload = JSON.parse(xhr.responseText || '{}');
+    } catch (error) {
+      payload = {};
+    }
+    submit.textContent = 'Upload statement';
+    if (xhr.status === 200) {
+      finSetUploadStatus(
+        'success',
+        `Upload successful — ${payload.parsed_count} transactions loaded, latest ${finFormatDate(payload.latest_date)}`,
+        100
+      );
+      document.getElementById('fin-upload-modal').style.display = 'none';
+      document.getElementById('fin-upload-file').value = '';
+      document.getElementById('fin-upload-account-name').value = '';
+      _finUploadFile = null;
+      loadFinance();
+      return;
+    }
+    const message = payload.error || payload.message || `Server returned ${xhr.status || 'an error'}`;
+    finSetUploadStatus('error', `Upload failed — ${message}`, 100);
+    errorEl.textContent = message;
+    errorEl.style.display = 'block';
+    submit.disabled = false;
+  };
+  xhr.onerror = () => {
+    submit.textContent = 'Upload statement';
+    submit.disabled = false;
+    finSetUploadStatus('error', 'Upload failed — check the connection and try again.', 0);
+    errorEl.textContent = 'The statement could not be sent. Check the connection and try again.';
+    errorEl.style.display = 'block';
+  };
+  xhr.send(formData);
+}
+
+function finEditAccount(accountKey) {
+  const account = _finAccounts.find(item => _finAccountKey(item) === accountKey);
+  if (!account) return;
+  _finEditingAccount = account;
+  const isLegacy = account.id == null;
+  const editFields = document.getElementById('fin-account-edit-fields');
+  const linkFields = document.getElementById('fin-account-link-fields');
+  const help = document.getElementById('fin-account-help');
+  const errorEl = document.getElementById('fin-account-error');
+  const save = document.getElementById('fin-account-save');
+  errorEl.style.display = 'none';
+  editFields.style.display = isLegacy ? 'none' : 'grid';
+  linkFields.style.display = isLegacy ? 'block' : 'none';
+
+  if (isLegacy) {
+    help.textContent = 'Link this unclassified statement to a registered account.';
+    document.getElementById('fin-account-legacy-name').textContent = account.name;
+    const target = document.getElementById('fin-account-link-target');
+    const registered = _finAccounts.filter(item => item.id != null);
+    target.replaceChildren();
+    registered.forEach(item => target.add(new Option(item.name, String(item.id))));
+    if (!registered.length) {
+      target.add(new Option('No registered accounts available', ''));
+      save.disabled = true;
+      errorEl.textContent = 'Upload a statement as a new account first, then return here to link this file.';
+      errorEl.style.display = 'block';
+    } else {
+      save.disabled = false;
+    }
+    save.textContent = 'Link statement';
+  } else {
+    help.textContent = 'Keep ownership and account type accurate so Finance and Budget stay separated.';
+    document.getElementById('fin-account-name').value = account.name || '';
+    document.getElementById('fin-account-ownership').value = account.ownership || 'personal';
+    document.getElementById('fin-account-type').value = account.account_type || 'cash';
+    save.disabled = false;
+    save.textContent = 'Save classification';
+  }
+
+  const modal = document.getElementById('fin-account-modal');
+  modal.style.display = 'flex';
+  setTimeout(() => {
+    document.getElementById(isLegacy ? 'fin-account-link-target' : 'fin-account-name').focus();
+  }, 0);
+}
+
+function finCloseAccountModal() {
+  document.getElementById('fin-account-modal').style.display = 'none';
+  _finEditingAccount = null;
+}
+
+async function finSaveAccountClassification() {
+  const account = _finEditingAccount;
+  if (!account) return;
+  const save = document.getElementById('fin-account-save');
+  const errorEl = document.getElementById('fin-account-error');
+  save.disabled = true;
+  errorEl.style.display = 'none';
+  try {
+    if (account.id == null) {
+      const accountId = Number(document.getElementById('fin-account-link-target').value);
+      if (!accountId) throw new Error('Choose a registered account.');
+      const filenames = account.source_filenames || [];
+      if (!filenames.length) throw new Error('No statement file is available to link.');
+      for (const storedFilename of filenames) {
+        const response = await authFetch('/api/finance/accounts/link-legacy', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({stored_filename: storedFilename, account_id: accountId})
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Could not link the statement.');
+      }
+    } else {
+      const name = document.getElementById('fin-account-name').value.trim();
+      if (!name) throw new Error('Enter an account name.');
+      const response = await authFetch(`/api/finance/accounts/${account.id}`, {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          name,
+          ownership: document.getElementById('fin-account-ownership').value,
+          account_type: document.getElementById('fin-account-type').value
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not update the account.');
+    }
+    finCloseAccountModal();
+    await Promise.all([loadFinance(), loadBudget()]);
+  } catch (error) {
+    errorEl.textContent = error.message || 'Could not save the classification.';
+    errorEl.style.display = 'block';
+    save.disabled = false;
+  }
 }
 
 async function finGetSavingsTips() {

@@ -23,6 +23,21 @@ class DashboardContractTests(unittest.TestCase):
         self.assertIn("direction:", html)
         self.assertIn("recurrence:", html)
 
+    def test_dashboard_exposes_finance_upload_and_classification_controls(self):
+        dashboard = Path("dashboard.html").read_text()
+
+        for marker in [
+            'id="fin-upload-modal"',
+            'id="fin-upload-progress"',
+            'id="fin-upload-status"',
+            'function finSubmitUpload(',
+            'xhr.upload.onprogress',
+            'Processing transactions',
+            'Upload successful',
+            'Edit classification',
+        ]:
+            self.assertIn(marker, dashboard)
+
 
 if __name__ == "__main__":
     unittest.main()
