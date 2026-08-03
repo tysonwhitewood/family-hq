@@ -1306,45 +1306,6 @@ _FINANCE_CSV_CANDIDATES = [
 ]
 FINANCE_CSV_DIR = next((p for p in _FINANCE_CSV_CANDIDATES if p.exists()), _FINANCE_CSV_CANDIDATES[1])
 
-def _parse_date_flexible(s: str):
-    """Try multiple date formats: dd/mm/yyyy, dd Mmm yyyy, yyyy-mm-dd."""
-    s = (s or '').strip()
-    for fmt in ('%d/%m/%Y', '%d %b %Y', '%d-%m-%Y', '%Y-%m-%d', '%d/%m/%y'):
-        try:
-            return datetime.strptime(s, fmt).date()
-        except ValueError:
-            continue
-    raise ValueError(f'date {s!r} not in any recognised format')
-
-
-def _parse_amount(s: str) -> float:
-    """Strip $, commas, +, spaces. Empty/whitespace returns 0."""
-    if not s:
-        return 0.0
-    cleaned = s.replace('$', '').replace(',', '').replace('+', '').strip().strip('"')
-    if not cleaned:
-        return 0.0
-    return float(cleaned)
-
-
-def _parse_balance(s: str) -> float:
-    """Like _parse_amount but handles ' DR' (negative) and ' CR' (positive) suffixes."""
-    if not s:
-        return 0.0
-    cleaned = s.replace('$', '').replace(',', '').replace('+', '').strip().strip('"')
-    if not cleaned:
-        return 0.0
-    sign = 1.0
-    if cleaned.endswith(' DR') or cleaned.endswith('DR'):
-        cleaned = cleaned.rsplit('DR', 1)[0].strip()
-        sign = -1.0
-    elif cleaned.endswith(' CR') or cleaned.endswith('CR'):
-        cleaned = cleaned.rsplit('CR', 1)[0].strip()
-    if not cleaned:
-        return 0.0
-    return sign * float(cleaned)
-
-
 def _folder_sort_key(p):
     """Sort dated subfolders chronologically. Supports dd.mm.yyyy and yyyy-mm-dd; falls back to name."""
     name = p.name
@@ -1357,33 +1318,26 @@ def _folder_sort_key(p):
 
 
 def _deduplicate_transactions(transactions):
-    """Remove repeated CSV snapshot rows without merging different accounts."""
-    seen = set()
-    deduplicated = []
+    """Backward-compatible wrapper for callers with unregistered legacy rows."""
+    from finance_imports import deduplicate_transactions
+    prepared = []
     for transaction in transactions:
-        description = re.sub(
-            r'\s+',
-            ' ',
-            str(transaction.get('description', '')).strip().lower(),
-        )
-        key = (
-            str(transaction.get('account', '')).strip().lower(),
-            transaction.get('date'),
-            round(float(transaction.get('amount', 0) or 0), 2),
-            description,
-            transaction.get('balance'),
-        )
-        if key in seen:
+        if "account_key" in transaction:
+            prepared.append(transaction)
             continue
-        seen.add(key)
-        deduplicated.append(transaction)
-    return deduplicated
+        prepared.append({
+            **transaction,
+            "account_key": f"legacy:{str(transaction.get('account', '')).strip().lower()}",
+        })
+    return deduplicate_transactions(prepared)
 
 
 def _parse_csv_files():
     """Parse all bank CSV files from the synced family-wealth folder. Returns list of transactions."""
-    import csv, glob
+    from finance_imports import deduplicate_transactions, parse_csv_file
+
     transactions = []
+    import_map = _finance_import_map()
     # Find the most recent dated subfolders (chronologically — not lexically)
     subdirs = sorted([d for d in FINANCE_CSV_DIR.glob('*') if d.is_dir()],
                      key=_folder_sort_key, reverse=True)
@@ -1397,55 +1351,23 @@ def _parse_csv_files():
             if csv_path.name in seen_files:
                 continue
             seen_files.add(csv_path.name)
-            account = csv_path.stem
-            try:
-                with open(csv_path, newline='', encoding='utf-8-sig') as f:
-                    raw = f.read()
-                lines = [l for l in raw.splitlines() if l.strip()]
-                # Header-based format (ING, Great Southern Bank, etc — column order varies)
-                if lines and lines[0].startswith('Date,'):
-                    reader = csv.DictReader(lines[0:1] + lines[1:], fieldnames=None)
-                    for row in reader:
-                        try:
-                            d = _parse_date_flexible(row.get('Date', ''))
-                            credit = _parse_amount(row.get('Credit', ''))
-                            debit  = _parse_amount(row.get('Debit', ''))
-                            # Skip rows with neither Credit nor Debit (info-only rows like "RATE CHANGED")
-                            if credit == 0 and debit == 0:
-                                continue
-                            amount = credit if credit else -abs(debit)
-                            balance = _parse_balance(row.get('Balance', ''))
-                            transactions.append({
-                                'account': account, 'date': d.isoformat(),
-                                'amount': round(amount, 2),
-                                'description': row.get('Description','').strip(),
-                                'balance': round(balance, 2),
-                            })
-                        except Exception:
-                            continue
-                else:
-                    # CBA format: date, amount, description, balance (no header)
-                    for line in lines:
-                        parts = list(csv.reader([line]))[0]
-                        if len(parts) < 3:
-                            continue
-                        try:
-                            d = _parse_date_flexible(parts[0])
-                            amount = _parse_amount(parts[1])
-                            desc   = parts[2].strip().strip('"')
-                            bal    = _parse_balance(parts[3]) if len(parts) > 3 else 0
-                            transactions.append({
-                                'account': account, 'date': d.isoformat(),
-                                'amount': round(amount, 2),
-                                'description': desc,
-                                'balance': round(bal, 2),
-                            })
-                        except Exception:
-                            continue
-            except Exception:
-                continue
+            import_metadata = import_map.get(csv_path.name)
+            if import_metadata:
+                metadata = {
+                    "id": import_metadata["account_id"],
+                    "name": import_metadata["account_name"],
+                    "ownership": import_metadata["ownership"],
+                    "account_type": import_metadata["account_type"],
+                }
+            else:
+                metadata = {
+                    "id": None,
+                    "name": csv_path.stem,
+                    **_legacy_account_defaults(csv_path.stem),
+                }
+            transactions.extend(parse_csv_file(csv_path, metadata))
     transactions.sort(key=lambda x: x['date'], reverse=True)
-    return _deduplicate_transactions(transactions)
+    return deduplicate_transactions(transactions)
 
 
 def _finance_context_summary(transactions, max_txns=80):
