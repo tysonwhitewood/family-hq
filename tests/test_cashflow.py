@@ -5,26 +5,69 @@ from cashflow import build_forecast, infer_recurring_events
 
 
 class CashFlowCalendarTests(unittest.TestCase):
-    def test_forecast_has_182_days_and_seven_cycles(self):
+    def test_forecast_covers_six_named_calendar_months(self):
         result = build_forecast([], [], {}, date(2026, 8, 3), 1000)
 
-        self.assertEqual(len(result["personal"]["days"]), 182)
+        self.assertEqual(result["horizon_months"], 6)
         self.assertEqual(
-            [len(cycle["days"]) for cycle in result["personal"]["cycles"]],
-            [28, 28, 28, 28, 28, 28, 14],
+            [month["label"] for month in result["personal"]["months"]],
+            [
+                "August 2026 (from 3 Aug)",
+                "September 2026",
+                "October 2026",
+                "November 2026",
+                "December 2026",
+                "January 2027",
+            ],
         )
 
-    def test_cycles_are_sequential_without_duplicate_dates(self):
+    def test_months_are_sequential_without_duplicate_dates(self):
         result = build_forecast([], [], {}, date(2026, 8, 3), 1000)
 
         dates = [
             day["date"]
-            for cycle in result["personal"]["cycles"]
-            for day in cycle["days"]
+            for month in result["personal"]["months"]
+            for day in month["days"]
         ]
         self.assertEqual(len(dates), len(set(dates)))
+        self.assertEqual(dates, [day["date"] for day in result["personal"]["days"]])
         self.assertEqual(dates[0], "2026-08-03")
         self.assertEqual(dates[-1], "2027-01-31")
+
+    def test_horizon_ends_on_a_month_boundary_regardless_of_start_day(self):
+        result = build_forecast([], [], {}, date(2026, 8, 15), 1000)
+
+        months = result["personal"]["months"]
+        self.assertEqual(len(months), 6)
+        self.assertEqual(months[0]["start_date"], "2026-08-15")
+        self.assertEqual(months[-1]["end_date"], "2027-01-31")
+        self.assertEqual(result["end_date"], "2027-01-31")
+
+    def test_first_of_month_start_is_not_labelled_partial(self):
+        result = build_forecast([], [], {}, date(2026, 9, 1), 1000)
+
+        months = result["personal"]["months"]
+        self.assertEqual(months[0]["label"], "September 2026")
+        self.assertEqual(len(months[0]["days"]), 30)
+        self.assertEqual(months[-1]["end_date"], "2027-02-28")
+
+    def test_month_end_start_date_spans_short_months(self):
+        result = build_forecast([], [], {}, date(2026, 1, 31), 1000)
+
+        months = result["personal"]["months"]
+        self.assertEqual(
+            [month["label"] for month in months],
+            [
+                "January 2026 (from 31 Jan)",
+                "February 2026",
+                "March 2026",
+                "April 2026",
+                "May 2026",
+                "June 2026",
+            ],
+        )
+        self.assertEqual(len(months[0]["days"]), 1)
+        self.assertEqual(months[-1]["end_date"], "2026-06-30")
 
 
 class CashFlowRulesTests(unittest.TestCase):
@@ -150,7 +193,7 @@ class CashFlowRulesTests(unittest.TestCase):
         ]
 
         result = build_forecast(
-            [], events, {}, date(2026, 8, 3), 0, horizon_days=35
+            [], events, {}, date(2026, 8, 3), 0, horizon_months=2
         )
 
         grocery_dates = [
@@ -165,11 +208,14 @@ class CashFlowRulesTests(unittest.TestCase):
         ]
         self.assertEqual(
             grocery_dates,
-            ["2026-08-03", "2026-08-10", "2026-08-17", "2026-08-24", "2026-08-31"],
+            [
+                "2026-08-03", "2026-08-10", "2026-08-17", "2026-08-24", "2026-08-31",
+                "2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28",
+            ],
         )
         self.assertEqual(
             salary_dates,
-            ["2026-08-07", "2026-08-21", "2026-09-04"],
+            ["2026-08-07", "2026-08-21", "2026-09-04", "2026-09-18"],
         )
 
     def test_monthly_event_uses_last_valid_day(self):
@@ -182,7 +228,7 @@ class CashFlowRulesTests(unittest.TestCase):
         }]
 
         result = build_forecast(
-            [], events, {}, date(2026, 8, 1), 0, horizon_days=100
+            [], events, {}, date(2026, 8, 1), 0, horizon_months=3
         )
 
         event_dates = [
@@ -205,7 +251,7 @@ class CashFlowRulesTests(unittest.TestCase):
         }]
 
         result = build_forecast(
-            [], events, {}, date(2026, 8, 1), 0, horizon_days=61
+            [], events, {}, date(2026, 8, 1), 0, horizon_months=2
         )
 
         event_days = [

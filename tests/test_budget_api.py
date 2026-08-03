@@ -1,6 +1,6 @@
 import unittest
 import warnings
-from datetime import date
+from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
 import sqlite3
@@ -896,11 +896,12 @@ class BudgetApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         cash_flow = response.get_json()["cash_flow"]
-        self.assertEqual(cash_flow["horizon_days"], 182)
-        self.assertEqual(cash_flow["cycle_days"], 28)
-        self.assertEqual(len(cash_flow["personal"]["cycles"]), 7)
-        self.assertEqual(len(cash_flow["business"]["cycles"]), 7)
-        self.assertEqual(len(cash_flow["combined"]["cycles"]), 7)
+        self.assertEqual(cash_flow["horizon_months"], 6)
+        self.assertEqual(len(cash_flow["personal"]["months"]), 6)
+        self.assertEqual(len(cash_flow["business"]["months"]), 6)
+        self.assertEqual(len(cash_flow["combined"]["months"]), 6)
+        end = date.fromisoformat(cash_flow["end_date"])
+        self.assertEqual((end + timedelta(days=1)).day, 1)
 
     @patch.object(family_app, "_parse_csv_files")
     def test_budget_summary_forecasts_recurring_history(self, parse_files):

@@ -9,8 +9,7 @@ from datetime import date, timedelta
 from statistics import median
 
 
-FORECAST_DAYS = 182
-CYCLE_DAYS = 28
+FORECAST_MONTHS = 6
 
 
 def _empty_day(day: date) -> dict:
@@ -24,24 +23,45 @@ def _empty_day(day: date) -> dict:
     }
 
 
-def _group_cycles(days: list[dict]) -> list[dict]:
-    cycles = []
-    for offset in range(0, len(days), CYCLE_DAYS):
-        cycle_days = days[offset:offset + CYCLE_DAYS]
-        number = len(cycles) + 1
-        cycles.append({
-            "number": number,
-            "label": f"Cycle {number}",
-            "start_date": cycle_days[0]["date"],
-            "end_date": cycle_days[-1]["date"],
-            "opening_balance": cycle_days[0]["opening_balance"],
-            "inflows": round(sum(day["inflows"] for day in cycle_days), 2),
-            "outflows": round(sum(day["outflows"] for day in cycle_days), 2),
-            "closing_balance": cycle_days[-1]["closing_balance"],
-            "lowest_balance": min(day["closing_balance"] for day in cycle_days),
-            "days": cycle_days,
+def _horizon_days(today: date, months: int) -> int:
+    """Days from today to the last day of the month `months - 1` ahead."""
+    month_index = today.year * 12 + today.month - 1 + months - 1
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    return (last_day - today).days + 1
+
+
+def _month_label(first_day: date, month_start: date) -> str:
+    """Name the month, marking a first block that starts mid-month as partial."""
+    label = f"{calendar.month_name[month_start.month]} {month_start.year}"
+    if first_day > month_start:
+        return f"{label} (from {first_day.day} {calendar.month_abbr[first_day.month]})"
+    return label
+
+
+def _group_months(days: list[dict]) -> list[dict]:
+    grouped: dict[tuple[int, int], list[dict]] = {}
+    for day in days:
+        day_date = date.fromisoformat(day["date"])
+        grouped.setdefault((day_date.year, day_date.month), []).append(day)
+
+    months = []
+    for (year, month), month_days in grouped.items():
+        first_day = date.fromisoformat(month_days[0]["date"])
+        months.append({
+            "number": len(months) + 1,
+            "label": _month_label(first_day, date(year, month, 1)),
+            "start_date": month_days[0]["date"],
+            "end_date": month_days[-1]["date"],
+            "opening_balance": month_days[0]["opening_balance"],
+            "inflows": round(sum(day["inflows"] for day in month_days), 2),
+            "outflows": round(sum(day["outflows"] for day in month_days), 2),
+            "closing_balance": month_days[-1]["closing_balance"],
+            "lowest_balance": min(day["closing_balance"] for day in month_days),
+            "days": month_days,
         })
-    return cycles
+    return months
 
 
 def _add_months(value: date, months: int, preferred_day: int) -> date:
@@ -303,7 +323,7 @@ def _build_section(
         "safe_to_spend": round(safe_to_spend, 2),
         "warnings": warnings,
         "days": days,
-        "cycles": _group_cycles(days),
+        "months": _group_months(days),
     }
 
 
@@ -334,7 +354,7 @@ def _combine_sections(personal: dict, business: dict, today: date) -> dict:
         "safe_to_spend": 0.0,
         "warnings": [],
         "days": days,
-        "cycles": _group_cycles(days),
+        "months": _group_months(days),
     }
 
 
@@ -344,11 +364,12 @@ def build_forecast(
     account_ownership: dict[str, str],
     today: date,
     safety_buffer: float,
-    horizon_days: int = FORECAST_DAYS,
+    horizon_months: int = FORECAST_MONTHS,
 ) -> dict:
     """Build separated personal, business and combined daily forecasts."""
-    if horizon_days <= 0:
-        raise ValueError("horizon_days must be positive")
+    if horizon_months <= 0:
+        raise ValueError("horizon_months must be positive")
+    horizon_days = _horizon_days(today, horizon_months)
     opening = _opening_balances(transactions, account_ownership)
     personal = _build_section(
         "personal",
@@ -371,7 +392,7 @@ def build_forecast(
         "start_date": today.isoformat(),
         "end_date": (today + timedelta(days=horizon_days - 1)).isoformat(),
         "horizon_days": horizon_days,
-        "cycle_days": CYCLE_DAYS,
+        "horizon_months": horizon_months,
         "safety_buffer": float(safety_buffer),
         "personal": personal,
         "business": business,

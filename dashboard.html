@@ -1160,7 +1160,7 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     <div class="card" id="bdgt-personal-cashflow">
       <div class="card-header">
         <div class="card-title">Personal Cash Flow — Six Months</div>
-        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">Four-week planning cycles</span>
+        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">Six calendar months</span>
         <button onclick="bdgtEditSafetyBuffer()" style="margin-left:auto;background:#fff;color:#1B4332;border:1px solid #1B4332;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Safety buffer</button>
       </div>
       <div id="bdgt-personal-cashflow-body"><div class="empty-state">Loading…</div></div>
@@ -3546,13 +3546,13 @@ function bdgtShortDate(value) {
   return parsed.toLocaleDateString('en-AU', {day:'numeric', month:'short'});
 }
 
-function bdgtCycleEvents(cycle) {
+function bdgtMonthEvents(month) {
   const rows = [];
-  (cycle.days || []).forEach(day => {
+  (month.days || []).forEach(day => {
     (day.events || []).forEach(event => rows.push({date: day.date, ...event}));
   });
   if (!rows.length) {
-    return '<div style="color:#9CA3AF;font-size:12px;margin-top:10px">No confirmed cash events in this cycle.</div>';
+    return '<div style="color:#9CA3AF;font-size:12px;margin-top:10px">No confirmed cash events in this month.</div>';
   }
   return rows.map(event => {
     const inflow = event.direction === 'inflow';
@@ -3569,7 +3569,7 @@ function bdgtCycleEvents(cycle) {
 }
 
 function bdgtRenderCashSection(section, options={}) {
-  if (!section || !section.cycles) {
+  if (!section || !section.months) {
     return '<div class="empty-state">Cash-flow data is not available yet.</div>';
   }
   const safeStat = options.personal
@@ -3579,23 +3579,23 @@ function bdgtRenderCashSection(section, options={}) {
     `<div class="bdgt-cf-warning">⚠ Projected balance ${bdgtMoney(warning.projected_balance)}
       on ${bdgtShortDate(warning.date)}. Add or defer ${bdgtMoney(warning.amount_required)} to stay above the protected level.</div>`
   ).join('');
-  const cycles = section.cycles.map((cycle, index) => {
-    const cycleBad = cycle.lowest_balance < 0;
+  const months = section.months.map((month, index) => {
+    const monthBad = month.lowest_balance < 0;
     const open = options.personal && index === 0 ? ' open' : '';
-    const range = `${bdgtShortDate(cycle.start_date)} – ${bdgtShortDate(cycle.end_date)}`;
+    const range = `${bdgtShortDate(month.start_date)} – ${bdgtShortDate(month.end_date)}`;
     return `<details class="bdgt-cycle"${open}>
       <summary>
-        <span class="bdgt-cycle-title">${escHtml(cycle.label)}</span>
+        <span class="bdgt-cycle-title">${escHtml(month.label)}</span>
         <span class="bdgt-cycle-dates">${range}</span>
-        <span class="bdgt-cycle-balance" style="color:${cycleBad ? '#DC2626' : '#1B4332'}">${bdgtMoney(cycle.closing_balance)}</span>
+        <span class="bdgt-cycle-balance" style="color:${monthBad ? '#DC2626' : '#1B4332'}">${bdgtMoney(month.closing_balance)}</span>
       </summary>
       <div class="bdgt-cycle-body">
         <div class="bdgt-cycle-metrics">
-          <div class="bdgt-cycle-metric">Money in<strong style="color:#15803D">${bdgtMoney(cycle.inflows)}</strong></div>
-          <div class="bdgt-cycle-metric">Money out<strong style="color:#DC2626">${bdgtMoney(cycle.outflows)}</strong></div>
-          <div class="bdgt-cycle-metric">Lowest balance<strong style="color:${cycleBad ? '#DC2626' : '#111827'}">${bdgtMoney(cycle.lowest_balance)}</strong></div>
+          <div class="bdgt-cycle-metric">Money in<strong style="color:#15803D">${bdgtMoney(month.inflows)}</strong></div>
+          <div class="bdgt-cycle-metric">Money out<strong style="color:#DC2626">${bdgtMoney(month.outflows)}</strong></div>
+          <div class="bdgt-cycle-metric">Lowest balance<strong style="color:${monthBad ? '#DC2626' : '#111827'}">${bdgtMoney(month.lowest_balance)}</strong></div>
         </div>
-        ${bdgtCycleEvents(cycle)}
+        ${bdgtMonthEvents(month)}
       </div>
     </details>`;
   }).join('');
@@ -3607,7 +3607,7 @@ function bdgtRenderCashSection(section, options={}) {
       <div class="bdgt-cf-stat"><div class="label">Lowest date</div><div class="value">${bdgtShortDate(section.lowest_balance_date)}</div></div>
     </div>
     ${warnings}
-    ${cycles}
+    ${months}
   </div>`;
 }
 

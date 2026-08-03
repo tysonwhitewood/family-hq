@@ -15,6 +15,15 @@ class DashboardContractTests(unittest.TestCase):
             html,
         )
 
+    def test_cash_flow_renders_calendar_months_not_cycles(self):
+        html = Path("dashboard.html").read_text()
+
+        self.assertIn("section.months", html)
+        self.assertIn("bdgtMonthEvents(month)", html)
+        self.assertIn("Six calendar months", html)
+        self.assertNotIn("section.cycles", html)
+        self.assertNotIn("Four-week planning cycles", html)
+
     def test_dashboard_exposes_forecast_controls(self):
         html = Path("dashboard.html").read_text()
 
