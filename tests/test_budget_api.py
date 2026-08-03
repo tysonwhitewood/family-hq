@@ -95,8 +95,10 @@ class FinanceRegistryTests(unittest.TestCase):
 class FinanceAccountRuleTests(unittest.TestCase):
     def setUp(self):
         family_app.app.config.update(TESTING=True)
-        self.client = family_app.app.test_client()
-        response = self.client.post(
+
+    def _authenticated_client(self):
+        client = family_app.app.test_client()
+        response = client.post(
             "/login",
             data={
                 "username": family_app.USERNAME,
@@ -104,6 +106,7 @@ class FinanceAccountRuleTests(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
+        return client
 
     def test_cash_forecast_excludes_debt_balances_but_keeps_credit_history(self):
         transactions = [
@@ -140,8 +143,45 @@ class FinanceAccountRuleTests(unittest.TestCase):
         self.assertEqual(forecast["personal"]["opening_balance"], 2500)
         self.assertEqual(forecast["business"]["opening_balance"], 9000)
         recurrence_transactions = infer.call_args.args[0]
-        self.assertIn(transactions[1], recurrence_transactions)
-        self.assertNotIn(transactions[2], recurrence_transactions)
+        self.assertIn("registered:2", [row["account"] for row in recurrence_transactions])
+        self.assertNotIn("registered:3", [row["account"] for row in recurrence_transactions])
+
+    def test_forecast_keeps_same_display_name_account_keys_separate(self):
+        transactions = [
+            {
+                "account": "Shared Everyday", "account_key": "registered:1",
+                "date": "2026-05-07", "amount": -75, "description": "Monthly service",
+                "balance": 1000, "ownership": "personal", "account_type": "cash",
+            },
+            {
+                "account": "Shared Everyday", "account_key": "registered:2",
+                "date": "2026-06-07", "amount": -75, "description": "Monthly service",
+                "balance": 2000, "ownership": "business", "account_type": "cash",
+            },
+            {
+                "account": "Shared Everyday", "account_key": "registered:3",
+                "date": "2026-07-07", "amount": -75, "description": "Monthly service",
+                "balance": None, "ownership": "personal", "account_type": "cash",
+            },
+        ]
+
+        forecast = family_app._budget_cash_flow(
+            transactions,
+            [],
+            forecast_date=date(2026, 8, 3),
+            safety_buffer=0,
+        )
+
+        self.assertEqual(forecast["personal"]["opening_balance"], 1000)
+        self.assertEqual(forecast["business"]["opening_balance"], 2000)
+        historical_events = [
+            event
+            for owner in ("personal", "business")
+            for day in forecast[owner]["days"]
+            for event in day["events"]
+            if event["source"] == "transaction_history"
+        ]
+        self.assertEqual(historical_events, [])
 
     @patch.object(family_app, "_parse_csv_files")
     def test_finance_summary_groups_by_account_key_and_uses_metadata_ownership(self, parse_files):
@@ -159,13 +199,41 @@ class FinanceAccountRuleTests(unittest.TestCase):
             },
         ]
 
-        response = self.client.get("/api/finance/summary")
+        response = self._authenticated_client().get("/api/finance/summary")
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(len(payload["accounts"]), 2)
         self.assertEqual(payload["category_spend_business"]["Groceries"], 20)
         self.assertEqual(payload["category_spend_personal"]["Groceries"], 30)
+
+    @patch.object(family_app, "_parse_csv_files")
+    def test_finance_summary_excludes_loan_spending(self, parse_files):
+        today = date.today().isoformat()
+        parse_files.return_value = [
+            {
+                "account": "ING Everyday", "account_key": "registered:1",
+                "date": today, "amount": -10, "description": "Woolworths",
+                "balance": 1000, "ownership": "personal", "account_type": "cash",
+            },
+            {
+                "account": "GSB Mortgage", "account_key": "registered:2",
+                "date": today, "amount": -3700, "description": "Mortgage repay",
+                "balance": -758770, "ownership": "personal", "account_type": "loan",
+            },
+            {
+                "account": "CBA Credit Card", "account_key": "registered:3",
+                "date": today, "amount": -20, "description": "Woolworths",
+                "balance": 500, "ownership": "personal", "account_type": "credit",
+            },
+        ]
+
+        response = self._authenticated_client().get("/api/finance/summary")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["category_spend_personal"], {"Groceries": 30.0})
+        self.assertEqual(payload["monthly_expenses"], {today[:7]: 30.0})
 
 
 class BudgetApiTests(unittest.TestCase):

@@ -1551,7 +1551,7 @@ def api_finance_summary():
     monthly_in = defaultdict(float)
     monthly_out = defaultdict(float)
     for t in transactions:
-        if t['date'] < cutoff:
+        if t.get('account_type', 'cash') == 'loan' or t['date'] < cutoff:
             continue
         cat = _categorise(t['description'])
         month = t['date'][:7]
@@ -1843,17 +1843,27 @@ def _budget_cash_flow(
     start_date = forecast_date or datetime.now(
         ZoneInfo('Australia/Brisbane')
     ).date()
+    forecast_transactions = [
+        {
+            **row,
+            'account': row.get('account_key')
+            or f"legacy:{str(row.get('account', '')).strip().lower()}",
+        }
+        for row in transactions
+    ]
     cash_transactions = [
-        row for row in transactions if row.get('account_type', 'cash') == 'cash'
+        row
+        for row in forecast_transactions
+        if row.get('account_type', 'cash') == 'cash'
     ]
     recurrence_transactions = [
-        row for row in transactions
+        row for row in forecast_transactions
         if row.get('account_type', 'cash') in {'cash', 'credit'}
         and _categorise(row.get('description', '')) != 'Transfers'
     ]
     ownership = {
         row['account']: row.get('ownership', 'personal')
-        for row in transactions
+        for row in forecast_transactions
     }
     scheduled_events = []
     for row in upcoming:
