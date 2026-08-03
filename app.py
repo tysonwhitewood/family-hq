@@ -2295,6 +2295,46 @@ def _get_budget_safety_buffer():
     return float(os.environ.get('FAMILY_HQ_SAFETY_BUFFER', '1000'))
 
 
+def _budget_target_events(scheduled_events, start_date):
+    """Turn monthly budget targets into expected outflows.
+
+    A target is skipped when its category is already represented by a confirmed
+    upcoming expense or a payment inferred from transaction history, so real
+    spending is never counted twice against its own budget.
+    """
+    covered = set()
+    for event in scheduled_events:
+        category = event.get('category') or _categorise(event.get('description', ''))
+        covered.add((str(category).strip().lower(), event.get('ownership', 'personal')))
+
+    with get_db() as db:
+        targets = db.execute(
+            'SELECT category, monthly_target, type FROM budget_targets'
+        ).fetchall()
+
+    events = []
+    for target in targets:
+        amount = float(target['monthly_target'] or 0)
+        if amount <= 0:
+            continue
+        ownership = target['type'] or 'personal'
+        category = str(target['category'] or '').strip()
+        if (category.lower(), ownership) in covered:
+            continue
+        events.append({
+            'description': f'{category} (budgeted)',
+            'amount': amount,
+            'due_date': start_date.isoformat(),
+            'recurring': 'monthly',
+            'category': category,
+            'ownership': ownership,
+            'direction': 'outflow',
+            'source': 'budget_target',
+            'confidence': 'budgeted',
+        })
+    return events
+
+
 def _budget_cash_flow(
     transactions,
     upcoming,
@@ -2365,6 +2405,9 @@ def _budget_cash_flow(
         for event in recurring_history
         if re.sub(r'\s+', ' ', event['description'].strip().lower())
         not in manual_descriptions
+    )
+    scheduled_events.extend(
+        _budget_target_events(scheduled_events, start_date)
     )
     if safety_buffer is None:
         safety_buffer = _get_budget_safety_buffer()

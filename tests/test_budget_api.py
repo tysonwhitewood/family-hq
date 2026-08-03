@@ -1001,9 +1001,89 @@ class BudgetApiTests(unittest.TestCase):
         event_dates = [
             day["date"]
             for day in forecast["personal"]["days"]
-            if day["events"]
+            for event in day["events"]
+            if event["description"] == "ASIC Annual Fee"
         ]
         self.assertEqual(event_dates, ["2026-08-10"])
+
+
+class BudgetTargetForecastTests(unittest.TestCase):
+    """Budgeted monthly spending must appear as expected outflows in every month."""
+
+    def setUp(self):
+        self.temp_dir = TemporaryDirectory()
+        self.original_db_path = family_app.DB_PATH
+        self.original_data_dir = family_app.DATA_DIR
+        family_app.DATA_DIR = Path(self.temp_dir.name)
+        family_app.DB_PATH = family_app.DATA_DIR / "family.db"
+        family_app.init_db()
+        with family_app.get_db() as db:
+            db.execute("DELETE FROM budget_targets")
+
+    def tearDown(self):
+        family_app.DB_PATH = self.original_db_path
+        family_app.DATA_DIR = self.original_data_dir
+        self.temp_dir.cleanup()
+
+    def _add_target(self, category, monthly_target, budget_type="personal"):
+        with family_app.get_db() as db:
+            db.execute(
+                "INSERT INTO budget_targets (category, monthly_target, type, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (category, monthly_target, budget_type, "2026-08-01", "2026-08-01"),
+            )
+
+    def test_budget_targets_become_a_monthly_outflow_in_every_month(self):
+        self._add_target("Groceries", 1500)
+
+        forecast = family_app._budget_cash_flow(
+            [], [], forecast_date=date(2026, 8, 3), safety_buffer=0
+        )
+
+        months = forecast["personal"]["months"]
+        self.assertEqual(len(months), 6)
+        self.assertEqual([month["outflows"] for month in months], [1500.0] * 6)
+
+    def test_business_targets_stay_out_of_personal_spending(self):
+        self._add_target("LegalVision", 1981.76, budget_type="business")
+
+        forecast = family_app._budget_cash_flow(
+            [], [], forecast_date=date(2026, 8, 3), safety_buffer=0
+        )
+
+        self.assertEqual(
+            [month["outflows"] for month in forecast["personal"]["months"]],
+            [0.0] * 6,
+        )
+        self.assertEqual(
+            [month["outflows"] for month in forecast["business"]["months"]],
+            [1981.76] * 6,
+        )
+
+    def test_target_is_skipped_when_its_category_is_already_scheduled(self):
+        self._add_target("Insurance", 400)
+
+        forecast = family_app._budget_cash_flow(
+            [],
+            [{
+                "description": "Home & Contents premium",
+                "amount": 165.90,
+                "due_date": "2026-09-15",
+                "recurring": "monthly",
+                "category": "Insurance",
+                "ownership": "personal",
+            }],
+            forecast_date=date(2026, 8, 3),
+            safety_buffer=0,
+        )
+
+        budgeted = [
+            event["description"]
+            for day in forecast["personal"]["days"]
+            for event in day["events"]
+            if event.get("source") == "budget_target"
+        ]
+        self.assertEqual(budgeted, [])
 
 
 if __name__ == "__main__":
