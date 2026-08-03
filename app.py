@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Family HQ — Whitewood Family Command Centre"""
-import base64, json, math, os, sqlite3, re, time, urllib.request, urllib.parse
+import base64, json, math, os, shutil, sqlite3, re, tempfile, time, urllib.request, urllib.parse
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, abort, g, Response, redirect, url_for, render_template_string
@@ -1498,18 +1498,159 @@ def _categorise(description: str) -> str:
 @app.route('/api/finance/upload-csv', methods=['POST'])
 @login_required
 def api_finance_upload_csv():
-    """Upload a bank CSV file — saves to /app/data/bank_statements/."""
+    """Validate, parse and register a bank CSV before preserving it."""
     f = request.files.get('file')
     if not f or not f.filename:
         return jsonify({'error': 'no file'}), 400
+    safe_name = re.sub(r'[^\w\s\-.]', '', f.filename).strip()
+    if not safe_name.lower().endswith('.csv'):
+        return jsonify({'error': 'CSV files only'}), 400
+
+    requested_account_id = request.form.get('account_id', '').strip()
+    account = None
+    if requested_account_id:
+        try:
+            account_id = int(requested_account_id)
+        except ValueError:
+            return jsonify({'error': 'account_id must be an integer'}), 400
+        with get_db() as db:
+            row = db.execute(
+                "SELECT id, name, ownership, account_type, active, created_at, updated_at "
+                "FROM finance_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+        if row is None:
+            return jsonify({'error': 'account_id not found'}), 400
+        account = dict(row)
+        metadata = account
+    else:
+        account_name = request.form.get('account_name', '').strip()
+        ownership = request.form.get('ownership', '').strip().lower()
+        account_type = request.form.get('account_type', '').strip().lower()
+        if ownership not in {'personal', 'business'}:
+            return jsonify({'error': 'ownership must be personal or business'}), 400
+        if account_type not in {'cash', 'credit', 'loan'}:
+            return jsonify({'error': 'account_type must be cash, credit or loan'}), 400
+        if not account_name:
+            return jsonify({'error': 'account_name is required'}), 400
+        metadata = {
+            'id': None,
+            'name': account_name,
+            'ownership': ownership,
+            'account_type': account_type,
+        }
+
     save_dir = DATA_DIR / 'bank_statements'
     save_dir.mkdir(exist_ok=True)
-    safe_name = re.sub(r'[^\w\s\-.]', '', f.filename).strip()
-    if not safe_name.endswith('.csv'):
-        return jsonify({'error': 'CSV files only'}), 400
-    dest = save_dir / safe_name
-    f.save(str(dest))
-    return jsonify({'ok': True, 'saved': safe_name})
+    temporary_path = None
+    backup_path = None
+    replaced_destination = False
+    destination = save_dir / safe_name
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=save_dir,
+            prefix='upload-',
+            suffix='.csv',
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+        f.save(str(temporary_path))
+
+        from finance_imports import parse_csv_file
+        transactions = parse_csv_file(temporary_path, metadata)
+        if not transactions:
+            temporary_path.unlink(missing_ok=True)
+            return jsonify({'error': 'No supported transactions found in this CSV'}), 422
+
+        now = datetime.now().isoformat()[:19]
+        if destination.exists():
+            backup_fd, backup_name = tempfile.mkstemp(
+                dir=save_dir,
+                prefix='backup-',
+                suffix='.csv',
+            )
+            os.close(backup_fd)
+            backup_path = Path(backup_name)
+            backup_path.unlink()
+            try:
+                os.link(destination, backup_path)
+            except OSError:
+                shutil.copy2(destination, backup_path)
+
+        with get_db() as db:
+            if account is None:
+                row = db.execute(
+                    "SELECT id, name, ownership, account_type, active, created_at, updated_at "
+                    "FROM finance_accounts WHERE name = ?",
+                    (metadata['name'],),
+                ).fetchone()
+                if row is None:
+                    cursor = db.execute(
+                        "INSERT INTO finance_accounts "
+                        "(name, ownership, account_type, active, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            metadata['name'], metadata['ownership'], metadata['account_type'],
+                            1, now, now,
+                        ),
+                    )
+                    account = {
+                        'id': cursor.lastrowid,
+                        'name': metadata['name'],
+                        'ownership': metadata['ownership'],
+                        'account_type': metadata['account_type'],
+                        'active': 1,
+                        'created_at': now,
+                        'updated_at': now,
+                    }
+                else:
+                    account = dict(row)
+
+            earliest_date = min(transaction['date'] for transaction in transactions)
+            latest_date = max(transaction['date'] for transaction in transactions)
+            os.replace(temporary_path, destination)
+            temporary_path = None
+            replaced_destination = True
+            db.execute(
+                "INSERT INTO finance_imports "
+                "(original_filename, stored_filename, account_id, parsed_count, "
+                "earliest_date, latest_date, status, uploaded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(stored_filename) DO UPDATE SET "
+                "original_filename = excluded.original_filename, "
+                "account_id = excluded.account_id, "
+                "parsed_count = excluded.parsed_count, "
+                "earliest_date = excluded.earliest_date, "
+                "latest_date = excluded.latest_date, "
+                "status = excluded.status, "
+                "uploaded_at = excluded.uploaded_at",
+                (
+                    f.filename, safe_name, account['id'], len(transactions), earliest_date,
+                    latest_date, 'parsed', now,
+                ),
+            )
+    except Exception:
+        if replaced_destination:
+            if backup_path is None:
+                destination.unlink(missing_ok=True)
+            else:
+                os.replace(backup_path, destination)
+                backup_path = None
+        raise
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        if backup_path is not None:
+            backup_path.unlink(missing_ok=True)
+
+    return jsonify({
+        'account': account,
+        'saved': safe_name,
+        'parsed_count': len(transactions),
+        'earliest_date': earliest_date,
+        'latest_date': latest_date,
+        'message': f"{len(transactions)} transactions loaded from {account['name']}",
+    })
 
 @app.route('/api/finance/summary')
 @login_required

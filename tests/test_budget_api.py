@@ -1,7 +1,9 @@
 import unittest
 import warnings
 from datetime import date
+from io import BytesIO
 from pathlib import Path
+import sqlite3
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
@@ -89,6 +91,188 @@ class FinanceRegistryTests(unittest.TestCase):
         self.assertTrue(
             {"stored_filename", "account_id", "parsed_count", "earliest_date", "latest_date", "status"}
             <= import_columns
+        )
+
+
+class FinanceUploadTests(unittest.TestCase):
+    """The upload contract protects the statement directory and import registry."""
+
+    supported_csv = (
+        b"29/05/2026,-42.50,Coffee shop,105.00\n"
+        b"28/05/2026,1500.00,Salary,1605.00\n"
+    )
+
+    def setUp(self):
+        self.temp_dir = TemporaryDirectory()
+        self.original_db_path = family_app.DB_PATH
+        self.original_data_dir = family_app.DATA_DIR
+        family_app.DATA_DIR = Path(self.temp_dir.name)
+        family_app.DB_PATH = family_app.DATA_DIR / "family.db"
+        family_app.init_db()
+        family_app.app.config.update(TESTING=True)
+        self.client = family_app.app.test_client()
+        with self.client.session_transaction() as session:
+            session["_user_id"] = family_app.USERNAME
+            session["_fresh"] = True
+
+    def tearDown(self):
+        family_app.DB_PATH = self.original_db_path
+        family_app.DATA_DIR = self.original_data_dir
+        self.temp_dir.cleanup()
+
+    def _upload(self, csv_data, filename="statement.csv", **metadata):
+        return self.client.post(
+            "/api/finance/upload-csv",
+            data={
+                "file": (BytesIO(csv_data), filename),
+                **metadata,
+            },
+            content_type="multipart/form-data",
+        )
+
+    def test_supported_csv_returns_parsed_confirmation(self):
+        response = self._upload(
+            self.supported_csv,
+            "May.CSV",
+            account_name="Everyday account",
+            ownership="personal",
+            account_type="cash",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["parsed_count"], 2)
+        self.assertEqual(payload["latest_date"], "2026-05-29")
+        self.assertIn("2 transactions loaded", payload["message"])
+
+    def test_rejects_invalid_ownership(self):
+        response = self._upload(
+            self.supported_csv,
+            account_name="Everyday account",
+            ownership="family",
+            account_type="cash",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.get_json(),
+            {"error": "ownership must be personal or business"},
+        )
+
+    def test_rejects_invalid_account_type(self):
+        response = self._upload(
+            self.supported_csv,
+            account_name="Everyday account",
+            ownership="personal",
+            account_type="investment",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.get_json(),
+            {"error": "account_type must be cash, credit or loan"},
+        )
+
+    def test_rejects_csv_without_supported_rows_without_preserving_file(self):
+        response = self._upload(
+            b"not,a,supported,statement\n",
+            account_name="Everyday account",
+            ownership="personal",
+            account_type="cash",
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.get_json(),
+            {"error": "No supported transactions found in this CSV"},
+        )
+        self.assertFalse((family_app.DATA_DIR / "bank_statements" / "statement.csv").exists())
+
+    def test_existing_account_id_overrides_new_account_fields(self):
+        now = "2026-08-03T00:00:00"
+        with family_app.get_db() as db:
+            cursor = db.execute(
+                "INSERT INTO finance_accounts "
+                "(name, ownership, account_type, active, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("Existing account", "business", "loan", 1, now, now),
+            )
+            account_id = cursor.lastrowid
+
+        response = self._upload(
+            self.supported_csv,
+            account_id=str(account_id),
+            account_name="Attempted replacement account",
+            ownership="personal",
+            account_type="cash",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with family_app.get_db() as db:
+            import_row = db.execute(
+                "SELECT account_id FROM finance_imports WHERE stored_filename = ?",
+                ("statement.csv",),
+            ).fetchone()
+            replacement_account = db.execute(
+                "SELECT id FROM finance_accounts WHERE name = ?",
+                ("Attempted replacement account",),
+            ).fetchone()
+        self.assertEqual(import_row["account_id"], account_id)
+        self.assertIsNone(replacement_account)
+
+    def test_reuploading_stored_filename_updates_one_import_row(self):
+        metadata = {
+            "account_name": "Everyday account",
+            "ownership": "personal",
+            "account_type": "cash",
+        }
+        first = self._upload(self.supported_csv, "statement.csv", **metadata)
+        second = self._upload(
+            b"30/05/2026,-10.00,Groceries,95.00\n",
+            "statement.csv",
+            **metadata,
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        with family_app.get_db() as db:
+            rows = db.execute(
+                "SELECT parsed_count, latest_date FROM finance_imports "
+                "WHERE stored_filename = ?",
+                ("statement.csv",),
+            ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["parsed_count"], 1)
+        self.assertEqual(rows[0]["latest_date"], "2026-05-30")
+        self.assertEqual(
+            (family_app.DATA_DIR / "bank_statements" / "statement.csv").read_bytes(),
+            b"30/05/2026,-10.00,Groceries,95.00\n",
+        )
+
+    def test_failed_import_upsert_restores_existing_stored_file(self):
+        metadata = {
+            "account_name": "Everyday account",
+            "ownership": "personal",
+            "account_type": "cash",
+        }
+        first = self._upload(self.supported_csv, "statement.csv", **metadata)
+        self.assertEqual(first.status_code, 200)
+        with family_app.get_db() as db:
+            db.execute(
+                "CREATE TRIGGER fail_import_update BEFORE UPDATE ON finance_imports "
+                "BEGIN SELECT RAISE(ABORT, 'forced import failure'); END"
+            )
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self._upload(
+                b"30/05/2026,-10.00,Groceries,95.00\n",
+                "statement.csv",
+                **metadata,
+            )
+
+        self.assertEqual(
+            (family_app.DATA_DIR / "bank_statements" / "statement.csv").read_bytes(),
+            self.supported_csv,
         )
 
 
