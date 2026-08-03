@@ -1085,6 +1085,92 @@ class BudgetTargetForecastTests(unittest.TestCase):
         ]
         self.assertEqual(budgeted, [])
 
+    def _target_id(self, category):
+        with family_app.get_db() as db:
+            return db.execute(
+                "SELECT id FROM budget_targets WHERE category = ?", (category,)
+            ).fetchone()["id"]
+
+    def test_a_skipped_month_removes_that_months_budgeted_outflow(self):
+        self._add_target("School fees", 900)
+        with family_app.get_db() as db:
+            db.execute(
+                "INSERT INTO budget_target_overrides (target_id, year_month, amount, skipped) "
+                "VALUES (?, ?, ?, ?)",
+                (self._target_id("School fees"), "2027-01", None, 1),
+            )
+
+        forecast = family_app._budget_cash_flow(
+            [], [], forecast_date=date(2026, 8, 3), safety_buffer=0
+        )
+
+        self.assertEqual(
+            [month["outflows"] for month in forecast["personal"]["months"]],
+            [900.0, 900.0, 900.0, 900.0, 900.0, 0.0],
+        )
+
+    def test_month_override_api_round_trips_skip_and_amount(self):
+        self._add_target("Groceries", 1500)
+        target_id = self._target_id("Groceries")
+        client = family_app.app.test_client()
+        with client.session_transaction() as session:
+            session["_user_id"] = family_app.USERNAME
+            session["_fresh"] = True
+
+        saved = client.post(
+            f"/api/budget/targets/{target_id}/months",
+            json={"months": [
+                {"year_month": "2026-12", "amount": 2400},
+                {"year_month": "2027-01", "skipped": True},
+            ]},
+        )
+        self.assertEqual(saved.status_code, 200)
+
+        listed = client.get(f"/api/budget/targets/{target_id}/months")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(
+            {row["year_month"]: (row["amount"], row["skipped"])
+             for row in listed.get_json()["months"]},
+            {"2026-12": (2400.0, False), "2027-01": (None, True)},
+        )
+
+    def test_month_override_api_rejects_a_malformed_month(self):
+        self._add_target("Groceries", 1500)
+        client = family_app.app.test_client()
+        with client.session_transaction() as session:
+            session["_user_id"] = family_app.USERNAME
+            session["_fresh"] = True
+
+        response = client.post(
+            f"/api/budget/targets/{self._target_id('Groceries')}/months",
+            json={"months": [{"year_month": "December", "amount": 100}]},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        with family_app.get_db() as db:
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) c FROM budget_target_overrides").fetchone()["c"],
+                0,
+            )
+
+    def test_an_overridden_month_uses_its_own_amount(self):
+        self._add_target("Groceries", 1500)
+        with family_app.get_db() as db:
+            db.execute(
+                "INSERT INTO budget_target_overrides (target_id, year_month, amount, skipped) "
+                "VALUES (?, ?, ?, ?)",
+                (self._target_id("Groceries"), "2026-12", 2400, 0),
+            )
+
+        forecast = family_app._budget_cash_flow(
+            [], [], forecast_date=date(2026, 8, 3), safety_buffer=0
+        )
+
+        self.assertEqual(
+            [month["outflows"] for month in forecast["personal"]["months"]],
+            [1500.0, 1500.0, 1500.0, 1500.0, 2400.0, 1500.0],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

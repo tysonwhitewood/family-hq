@@ -24,6 +24,24 @@ class DashboardContractTests(unittest.TestCase):
         self.assertNotIn("section.cycles", html)
         self.assertNotIn("Four-week planning cycles", html)
 
+    def test_budget_entry_uses_a_form_rather_than_chained_prompts(self):
+        html = Path("dashboard.html").read_text()
+
+        for marker in [
+            'id="bdgt-entry-modal"',
+            'id="bdgt-entry-direction"',
+            'id="bdgt-entry-recurrence"',
+            "function bdgtSaveEntry(",
+            'id="bdgt-months-modal"',
+            "function bdgtOpenMonths(",
+            "function bdgtSaveMonths(",
+            "/months",
+        ]:
+            self.assertIn(marker, html)
+
+        self.assertNotIn("prompt('Money coming in or going out?", html)
+        self.assertNotIn("prompt('Due date (YYYY-MM-DD):'", html)
+
     def test_dashboard_exposes_forecast_controls(self):
         html = Path("dashboard.html").read_text()
 

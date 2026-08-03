@@ -1046,6 +1046,76 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
   </div>
 </div>
 
+<div id="bdgt-entry-modal" class="fin-modal" role="dialog" aria-modal="true" aria-labelledby="bdgt-entry-title">
+  <div class="fin-modal-panel" tabindex="-1">
+    <div id="bdgt-entry-title" style="font-size:17px;font-weight:750;color:#111827">Add money in or out</div>
+    <p style="margin-top:5px;color:#6B7280;font-size:12px;line-height:1.5">One-off items affect a single month. Choose a repeat to have it appear every month.</p>
+
+    <div style="display:grid;gap:13px;margin-top:18px">
+      <div>
+        <label class="fin-field-label" for="bdgt-entry-desc">Description</label>
+        <input id="bdgt-entry-desc" class="fin-field" type="text" maxlength="120" placeholder="School camp, Bali holiday, consulting fee">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label class="fin-field-label" for="bdgt-entry-amount">Amount ($)</label>
+          <input id="bdgt-entry-amount" class="fin-field" type="number" min="0" step="0.01" placeholder="0.00">
+        </div>
+        <div>
+          <label class="fin-field-label" for="bdgt-entry-date">Date</label>
+          <input id="bdgt-entry-date" class="fin-field" type="date">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label class="fin-field-label" for="bdgt-entry-direction">Money</label>
+          <select id="bdgt-entry-direction" class="fin-field">
+            <option value="outflow">Going out</option>
+            <option value="inflow">Coming in</option>
+          </select>
+        </div>
+        <div>
+          <label class="fin-field-label" for="bdgt-entry-ownership">Whose</label>
+          <select id="bdgt-entry-ownership" class="fin-field">
+            <option value="personal">Personal</option>
+            <option value="business">Eden Commercial</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="fin-field-label" for="bdgt-entry-recurrence">Repeat</label>
+        <select id="bdgt-entry-recurrence" class="fin-field">
+          <option value="">One-off — this month only</option>
+          <option value="weekly">Weekly</option>
+          <option value="fortnightly">Fortnightly</option>
+          <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
+          <option value="annual">Annually</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="bdgt-entry-error" role="alert" style="display:none;margin-top:13px;padding:9px 11px;border-radius:7px;background:#FEF2F2;color:#991B1B;font-size:12px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:9px;margin-top:20px">
+      <button class="fin-action" type="button" onclick="bdgtCloseEntryModal()">Cancel</button>
+      <button id="bdgt-entry-save" class="fin-action primary" type="button" onclick="bdgtSaveEntry()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="bdgt-months-modal" class="fin-modal" role="dialog" aria-modal="true" aria-labelledby="bdgt-months-title">
+  <div class="fin-modal-panel" tabindex="-1">
+    <div id="bdgt-months-title" style="font-size:17px;font-weight:750;color:#111827">Adjust by month</div>
+    <p id="bdgt-months-help" style="margin-top:5px;color:#6B7280;font-size:12px;line-height:1.5"></p>
+    <div id="bdgt-months-rows" style="display:grid;gap:9px;margin-top:18px"></div>
+    <div id="bdgt-months-error" role="alert" style="display:none;margin-top:13px;padding:9px 11px;border-radius:7px;background:#FEF2F2;color:#991B1B;font-size:12px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:9px;margin-top:20px">
+      <button class="fin-action" type="button" onclick="bdgtCloseMonthsModal()">Cancel</button>
+      <button id="bdgt-months-save" class="fin-action primary" type="button" onclick="bdgtSaveMonths()">Save months</button>
+    </div>
+  </div>
+</div>
+
 <!-- SETTINGS -->
 <div class="page" id="page-settings">
   <div class="topbar"><div class="topbar-title">⚙️ Integrations & Settings</div></div>
@@ -1204,7 +1274,7 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     <div class="card">
       <div class="card-header">
         <div class="card-title">Upcoming Known Expenses</div>
-        <button onclick="bdgtAddUpcoming()" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
+        <button onclick="bdgtAddUpcoming(this)" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
       </div>
       <div id="bdgt-upcoming-container" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
     </div>
@@ -3306,6 +3376,7 @@ function bdgtBuildTable(items) {
         </div>
       </td>
       <td class="bdgt-actions">
+        <button onclick="bdgtOpenMonths(${b.id}, this)" title="Adjust by month">📅</button>
         <button onclick="bdgtEditTarget(${b.id},'${b.category}',${b.target},'${b.type}')" title="Edit">✏��</button>
         <button onclick="bdgtDeleteTarget(${b.id})" title="Delete">🗑️</button>
       </td>
@@ -3441,7 +3512,7 @@ function bdgtRenderUpcoming(d) {
       </div>
       <div style="font-weight:700;font-size:13px;color:${direction === 'inflow' ? '#15803D' : '#1B4332'}">${direction === 'inflow' ? '+' : '−'}${bdgtMoney(Math.abs(u.amount))}</div>
       <div class="bdgt-actions">
-        <button onclick="bdgtEditUpcoming(${u.id})" title="Edit">✏️</button>
+        <button onclick="bdgtEditUpcoming(${u.id}, this)" title="Edit">✏️</button>
         <button onclick="bdgtDeleteUpcoming(${u.id})" title="Delete">🗑️</button>
       </div>
     </div>`;
@@ -3452,59 +3523,178 @@ function bdgtRenderUpcoming(d) {
   container.innerHTML = html;
 }
 
-function bdgtAddUpcoming() {
-  const desc = prompt('Description (e.g. school camp or TCS payment):');
-  if (!desc) return;
-  const amt = prompt('Amount ($):');
-  if (!amt) return;
-  const due = prompt('Due date (YYYY-MM-DD):', new Date().toISOString().slice(0,10));
-  if (!due) return;
-  const ownership = (prompt('Personal or business?', 'personal') || '').trim().toLowerCase();
-  if (!['personal','business'].includes(ownership)) return alert('Enter personal or business.');
-  const direction = (prompt('Money coming in or going out? Enter inflow or outflow.', 'outflow') || '').trim().toLowerCase();
-  if (!['inflow','outflow'].includes(direction)) return alert('Enter inflow or outflow.');
-  const recurrence = (prompt('Repeat? Leave blank, or enter weekly, fortnightly, monthly, quarterly or annual.', '') || '').trim().toLowerCase();
-  authFetch('/api/budget/upcoming', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      description: desc.trim(),
-      amount: parseFloat(amt),
-      due_date: due,
-      ownership: ownership,
-      direction: direction,
-      recurrence: recurrence
-    })
-  }).then(() => loadBudget());
+let _bdgtEntryId = null;
+
+function bdgtOpenEntryModal(item, opener) {
+  const modal = document.getElementById('bdgt-entry-modal');
+  if (_finActiveModal && _finActiveModal !== modal) return;
+  _bdgtEntryId = item ? item.id : null;
+  document.getElementById('bdgt-entry-title').textContent = item ? 'Edit item' : 'Add money in or out';
+  document.getElementById('bdgt-entry-desc').value = item ? (item.description || '') : '';
+  document.getElementById('bdgt-entry-amount').value = item ? item.amount : '';
+  document.getElementById('bdgt-entry-date').value = item
+    ? (item.due_date || '')
+    : new Date().toISOString().slice(0, 10);
+  document.getElementById('bdgt-entry-direction').value = item ? (item.direction || 'outflow') : 'outflow';
+  document.getElementById('bdgt-entry-ownership').value = item ? (item.ownership || 'personal') : 'personal';
+  document.getElementById('bdgt-entry-recurrence').value = item ? (item.recurrence || '') : '';
+  document.getElementById('bdgt-entry-error').style.display = 'none';
+  document.getElementById('bdgt-entry-save').disabled = false;
+  if (!finOpenModal(modal, opener || document.activeElement)) return;
+  setTimeout(() => document.getElementById('bdgt-entry-desc').focus(), 0);
 }
 
-function bdgtEditUpcoming(id) {
+function bdgtCloseEntryModal({restoreFocus = true} = {}) {
+  if (!finCloseModalShell(document.getElementById('bdgt-entry-modal'), {restoreFocus})) return;
+  _bdgtEntryId = null;
+}
+
+function bdgtAddUpcoming(opener) {
+  bdgtOpenEntryModal(null, opener);
+}
+
+function bdgtEditUpcoming(id, opener) {
   const item = (_bdgtData?.upcoming_expenses || []).find(row => row.id === id);
-  if (!item) return;
-  const newDesc = prompt('Description:', item.description);
-  if (!newDesc) return;
-  const newAmt = prompt('Amount ($):', item.amount);
-  if (!newAmt) return;
-  const newDue = prompt('Due date (YYYY-MM-DD):', item.due_date || '');
-  if (!newDue) return;
-  const ownership = (prompt('Personal or business?', item.ownership || 'personal') || '').trim().toLowerCase();
-  if (!['personal','business'].includes(ownership)) return alert('Enter personal or business.');
-  const direction = (prompt('Enter inflow or outflow.', item.direction || 'outflow') || '').trim().toLowerCase();
-  if (!['inflow','outflow'].includes(direction)) return alert('Enter inflow or outflow.');
-  const recurrence = (prompt('Repeat? Leave blank, or enter weekly, fortnightly, monthly, quarterly or annual.', item.recurrence || '') || '').trim().toLowerCase();
-  authFetch('/api/budget/upcoming', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      id: id,
-      description: newDesc.trim(),
-      amount: parseFloat(newAmt),
-      due_date: newDue,
-      ownership: ownership,
-      direction: direction,
-      recurrence: recurrence
-    })
-  }).then(() => loadBudget());
+  if (item) bdgtOpenEntryModal(item, opener);
+}
+
+async function bdgtSaveEntry() {
+  const errorEl = document.getElementById('bdgt-entry-error');
+  const save = document.getElementById('bdgt-entry-save');
+  const description = document.getElementById('bdgt-entry-desc').value.trim();
+  const amount = parseFloat(document.getElementById('bdgt-entry-amount').value);
+  const dueDate = document.getElementById('bdgt-entry-date').value;
+  const fail = message => {
+    errorEl.textContent = message;
+    errorEl.style.display = 'block';
+    save.disabled = false;
+  };
+  if (!description) return fail('Enter a description.');
+  if (!Number.isFinite(amount) || amount <= 0) return fail('Enter an amount greater than zero.');
+  if (!dueDate) return fail('Choose a date.');
+
+  save.disabled = true;
+  errorEl.style.display = 'none';
+  const body = {
+    description,
+    amount,
+    due_date: dueDate,
+    ownership: document.getElementById('bdgt-entry-ownership').value,
+    direction: document.getElementById('bdgt-entry-direction').value,
+    recurrence: document.getElementById('bdgt-entry-recurrence').value
+  };
+  if (_bdgtEntryId) body.id = _bdgtEntryId;
+  try {
+    const response = await authFetch('/api/budget/upcoming', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return fail(payload.error || 'Could not save this item.');
+  } catch (error) {
+    return fail('Could not save this item. Check the connection and try again.');
+  }
+  bdgtCloseEntryModal({restoreFocus: false});
+  await loadBudget();
+}
+
+
+let _bdgtMonthsTargetId = null;
+
+function bdgtForecastMonths() {
+  return (_bdgtData?.cash_flow?.personal?.months || []).map(month => ({
+    key: month.start_date.slice(0, 7),
+    label: month.label
+  }));
+}
+
+async function bdgtOpenMonths(targetId, opener) {
+  const modal = document.getElementById('bdgt-months-modal');
+  if (_finActiveModal && _finActiveModal !== modal) return;
+  const target = (_bdgtData?.budget_vs_actuals || []).find(row => row.id === targetId);
+  if (!target) return;
+  _bdgtMonthsTargetId = targetId;
+  document.getElementById('bdgt-months-help').textContent =
+    `${target.category} is budgeted at ${bdgtMoney(target.target)} a month. Change an amount, or skip a month entirely.`;
+  document.getElementById('bdgt-months-error').style.display = 'none';
+  const rows = document.getElementById('bdgt-months-rows');
+  rows.textContent = 'Loading…';
+  if (!finOpenModal(modal, opener || document.activeElement)) return;
+
+  let saved = {};
+  try {
+    const response = await authFetch(`/api/budget/targets/${targetId}/months`);
+    const payload = await response.json();
+    (payload.months || []).forEach(row => { saved[row.year_month] = row; });
+  } catch (error) {
+    saved = {};
+  }
+
+  rows.replaceChildren();
+  bdgtForecastMonths().forEach(month => {
+    const override = saved[month.key] || {};
+    const row = document.createElement('div');
+    row.style.cssText = 'display:grid;grid-template-columns:1fr 120px auto;gap:10px;align-items:center';
+    row.innerHTML = `
+      <span style="font-size:13px;color:#111827">${escHtml(month.label)}</span>
+      <input class="fin-field bdgt-month-amount" data-month="${escHtml(month.key)}" type="number" min="0" step="0.01"
+        value="${override.amount != null ? override.amount : ''}" placeholder="${escHtml(String(target.target))}">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#6B7280">
+        <input class="bdgt-month-skip" data-month="${escHtml(month.key)}" type="checkbox" ${override.skipped ? 'checked' : ''}> Skip
+      </label>`;
+    rows.appendChild(row);
+  });
+}
+
+function bdgtCloseMonthsModal({restoreFocus = true} = {}) {
+  if (!finCloseModalShell(document.getElementById('bdgt-months-modal'), {restoreFocus})) return;
+  _bdgtMonthsTargetId = null;
+}
+
+async function bdgtSaveMonths() {
+  const targetId = _bdgtMonthsTargetId;
+  if (!targetId) return;
+  const errorEl = document.getElementById('bdgt-months-error');
+  const save = document.getElementById('bdgt-months-save');
+  save.disabled = true;
+  errorEl.style.display = 'none';
+
+  const skips = {};
+  document.querySelectorAll('.bdgt-month-skip').forEach(box => { skips[box.dataset.month] = box.checked; });
+  const months = [];
+  document.querySelectorAll('.bdgt-month-amount').forEach(input => {
+    const key = input.dataset.month;
+    const raw = input.value.trim();
+    if (skips[key]) {
+      months.push({year_month: key, skipped: true});
+    } else if (raw !== '') {
+      months.push({year_month: key, amount: parseFloat(raw)});
+    }
+  });
+
+  try {
+    const response = await authFetch(`/api/budget/targets/${targetId}/months`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({months})
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      errorEl.textContent = payload.error || 'Could not save these months.';
+      errorEl.style.display = 'block';
+      save.disabled = false;
+      return;
+    }
+  } catch (error) {
+    errorEl.textContent = 'Could not save these months. Check the connection and try again.';
+    errorEl.style.display = 'block';
+    save.disabled = false;
+    return;
+  }
+  save.disabled = false;
+  bdgtCloseMonthsModal({restoreFocus: false});
+  await loadBudget();
 }
 
 function bdgtDeleteUpcoming(id) {

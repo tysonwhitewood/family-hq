@@ -9,7 +9,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import openpyxl
-from cashflow import build_forecast, infer_recurring_events
+from cashflow import FORECAST_MONTHS, build_forecast, infer_recurring_events
 
 app = Flask(__name__)
 ROOT = Path(__file__).parent
@@ -367,6 +367,14 @@ def init_db():
                 type TEXT DEFAULT 'personal',
                 created_at TEXT,
                 updated_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS budget_target_overrides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_id INTEGER NOT NULL REFERENCES budget_targets(id) ON DELETE CASCADE,
+                year_month TEXT NOT NULL,
+                amount REAL,
+                skipped INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (target_id, year_month)
             );
             CREATE TABLE IF NOT EXISTS savings_goals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2295,6 +2303,16 @@ def _get_budget_safety_buffer():
     return float(os.environ.get('FAMILY_HQ_SAFETY_BUFFER', '1000'))
 
 
+def _forecast_month_starts(start_date):
+    """First day of each calendar month the forecast covers."""
+    starts = []
+    for offset in range(FORECAST_MONTHS):
+        month_index = start_date.year * 12 + start_date.month - 1 + offset
+        year, zero_based_month = divmod(month_index, 12)
+        starts.append(date(year, zero_based_month + 1, 1))
+    return starts
+
+
 def _budget_target_events(scheduled_events, start_date):
     """Turn monthly budget targets into expected outflows.
 
@@ -2309,29 +2327,42 @@ def _budget_target_events(scheduled_events, start_date):
 
     with get_db() as db:
         targets = db.execute(
-            'SELECT category, monthly_target, type FROM budget_targets'
+            'SELECT id, category, monthly_target, type FROM budget_targets'
         ).fetchall()
+        overrides = {
+            (row['target_id'], row['year_month']): row
+            for row in db.execute(
+                'SELECT target_id, year_month, amount, skipped FROM budget_target_overrides'
+            ).fetchall()
+        }
 
     events = []
     for target in targets:
-        amount = float(target['monthly_target'] or 0)
-        if amount <= 0:
-            continue
         ownership = target['type'] or 'personal'
         category = str(target['category'] or '').strip()
         if (category.lower(), ownership) in covered:
             continue
-        events.append({
-            'description': f'{category} (budgeted)',
-            'amount': amount,
-            'due_date': start_date.isoformat(),
-            'recurring': 'monthly',
-            'category': category,
-            'ownership': ownership,
-            'direction': 'outflow',
-            'source': 'budget_target',
-            'confidence': 'budgeted',
-        })
+        for month_start in _forecast_month_starts(start_date):
+            override = overrides.get((target['id'], month_start.strftime('%Y-%m')))
+            if override is not None and override['skipped']:
+                continue
+            amount = float(
+                target['monthly_target'] if override is None or override['amount'] is None
+                else override['amount']
+            )
+            if amount <= 0:
+                continue
+            events.append({
+                'description': f'{category} (budgeted)',
+                'amount': amount,
+                'due_date': max(month_start, start_date).isoformat(),
+                'recurring': '',
+                'category': category,
+                'ownership': ownership,
+                'direction': 'outflow',
+                'source': 'budget_target',
+                'confidence': 'budgeted',
+            })
     return events
 
 
@@ -2588,6 +2619,69 @@ def api_budget_targets_save():
         else:
             db.execute('INSERT INTO budget_targets (category, monthly_target, type, created_at, updated_at) VALUES (?,?,?,?,?)',
                        (cat, target, btype, now, now))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/budget/targets/<int:tid>/months')
+@login_required
+def api_budget_target_months(tid):
+    """Per-month skips and amount overrides for one budget target."""
+    with get_db() as db:
+        if db.execute('SELECT id FROM budget_targets WHERE id=?', (tid,)).fetchone() is None:
+            return jsonify({'error': 'target not found'}), 404
+        rows = db.execute(
+            'SELECT year_month, amount, skipped FROM budget_target_overrides '
+            'WHERE target_id=? ORDER BY year_month',
+            (tid,),
+        ).fetchall()
+    return jsonify({'months': [
+        {
+            'year_month': row['year_month'],
+            'amount': row['amount'],
+            'skipped': bool(row['skipped']),
+        }
+        for row in rows
+    ]})
+
+
+@app.route('/api/budget/targets/<int:tid>/months', methods=['POST'])
+@login_required
+def api_budget_target_months_save(tid):
+    """Replace the per-month overrides for one budget target."""
+    months = (request.get_json(silent=True) or {}).get('months')
+    if not isinstance(months, list):
+        return jsonify({'error': 'months must be a list'}), 400
+
+    cleaned = []
+    for entry in months:
+        if not isinstance(entry, dict):
+            return jsonify({'error': 'each month must be an object'}), 400
+        year_month = str(entry.get('year_month', '')).strip()
+        if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', year_month):
+            return jsonify({'error': f'invalid year_month: {year_month}'}), 400
+        skipped = bool(entry.get('skipped'))
+        amount = entry.get('amount')
+        if skipped:
+            amount = None
+        elif amount is not None:
+            try:
+                amount = float(amount)
+            except (TypeError, ValueError):
+                return jsonify({'error': f'invalid amount for {year_month}'}), 400
+            if amount < 0:
+                return jsonify({'error': f'amount for {year_month} must not be negative'}), 400
+        cleaned.append((year_month, amount, 1 if skipped else 0))
+
+    with get_db() as db:
+        if db.execute('SELECT id FROM budget_targets WHERE id=?', (tid,)).fetchone() is None:
+            return jsonify({'error': 'target not found'}), 404
+        db.execute('DELETE FROM budget_target_overrides WHERE target_id=?', (tid,))
+        for year_month, amount, skipped in cleaned:
+            db.execute(
+                'INSERT INTO budget_target_overrides (target_id, year_month, amount, skipped) '
+                'VALUES (?,?,?,?)',
+                (tid, year_month, amount, skipped),
+            )
     return jsonify({'ok': True})
 
 
