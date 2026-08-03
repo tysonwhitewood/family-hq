@@ -1334,7 +1334,7 @@ def _trusted_finance_csv_roots() -> list[Path]:
     for directory in (FINANCE_CSV_DIR, DATA_DIR / 'bank_statements'):
         try:
             resolved_directory = directory.resolve(strict=True)
-        except OSError:
+        except (OSError, RuntimeError):
             continue
         if resolved_directory.is_dir() and resolved_directory not in roots:
             roots.append(resolved_directory)
@@ -1346,7 +1346,7 @@ def _finance_csv_search_dirs() -> list[Path]:
     trusted_roots = _trusted_finance_csv_roots()
     try:
         finance_root = FINANCE_CSV_DIR.resolve(strict=True)
-    except OSError:
+    except (OSError, RuntimeError):
         finance_root = None
 
     subdirs = []
@@ -1354,7 +1354,7 @@ def _finance_csv_search_dirs() -> list[Path]:
         for directory in FINANCE_CSV_DIR.glob('*'):
             try:
                 resolved_directory = directory.resolve(strict=True)
-            except OSError:
+            except (OSError, RuntimeError):
                 continue
             if resolved_directory.is_dir() and _is_path_within(
                 resolved_directory, finance_root
@@ -1381,7 +1381,7 @@ def _find_finance_csv(stored_filename: str) -> Path | None:
         candidate = directory / stored_filename
         try:
             resolved_candidate = candidate.resolve(strict=True)
-        except OSError:
+        except (OSError, RuntimeError):
             continue
         if (
             resolved_candidate.is_file()

@@ -614,6 +614,15 @@ class FinanceAccountApiTests(unittest.TestCase):
             imports = db.execute("SELECT COUNT(*) FROM finance_imports").fetchone()[0]
         self.assertEqual(imports, 0)
 
+    def test_account_list_skips_looped_child_directory_symlink(self):
+        loop = family_app.FINANCE_CSV_DIR / "looped-directory"
+        loop.symlink_to(loop.name, target_is_directory=True)
+
+        response = self.client.get("/api/finance/accounts")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"accounts": []})
+
     def test_rejects_non_integer_legacy_link_account_ids_without_creating_a_link(self):
         source = family_app.FINANCE_CSV_DIR / "CBA_29.05.26.csv"
         source.write_bytes(self.supported_csv)
