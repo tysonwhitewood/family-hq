@@ -339,6 +339,26 @@ def init_db():
                 content TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS finance_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                ownership TEXT NOT NULL CHECK (ownership IN ('personal','business')),
+                account_type TEXT NOT NULL CHECK (account_type IN ('cash','credit','loan')),
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS finance_imports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_filename TEXT NOT NULL,
+                stored_filename TEXT NOT NULL UNIQUE,
+                account_id INTEGER NOT NULL REFERENCES finance_accounts(id),
+                parsed_count INTEGER NOT NULL DEFAULT 0,
+                earliest_date TEXT,
+                latest_date TEXT,
+                status TEXT NOT NULL,
+                uploaded_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS budget_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT NOT NULL,
@@ -1507,6 +1527,43 @@ BUSINESS_ACCOUNT_KEYWORDS = ['eden', 'commercial', 'business', 'pty', 'company']
 def _is_business_account(account_name: str) -> bool:
     lower = account_name.lower()
     return any(kw in lower for kw in BUSINESS_ACCOUNT_KEYWORDS)
+
+
+def _legacy_account_defaults(name: str) -> dict:
+    lower = str(name).lower()
+    account_type = (
+        "loan" if any(word in lower for word in ("loan", "mortgage"))
+        else "credit" if "credit card" in lower
+        else "cash"
+    )
+    ownership = "business" if _is_business_account(name) else "personal"
+    return {"ownership": ownership, "account_type": account_type}
+
+
+def _registered_finance_accounts() -> list[dict]:
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT id, name, ownership, account_type, active, created_at, updated_at "
+            "FROM finance_accounts ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _finance_import_map() -> dict[str, dict]:
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT finance_imports.id, finance_imports.original_filename, "
+            "finance_imports.stored_filename, finance_imports.account_id, "
+            "finance_imports.parsed_count, finance_imports.earliest_date, "
+            "finance_imports.latest_date, finance_imports.status, "
+            "finance_imports.uploaded_at, finance_accounts.name AS account_name, "
+            "finance_accounts.ownership, finance_accounts.account_type, "
+            "finance_accounts.active "
+            "FROM finance_imports "
+            "JOIN finance_accounts ON finance_accounts.id = finance_imports.account_id"
+        ).fetchall()
+    return {row["stored_filename"]: dict(row) for row in rows}
+
 
 def _categorise(description: str) -> str:
     desc_l = description.lower()

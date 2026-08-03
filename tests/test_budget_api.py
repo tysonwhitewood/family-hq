@@ -1,6 +1,8 @@
 import unittest
 import warnings
 from datetime import date
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 warnings.filterwarnings(
@@ -49,6 +51,44 @@ class BudgetImportTests(unittest.TestCase):
         self.assertEqual(
             len(family_app._deduplicate_transactions([row, dict(row)])),
             1,
+        )
+
+
+class FinanceRegistryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = TemporaryDirectory()
+        self.original_db_path = family_app.DB_PATH
+        family_app.DB_PATH = Path(self.temp_dir.name) / "family.db"
+        family_app.init_db()
+
+    def tearDown(self):
+        family_app.DB_PATH = self.original_db_path
+        self.temp_dir.cleanup()
+
+    def test_legacy_account_defaults_classify_mortgages_and_business_cash(self):
+        defaults = family_app._legacy_account_defaults("GSB Main Mortgage")
+        self.assertEqual(defaults["ownership"], "personal")
+        self.assertEqual(defaults["account_type"], "loan")
+
+        defaults = family_app._legacy_account_defaults("CBA Eden")
+        self.assertEqual(defaults["ownership"], "business")
+        self.assertEqual(defaults["account_type"], "cash")
+
+    def test_finance_registry_tables_have_required_columns(self):
+        with family_app.get_db() as db:
+            account_columns = {
+                row["name"]
+                for row in db.execute("PRAGMA table_info(finance_accounts)")
+            }
+            import_columns = {
+                row["name"]
+                for row in db.execute("PRAGMA table_info(finance_imports)")
+            }
+
+        self.assertTrue({"name", "ownership", "account_type", "active"} <= account_columns)
+        self.assertTrue(
+            {"stored_filename", "account_id", "parsed_count", "earliest_date", "latest_date", "status"}
+            <= import_columns
         )
 
 
