@@ -92,6 +92,82 @@ class FinanceRegistryTests(unittest.TestCase):
         )
 
 
+class FinanceAccountRuleTests(unittest.TestCase):
+    def setUp(self):
+        family_app.app.config.update(TESTING=True)
+        self.client = family_app.app.test_client()
+        response = self.client.post(
+            "/login",
+            data={
+                "username": family_app.USERNAME,
+                "password": family_app.PASSWORD,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_cash_forecast_excludes_debt_balances_but_keeps_credit_history(self):
+        transactions = [
+            {
+                "account": "ING Everyday", "account_key": "registered:1",
+                "date": "2026-08-03", "amount": 0, "description": "Balance",
+                "balance": 2500, "ownership": "personal", "account_type": "cash",
+            },
+            {
+                "account": "CBA Credit Card", "account_key": "registered:2",
+                "date": "2026-08-03", "amount": -80, "description": "Groceries",
+                "balance": 1200, "ownership": "personal", "account_type": "credit",
+            },
+            {
+                "account": "GSB Mortgage", "account_key": "registered:3",
+                "date": "2026-08-03", "amount": -3700, "description": "Loan debit",
+                "balance": -758770, "ownership": "personal", "account_type": "loan",
+            },
+            {
+                "account": "CBA Eden", "account_key": "registered:4",
+                "date": "2026-08-03", "amount": 0, "description": "Balance",
+                "balance": 9000, "ownership": "business", "account_type": "cash",
+            },
+        ]
+
+        with patch.object(family_app, "infer_recurring_events", return_value=[]) as infer:
+            forecast = family_app._budget_cash_flow(
+                transactions,
+                [],
+                forecast_date=date(2026, 8, 3),
+                safety_buffer=0,
+            )
+
+        self.assertEqual(forecast["personal"]["opening_balance"], 2500)
+        self.assertEqual(forecast["business"]["opening_balance"], 9000)
+        recurrence_transactions = infer.call_args.args[0]
+        self.assertIn(transactions[1], recurrence_transactions)
+        self.assertNotIn(transactions[2], recurrence_transactions)
+
+    @patch.object(family_app, "_parse_csv_files")
+    def test_finance_summary_groups_by_account_key_and_uses_metadata_ownership(self, parse_files):
+        today = date.today().isoformat()
+        parse_files.return_value = [
+            {
+                "account": "CBA Everyday", "account_key": "registered:1",
+                "date": today, "amount": -20, "description": "Woolworths",
+                "balance": 100, "ownership": "business", "account_type": "cash",
+            },
+            {
+                "account": "CBA Everyday", "account_key": "registered:2",
+                "date": today, "amount": -30, "description": "Woolworths",
+                "balance": 200, "ownership": "personal", "account_type": "cash",
+            },
+        ]
+
+        response = self.client.get("/api/finance/summary")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(len(payload["accounts"]), 2)
+        self.assertEqual(payload["category_spend_business"]["Groceries"], 20)
+        self.assertEqual(payload["category_spend_personal"]["Groceries"], 30)
+
+
 class BudgetApiTests(unittest.TestCase):
     def setUp(self):
         warnings.filterwarnings(

@@ -1516,17 +1516,31 @@ def api_finance_upload_csv():
 def api_finance_summary():
     from collections import defaultdict
     transactions = _parse_csv_files()
-    accounts = defaultdict(lambda: {'count': 0, 'balance': None, 'last_date': None, 'is_credit': False})
+    accounts = defaultdict(lambda: {
+        'name': '',
+        'account_key': '',
+        'count': 0,
+        'balance': None,
+        'last_date': None,
+        'is_credit': False,
+        'ownership': 'personal',
+        'account_type': 'cash',
+    })
     for t in transactions:
-        acc = t['account']
-        accounts[acc]['count'] += 1
-        is_cc = 'credit' in acc.lower()
-        accounts[acc]['is_credit'] = is_cc
-        if accounts[acc]['balance'] is None and t['balance']:
+        account_key = t.get('account_key') or f"legacy:{str(t.get('account', '')).strip().lower()}"
+        account = accounts[account_key]
+        account['name'] = t.get('account', '')
+        account['account_key'] = account_key
+        account['count'] += 1
+        account_type = t.get('account_type', 'cash')
+        account['is_credit'] = account_type == 'credit'
+        account['ownership'] = t.get('ownership', 'personal')
+        account['account_type'] = account_type
+        if account['balance'] is None and t['balance']:
             # Credit card: positive balance = debt, show as negative
-            accounts[acc]['balance'] = -abs(t['balance']) if is_cc else t['balance']
-        if accounts[acc]['last_date'] is None:
-            accounts[acc]['last_date'] = t['date']
+            account['balance'] = -abs(t['balance']) if account['is_credit'] else t['balance']
+        if account['last_date'] is None:
+            account['last_date'] = t['date']
 
     # Category spending (last 90 days, expenses only) — split business vs personal
     from datetime import timedelta
@@ -1541,7 +1555,7 @@ def api_finance_summary():
             continue
         cat = _categorise(t['description'])
         month = t['date'][:7]
-        is_biz = _is_business_account(t['account'])
+        is_biz = t.get('ownership', 'personal') == 'business'
         if t['amount'] < 0 and cat not in SKIP_CATS:
             if is_biz:
                 cat_spend_business[cat] += abs(t['amount'])
@@ -1557,7 +1571,7 @@ def api_finance_summary():
         recent.append({**t, 'category': _categorise(t['description'])})
 
     return jsonify({
-        'accounts': [{'name': k, **v} for k, v in accounts.items()],
+        'accounts': list(accounts.values()),
         'total_transactions': len(transactions),
         'recent': recent,
         'category_spend_business': dict(sorted(cat_spend_business.items(), key=lambda x: -x[1])),
@@ -1829,11 +1843,17 @@ def _budget_cash_flow(
     start_date = forecast_date or datetime.now(
         ZoneInfo('Australia/Brisbane')
     ).date()
+    cash_transactions = [
+        row for row in transactions if row.get('account_type', 'cash') == 'cash'
+    ]
+    recurrence_transactions = [
+        row for row in transactions
+        if row.get('account_type', 'cash') in {'cash', 'credit'}
+        and _categorise(row.get('description', '')) != 'Transfers'
+    ]
     ownership = {
-        transaction['account']: (
-            'business' if _is_business_account(transaction['account']) else 'personal'
-        )
-        for transaction in transactions
+        row['account']: row.get('ownership', 'personal')
+        for row in transactions
     }
     scheduled_events = []
     for row in upcoming:
@@ -1858,11 +1878,7 @@ def _budget_cash_flow(
             'confidence': 'confirmed',
         })
     recurring_history = infer_recurring_events(
-        [
-            transaction
-            for transaction in transactions
-            if _categorise(transaction.get('description', '')) != 'Transfers'
-        ],
+        recurrence_transactions,
         ownership,
         start_date,
     )
@@ -1879,7 +1895,7 @@ def _budget_cash_flow(
     if safety_buffer is None:
         safety_buffer = _get_budget_safety_buffer()
     return build_forecast(
-        transactions,
+        cash_transactions,
         scheduled_events,
         ownership,
         start_date,
