@@ -414,10 +414,42 @@ body {
 .bdgt-fc-val.save { font-size: 14px; font-weight: 700; }
 .bdgt-fc-val.save.pos { color: #16a34a; }
 .bdgt-fc-val.save.neg { color: #DC2626; }
+.bdgt-cf-shell { padding: 16px 20px 20px; }
+.bdgt-cf-summary { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.bdgt-cf-stat { background: #F8FAF9; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px; }
+.bdgt-cf-stat .label { color: #6B7280; font-size: 10px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
+.bdgt-cf-stat .value { color: #111827; font-size: 18px; font-weight: 700; margin-top: 5px; }
+.bdgt-cf-stat .value.good { color: #15803D; }
+.bdgt-cf-stat .value.bad { color: #DC2626; }
+.bdgt-cycle { border: 1px solid #E5E7EB; border-radius: 10px; margin-top: 8px; overflow: hidden; }
+.bdgt-cycle summary { cursor: pointer; display: flex; gap: 12px; align-items: center; padding: 12px 14px; background: #FAFAFA; list-style: none; }
+.bdgt-cycle summary::-webkit-details-marker { display: none; }
+.bdgt-cycle summary::before { content: '▸'; color: #6B7280; font-size: 12px; }
+.bdgt-cycle[open] summary::before { content: '▾'; }
+.bdgt-cycle-title { min-width: 135px; color: #111827; font-size: 13px; font-weight: 700; }
+.bdgt-cycle-dates { color: #6B7280; font-size: 11px; }
+.bdgt-cycle-balance { margin-left: auto; font-size: 13px; font-weight: 700; }
+.bdgt-cycle-body { padding: 12px 14px; }
+.bdgt-cycle-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.bdgt-cycle-metric { border-radius: 8px; background: #F9FAFB; padding: 9px; font-size: 11px; color: #6B7280; }
+.bdgt-cycle-metric strong { display: block; margin-top: 3px; color: #111827; font-size: 13px; }
+.bdgt-event { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid #F3F4F6; align-items: center; font-size: 12px; }
+.bdgt-event-date { min-width: 74px; color: #6B7280; }
+.bdgt-event-name { flex: 1; color: #111827; font-weight: 600; }
+.bdgt-event-meta { color: #9CA3AF; font-size: 10px; font-weight: 400; }
+.bdgt-event-amount { font-weight: 700; }
+.bdgt-cf-warning { background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; color: #991B1B; font-size: 12px; margin-bottom: 8px; padding: 10px 12px; }
+.bdgt-collapsible-header { cursor: pointer; list-style: none; padding: 16px 20px; display: flex; align-items: center; gap: 8px; }
+.bdgt-collapsible-header::-webkit-details-marker { display: none; }
+.bdgt-collapsible-header::before { content: '▸'; color: #6B7280; }
+details[open] > .bdgt-collapsible-header::before { content: '▾'; }
 @media (max-width: 600px) {
   .bdgt-table { font-size: 12px; }
   .bdgt-table th, .bdgt-table td { padding: 6px 4px; }
   .bdgt-forecast-grid { grid-template-columns: 1fr; gap: 10px; }
+  .bdgt-cf-summary { grid-template-columns: 1fr 1fr; }
+  .bdgt-cycle-metrics { grid-template-columns: 1fr; }
+  .bdgt-cycle-dates { display: none; }
 }
 </style>
 </head>
@@ -941,14 +973,30 @@ body {
       <div id="bdgt-personal-table" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
     </div>
 
-    <!-- 3-Month Forecast (personal ING only) -->
-    <div class="card">
+    <!-- Six-month forecast — personal first, business separate -->
+    <div class="card" id="bdgt-personal-cashflow">
       <div class="card-header">
-        <div class="card-title">3-Month Cash Flow Forecast</div>
-        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">ING personal account</span>
+        <div class="card-title">Personal Cash Flow — Six Months</div>
+        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">Four-week planning cycles</span>
       </div>
-      <div id="bdgt-forecast-container" style="padding:16px"><div class="empty-state">Loading…</div></div>
+      <div id="bdgt-personal-cashflow-body"><div class="empty-state">Loading…</div></div>
     </div>
+
+    <details class="card" id="bdgt-business-cashflow">
+      <summary class="bdgt-collapsible-header">
+        <span class="card-title">Eden Commercial Cash Flow</span>
+        <span style="font-size:11px;color:#9CA3AF">Kept separate from personal funds</span>
+      </summary>
+      <div id="bdgt-business-cashflow-body"><div class="empty-state">Loading…</div></div>
+    </details>
+
+    <details class="card" id="bdgt-combined-cashflow">
+      <summary class="bdgt-collapsible-header">
+        <span class="card-title">Combined Position</span>
+        <span style="font-size:11px;color:#9CA3AF">Information only — business cash is not personal spending money</span>
+      </summary>
+      <div id="bdgt-combined-cashflow-body"><div class="empty-state">Loading…</div></div>
+    </details>
 
     <!-- Budget vs Actuals — Business -->
     <div class="card">
@@ -2467,7 +2515,7 @@ async function loadBudget() {
     bdgtRenderActuals(d);
     bdgtRenderGoals(d);
     bdgtRenderUpcoming(d);
-    bdgtRenderForecast(d);
+    renderCashFlow(d.cash_flow);
   } catch (e) {
     console.error('Budget load error:', e);
   }
@@ -2707,45 +2755,101 @@ function bdgtDeleteUpcoming(id) {
   authFetch('/api/budget/upcoming/' + id, { method: 'DELETE' }).then(() => loadBudget());
 }
 
-// ── 3-Month Forecast ──
+// ── Six-Month Cash Flow ──
 
-function bdgtRenderForecast(d) {
-  const container = document.getElementById('bdgt-forecast-container');
-  if (!d.forecast || !d.forecast.length) {
-    container.innerHTML = '<div style="color:#9CA3AF;font-size:13px">Not enough data for forecast.</div>';
+function bdgtMoney(value) {
+  const amount = Number(value || 0);
+  const sign = amount < 0 ? '−' : '';
+  return sign + '$' + Math.abs(amount).toLocaleString('en-AU', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  });
+}
+
+function bdgtShortDate(value) {
+  const parsed = new Date(value + 'T00:00:00');
+  return parsed.toLocaleDateString('en-AU', {day:'numeric', month:'short'});
+}
+
+function bdgtCycleEvents(cycle) {
+  const rows = [];
+  (cycle.days || []).forEach(day => {
+    (day.events || []).forEach(event => rows.push({date: day.date, ...event}));
+  });
+  if (!rows.length) {
+    return '<div style="color:#9CA3AF;font-size:12px;margin-top:10px">No confirmed cash events in this cycle.</div>';
+  }
+  return rows.map(event => {
+    const inflow = event.direction === 'inflow';
+    const colour = inflow ? '#15803D' : '#DC2626';
+    const sign = inflow ? '+' : '−';
+    return `<div class="bdgt-event">
+      <span class="bdgt-event-date">${bdgtShortDate(event.date)}</span>
+      <span class="bdgt-event-name">${escHtml(event.description || 'Cash event')}
+        <span class="bdgt-event-meta">${escHtml(event.confidence || '')} · ${escHtml(event.source || '')}</span>
+      </span>
+      <span class="bdgt-event-amount" style="color:${colour}">${sign}${bdgtMoney(event.amount)}</span>
+    </div>`;
+  }).join('');
+}
+
+function bdgtRenderCashSection(section, options={}) {
+  if (!section || !section.cycles) {
+    return '<div class="empty-state">Cash-flow data is not available yet.</div>';
+  }
+  const safeStat = options.personal
+    ? `<div class="bdgt-cf-stat"><div class="label">Safe to spend now</div><div class="value good">${bdgtMoney(section.safe_to_spend)}</div></div>`
+    : `<div class="bdgt-cf-stat"><div class="label">Closing balance</div><div class="value">${bdgtMoney(section.closing_balance)}</div></div>`;
+  const warnings = (section.warnings || []).map(warning =>
+    `<div class="bdgt-cf-warning">⚠ Projected balance ${bdgtMoney(warning.projected_balance)}
+      on ${bdgtShortDate(warning.date)}. Add or defer ${bdgtMoney(warning.amount_required)} to stay above the protected level.</div>`
+  ).join('');
+  const cycles = section.cycles.map((cycle, index) => {
+    const cycleBad = cycle.lowest_balance < 0;
+    const open = options.personal && index === 0 ? ' open' : '';
+    const range = `${bdgtShortDate(cycle.start_date)} – ${bdgtShortDate(cycle.end_date)}`;
+    return `<details class="bdgt-cycle"${open}>
+      <summary>
+        <span class="bdgt-cycle-title">${escHtml(cycle.label)}</span>
+        <span class="bdgt-cycle-dates">${range}</span>
+        <span class="bdgt-cycle-balance" style="color:${cycleBad ? '#DC2626' : '#1B4332'}">${bdgtMoney(cycle.closing_balance)}</span>
+      </summary>
+      <div class="bdgt-cycle-body">
+        <div class="bdgt-cycle-metrics">
+          <div class="bdgt-cycle-metric">Money in<strong style="color:#15803D">${bdgtMoney(cycle.inflows)}</strong></div>
+          <div class="bdgt-cycle-metric">Money out<strong style="color:#DC2626">${bdgtMoney(cycle.outflows)}</strong></div>
+          <div class="bdgt-cycle-metric">Lowest balance<strong style="color:${cycleBad ? '#DC2626' : '#111827'}">${bdgtMoney(cycle.lowest_balance)}</strong></div>
+        </div>
+        ${bdgtCycleEvents(cycle)}
+      </div>
+    </details>`;
+  }).join('');
+  return `<div class="bdgt-cf-shell">
+    <div class="bdgt-cf-summary">
+      <div class="bdgt-cf-stat"><div class="label">Available now</div><div class="value">${bdgtMoney(section.opening_balance)}</div></div>
+      ${safeStat}
+      <div class="bdgt-cf-stat"><div class="label">Lowest balance</div><div class="value ${section.lowest_balance < 0 ? 'bad' : ''}">${bdgtMoney(section.lowest_balance)}</div></div>
+      <div class="bdgt-cf-stat"><div class="label">Lowest date</div><div class="value">${bdgtShortDate(section.lowest_balance_date)}</div></div>
+    </div>
+    ${warnings}
+    ${cycles}
+  </div>`;
+}
+
+function renderCashFlow(cashFlow) {
+  const personal = document.getElementById('bdgt-personal-cashflow-body');
+  const business = document.getElementById('bdgt-business-cashflow-body');
+  const combined = document.getElementById('bdgt-combined-cashflow-body');
+  if (!cashFlow) {
+    const empty = '<div class="empty-state">Upload current statements to create the six-month forecast.</div>';
+    personal.innerHTML = empty;
+    business.innerHTML = empty;
+    combined.innerHTML = empty;
     return;
   }
-  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-  let html = '<div class="bdgt-forecast-grid">';
-  d.forecast.forEach(f => {
-    const mIdx = parseInt(f.month.slice(5)) - 1;
-    const mName = monthNames[mIdx];
-    const yr = f.month.slice(0,4);
-    const isPos = f.net >= 0;
-    const cardCls = isPos ? 'positive' : 'negative';
-    const savingsSign = isPos ? '+' : '';
-    const saveCls = isPos ? 'pos' : 'neg';
-    html += `<div class="bdgt-forecast-card ${cardCls}">
-      <div class="bdgt-fc-month">${mName}<span class="bdgt-fc-year">${yr}</span></div>
-      <div class="bdgt-fc-row">
-        <span class="bdgt-fc-label">💰 Income</span>
-        <span class="bdgt-fc-val in">${fmt(f.income)}</span>
-      </div>
-      <div class="bdgt-fc-row">
-        <span class="bdgt-fc-label">💸 Expenses</span>
-        <span class="bdgt-fc-val out">${fmt(f.expenses)}</span>
-      </div>
-      <div class="bdgt-fc-row">
-        <span class="bdgt-fc-label">${isPos ? '📈' : '📉'} Savings</span>
-        <span class="bdgt-fc-val save ${saveCls}">${savingsSign}${fmt(f.net)}</span>
-      </div>
-    </div>`;
-  });
-  html += '</div>';
-  html += '<div style="font-size:11px;color:#9CA3AF;margin-top:8px;text-align:center">Based on last 3 months · Known upcoming expenses factored in</div>';
-  container.innerHTML = html;
+  personal.innerHTML = bdgtRenderCashSection(cashFlow.personal, {personal:true});
+  business.innerHTML = bdgtRenderCashSection(cashFlow.business);
+  combined.innerHTML = bdgtRenderCashSection(cashFlow.combined);
 }
 
 </script>
