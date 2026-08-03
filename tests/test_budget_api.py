@@ -592,6 +592,28 @@ class FinanceAccountApiTests(unittest.TestCase):
             imports = db.execute("SELECT COUNT(*) FROM finance_imports").fetchone()[0]
         self.assertEqual(imports, 0)
 
+    def test_rejects_legacy_csv_in_symlinked_child_directory_that_escapes(self):
+        created = self._create_account("Child directory symlink target")
+        account_id = created.get_json()["account"]["id"]
+        outside_dir = family_app.DATA_DIR / "outside-statements"
+        outside_dir.mkdir()
+        linked_filename = "CBA_29.05.26.csv"
+        (outside_dir / linked_filename).write_bytes(self.supported_csv)
+        (family_app.FINANCE_CSV_DIR / "2026-08-03").symlink_to(
+            outside_dir,
+            target_is_directory=True,
+        )
+
+        response = self.client.post(
+            "/api/finance/accounts/link-legacy",
+            json={"stored_filename": linked_filename, "account_id": account_id},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        with family_app.get_db() as db:
+            imports = db.execute("SELECT COUNT(*) FROM finance_imports").fetchone()[0]
+        self.assertEqual(imports, 0)
+
     def test_rejects_non_integer_legacy_link_account_ids_without_creating_a_link(self):
         source = family_app.FINANCE_CSV_DIR / "CBA_29.05.26.csv"
         source.write_bytes(self.supported_csv)

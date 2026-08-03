@@ -1320,19 +1320,50 @@ def _folder_sort_key(p):
     return name
 
 
+def _is_path_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _trusted_finance_csv_roots() -> list[Path]:
+    """Resolve the configured statement roots before accepting descendant paths."""
+    roots = []
+    for directory in (FINANCE_CSV_DIR, DATA_DIR / 'bank_statements'):
+        try:
+            resolved_directory = directory.resolve(strict=True)
+        except OSError:
+            continue
+        if resolved_directory.is_dir() and resolved_directory not in roots:
+            roots.append(resolved_directory)
+    return roots
+
+
 def _finance_csv_search_dirs() -> list[Path]:
-    """Return the statement directories in the same precedence as the importer."""
-    subdirs = sorted(
-        [directory for directory in FINANCE_CSV_DIR.glob('*') if directory.is_dir()],
-        key=_folder_sort_key,
-        reverse=True,
-    )
-    search_dirs = subdirs[:3]
-    if FINANCE_CSV_DIR.exists():
-        search_dirs.append(FINANCE_CSV_DIR)
-    upload_dir = DATA_DIR / 'bank_statements'
-    if upload_dir.exists() and upload_dir not in search_dirs:
-        search_dirs.append(upload_dir)
+    """Return only statement directories contained by stable trusted roots."""
+    trusted_roots = _trusted_finance_csv_roots()
+    try:
+        finance_root = FINANCE_CSV_DIR.resolve(strict=True)
+    except OSError:
+        finance_root = None
+
+    subdirs = []
+    if finance_root is not None:
+        for directory in FINANCE_CSV_DIR.glob('*'):
+            try:
+                resolved_directory = directory.resolve(strict=True)
+            except OSError:
+                continue
+            if resolved_directory.is_dir() and _is_path_within(
+                resolved_directory, finance_root
+            ):
+                subdirs.append(resolved_directory)
+    search_dirs = sorted(subdirs, key=_folder_sort_key, reverse=True)[:3]
+    for root in trusted_roots:
+        if root not in search_dirs:
+            search_dirs.append(root)
     return search_dirs
 
 
@@ -1345,16 +1376,21 @@ def _find_finance_csv(stored_filename: str) -> Path | None:
         or filename.suffix.lower() != '.csv'
     ):
         return None
+    trusted_roots = _trusted_finance_csv_roots()
     for directory in _finance_csv_search_dirs():
         candidate = directory / stored_filename
         try:
-            resolved_directory = directory.resolve(strict=True)
             resolved_candidate = candidate.resolve(strict=True)
-            resolved_candidate.relative_to(resolved_directory)
-        except (OSError, ValueError):
+        except OSError:
             continue
-        if resolved_candidate.is_file():
-            return candidate
+        if (
+            resolved_candidate.is_file()
+            and any(
+                _is_path_within(resolved_candidate, root)
+                for root in trusted_roots
+            )
+        ):
+            return resolved_candidate
     return None
 
 
