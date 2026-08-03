@@ -2564,7 +2564,7 @@ function finOpenModal(modal, opener) {
   return true;
 }
 
-function finCloseModalShell(modal) {
+function finCloseModalShell(modal, {restoreFocus = true} = {}) {
   if (_finActiveModal !== modal) return false;
   modal.style.display = 'none';
   document.removeEventListener('keydown', finHandleModalKeydown, true);
@@ -2572,7 +2572,7 @@ function finCloseModalShell(modal) {
   const opener = _finModalOpener;
   _finActiveModal = null;
   _finModalOpener = null;
-  if (opener?.isConnected) opener.focus();
+  if (restoreFocus && opener?.isConnected) opener.focus();
   return true;
 }
 
@@ -2977,10 +2977,23 @@ function finEditAccount(accountKey) {
   }, 0);
 }
 
-function finCloseAccountModal({abortActive = true} = {}) {
+function finCloseAccountModal({abortActive = true, restoreFocus = true} = {}) {
   if (abortActive) finAbortClassificationSave();
-  if (!finCloseModalShell(document.getElementById('fin-account-modal'))) return;
+  if (!finCloseModalShell(
+    document.getElementById('fin-account-modal'),
+    {restoreFocus}
+  )) return;
   _finEditingAccount = null;
+}
+
+function finRestoreClassificationFocus(accountKey) {
+  if (_finActiveModal) return;
+  const matchingButton = Array.from(
+    document.querySelectorAll('#fin-accounts-body [data-account-key]')
+  ).find(button => button.dataset.accountKey === accountKey);
+  const fallback = document.getElementById('fin-upload-open');
+  const focusTarget = matchingButton || fallback;
+  if (focusTarget?.isConnected) focusTarget.focus();
 }
 
 async function finSaveAccountClassification() {
@@ -3015,10 +3028,12 @@ async function finSaveAccountClassification() {
     _finClassificationController = null;
     return true;
   };
+  let focusAccountKey = _finAccountKey(account);
   try {
     if (account.id == null) {
       const accountId = Number(document.getElementById('fin-account-link-target').value);
       if (!accountId) throw new Error('Choose a registered account.');
+      focusAccountKey = 'registered:' + accountId;
       const filenames = account.source_filenames || [];
       if (!filenames.length) throw new Error('No statement file is available to link.');
       for (const storedFilename of filenames) {
@@ -3050,8 +3065,10 @@ async function finSaveAccountClassification() {
       if (!response.ok) throw new Error(payload.error || 'Could not update the account.');
     }
     if (!finishCurrentRequest()) return;
-    finCloseAccountModal({abortActive:false});
+    finCloseAccountModal({abortActive:false, restoreFocus:false});
     await Promise.all([loadFinance(), loadBudget()]);
+    if (requestToken !== _finClassificationRequestToken || _finActiveModal) return;
+    finRestoreClassificationFocus(focusAccountKey);
   } catch (error) {
     if (!finishCurrentRequest()) return;
     errorEl.textContent = timedOut
