@@ -8,6 +8,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import openpyxl
+from cashflow import build_forecast
 
 app = Flask(__name__)
 ROOT = Path(__file__).parent
@@ -1316,6 +1317,30 @@ def _folder_sort_key(p):
     return name
 
 
+def _deduplicate_transactions(transactions):
+    """Remove repeated CSV snapshot rows without merging different accounts."""
+    seen = set()
+    deduplicated = []
+    for transaction in transactions:
+        description = re.sub(
+            r'\s+',
+            ' ',
+            str(transaction.get('description', '')).strip().lower(),
+        )
+        key = (
+            str(transaction.get('account', '')).strip().lower(),
+            transaction.get('date'),
+            round(float(transaction.get('amount', 0) or 0), 2),
+            description,
+            transaction.get('balance'),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(transaction)
+    return deduplicated
+
+
 def _parse_csv_files():
     """Parse all bank CSV files from the synced family-wealth folder. Returns list of transactions."""
     import csv, glob
@@ -1381,15 +1406,7 @@ def _parse_csv_files():
             except Exception:
                 continue
     transactions.sort(key=lambda x: x['date'], reverse=True)
-    # Deduplicate: same date + description + amount across different file snapshots
-    seen_txns = set()
-    deduped = []
-    for t in transactions:
-        key = (t['date'], t['description'][:60], t['amount'])
-        if key not in seen_txns:
-            seen_txns.add(key)
-            deduped.append(t)
-    return deduped
+    return _deduplicate_transactions(transactions)
 
 
 def _finance_context_summary(transactions, max_txns=80):
@@ -1789,6 +1806,48 @@ def _bdgt_detect_recurring(transactions):
     return recurring[:20]
 
 
+def _budget_cash_flow(transactions, upcoming, forecast_date=None):
+    """Build the deterministic six-month personal and business forecast."""
+    from zoneinfo import ZoneInfo
+
+    start_date = forecast_date or datetime.now(
+        ZoneInfo('Australia/Brisbane')
+    ).date()
+    ownership = {
+        transaction['account']: (
+            'business' if _is_business_account(transaction['account']) else 'personal'
+        )
+        for transaction in transactions
+    }
+    scheduled_events = []
+    for row in upcoming:
+        event = dict(row)
+        raw_recurring = event.get('recurring', 0)
+        scheduled_events.append({
+            'description': event.get('description', 'Upcoming expense'),
+            'amount': event.get('amount', 0),
+            'due_date': event.get('due_date', ''),
+            'recurring': 'monthly' if raw_recurring else '',
+            'category': event.get('category', ''),
+            'ownership': (
+                'business'
+                if str(event.get('category', '')).lower() == 'business'
+                else 'personal'
+            ),
+            'direction': 'outflow',
+            'source': 'upcoming_expense',
+            'confidence': 'confirmed',
+        })
+    safety_buffer = float(os.environ.get('FAMILY_HQ_SAFETY_BUFFER', '1000'))
+    return build_forecast(
+        transactions,
+        scheduled_events,
+        ownership,
+        start_date,
+        safety_buffer,
+    )
+
+
 @app.route('/api/budget/summary')
 @login_required
 def api_budget_summary():
@@ -1879,6 +1938,7 @@ def api_budget_summary():
 
     # ── Recurring detection ──
     recurring = _bdgt_detect_recurring(transactions)
+    cash_flow = _budget_cash_flow(transactions, upcoming)
 
     return jsonify({
         'current_month': current_month,
@@ -1890,7 +1950,26 @@ def api_budget_summary():
         'upcoming_expenses': [dict(u) for u in upcoming],
         'recurring_detected': recurring,
         'forecast': forecast,
+        'cash_flow': cash_flow,
     })
+
+
+@app.route('/api/budget/forecast')
+@login_required
+def api_budget_forecast():
+    transactions = _parse_csv_files()
+    with get_db() as db:
+        upcoming = db.execute(
+            "SELECT * FROM upcoming_expenses WHERE status='pending' ORDER BY due_date"
+        ).fetchall()
+    requested_start = request.args.get('start', '').strip()
+    forecast_date = None
+    if requested_start:
+        try:
+            forecast_date = date.fromisoformat(requested_start)
+        except ValueError:
+            return jsonify({'error': 'start must be an ISO date'}), 400
+    return jsonify(_budget_cash_flow(transactions, upcoming, forecast_date))
 
 
 @app.route('/api/budget/targets', methods=['POST'])
