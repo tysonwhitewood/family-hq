@@ -4,3 +4,4 @@ data/family.db
 data/tokens/
 .env
 *.log
+.worktrees/
