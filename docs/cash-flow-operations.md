@@ -12,12 +12,36 @@ Export at least the previous three months from every account used by the family 
 
 1. Open **Finance** in Family HQ.
 2. Select **Upload CSV**.
-3. Upload each bank's unedited CSV export.
-4. Use filenames that clearly identify the account. Include `Eden`, `Commercial`, `Business`, `Pty` or `Company` in Eden Commercial filenames.
-5. Confirm the account balances and latest transaction dates shown after upload.
-6. Open **Budget** and review the Personal, Eden Commercial and Combined cards.
+3. Select the bank's unedited CSV export.
+4. In **Account**, choose **Create a new account**.
+5. Enter a clear, stable account name such as `Personal everyday` or `Eden Commercial operating`.
+6. Choose **Personal** for a family account or **Business** for an Eden Commercial account.
+7. Choose the account type:
+   - **Cash** for transaction, savings and offset accounts whose positive balance is available cash;
+   - **Credit card** for a credit-card statement; or
+   - **Loan** for a mortgage or other loan account.
+8. Select **Upload statement**.
+9. Watch the percentage bar while the file uploads. At 100%, **Processing transactions…** means Family HQ is parsing and validating the statement.
+10. Wait for the green confirmation showing the number of transactions loaded and the latest transaction date. This receipt remains visible under **Recent Transactions**.
+11. Confirm the account's ownership, type, balance and latest transaction date under **Accounts**.
 
 Currently supported inputs include the existing ING, CBA-style and Great Southern Bank formats. An unsupported row is not suitable for forecasting until its parser is added.
+
+Credit cards and loans are recorded for history but are not available cash. Credit-card activity can inform recurring spending; loan activity does not. If an offset account is genuinely available cash, classify the offset as **Cash**, not **Loan**.
+
+Give every statement a filename unique to its account. A statement filename is its identity: uploading a file whose name matches a statement already held replaces that statement and moves it, and its transactions, to whichever account is chosen on the second upload. No warning is shown. Date-stamped exports such as `CBA_29.05.26.csv` are safe because each name occurs once. A bank that exports the same default name every time, such as `Transactions.csv`, is not. Rename those to include the account and statement date before uploading, for example `Personal everyday 29.05.26.csv`.
+
+## Review existing statement classifications
+
+Before relying on any forecast, review every existing statement shown under **Accounts**. In particular, check `CBA_29.05.26`, every ING statement and every Great Southern statement:
+
+1. Select **Edit classification** on each account or unclassified statement.
+2. For a registered account, correct its name, **Personal** or **Business** ownership, and **Cash**, **Credit card** or **Loan** type, then select **Save classification**.
+3. For an unclassified statement, choose the registered account it belongs to and select **Save classification**. Create that account through an initial CSV upload first if it does not yet exist.
+4. Confirm all snapshots from the same real bank account are linked to the same registered account.
+5. Recheck the Personal, Eden Commercial and Combined cards in **Budget**.
+
+Do not rely on the forecast while any legacy account classification remains unreviewed. A wrong ownership can move money between Personal and Eden Commercial, while a loan or credit account wrongly marked as cash can overstate available cash.
 
 ## Camps, birthdays and other planned cash events
 
@@ -55,14 +79,16 @@ The seventh cycle is intentionally shorter. A rolling six-calendar-month window 
 
 Update the forecast once a week:
 
-1. Export a current CSV from each account.
-2. Upload the files through Finance.
-3. Check the latest balances and dates.
-4. Add or revise upcoming events.
-5. Review the lowest personal balance and warnings.
-6. Expand Eden Commercial if a business receipt or commitment changed.
+1. Export a current CSV from each account. Check each week's filenames differ from the statements already held, renaming them to include the account and statement date if the bank reuses one default name.
+2. In **Finance**, select **Upload CSV** and choose the new statement.
+3. In **Account**, select the existing registered account for that bank account. Do not create a new account for each weekly snapshot.
+4. Select **Upload statement**, watch the percentage and processing states, then wait for the green parsed-count and latest-date confirmation.
+5. Check the account's latest balance and date.
+6. Add or revise upcoming events.
+7. Review the lowest personal balance and warnings.
+8. Expand Eden Commercial if a business receipt or commitment changed.
 
-Repeated snapshots are deduplicated per account. Identical transactions in different accounts remain separate.
+Overlapping snapshots selected against the same registered account are deduplicated, so the account's latest balance is counted once. Identical transactions in different accounts remain separate.
 
 ## Backup and restore
 
