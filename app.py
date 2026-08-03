@@ -1306,6 +1306,8 @@ _FINANCE_CSV_CANDIDATES = [
     Path('/home/claude/family-wealth/2. Financial Capital/Banking & Cash Flow'),  # dev/host
 ]
 FINANCE_CSV_DIR = next((p for p in _FINANCE_CSV_CANDIDATES if p.exists()), _FINANCE_CSV_CANDIDATES[1])
+FINANCE_ACCOUNT_OWNERSHIPS = {'personal', 'business'}
+FINANCE_ACCOUNT_TYPES = {'cash', 'credit', 'loan'}
 
 def _folder_sort_key(p):
     """Sort dated subfolders chronologically. Supports dd.mm.yyyy and yyyy-mm-dd; falls back to name."""
@@ -1316,6 +1318,38 @@ def _folder_sort_key(p):
         except ValueError:
             continue
     return name
+
+
+def _finance_csv_search_dirs() -> list[Path]:
+    """Return the statement directories in the same precedence as the importer."""
+    subdirs = sorted(
+        [directory for directory in FINANCE_CSV_DIR.glob('*') if directory.is_dir()],
+        key=_folder_sort_key,
+        reverse=True,
+    )
+    search_dirs = subdirs[:3]
+    if FINANCE_CSV_DIR.exists():
+        search_dirs.append(FINANCE_CSV_DIR)
+    upload_dir = DATA_DIR / 'bank_statements'
+    if upload_dir.exists() and upload_dir not in search_dirs:
+        search_dirs.append(upload_dir)
+    return search_dirs
+
+
+def _find_finance_csv(stored_filename: str) -> Path | None:
+    """Find an exact statement filename without allowing a caller-selected path."""
+    filename = Path(stored_filename)
+    if (
+        not stored_filename
+        or filename.name != stored_filename
+        or filename.suffix.lower() != '.csv'
+    ):
+        return None
+    for directory in _finance_csv_search_dirs():
+        candidate = directory / stored_filename
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _deduplicate_transactions(transactions):
@@ -1339,18 +1373,8 @@ def _parse_csv_files():
 
     transactions = []
     import_map = _finance_import_map()
-    # Find the most recent dated subfolders (chronologically — not lexically)
-    subdirs = sorted([d for d in FINANCE_CSV_DIR.glob('*') if d.is_dir()],
-                     key=_folder_sort_key, reverse=True)
-    search_dirs = subdirs[:3] if subdirs else []  # check three most recent folders
-    if FINANCE_CSV_DIR.exists():
-        search_dirs.append(FINANCE_CSV_DIR)  # also check root
-    upload_dir = DATA_DIR / 'bank_statements'
-    if upload_dir.exists() and upload_dir not in search_dirs:
-        search_dirs.append(upload_dir)
-
     seen_files = set()
-    for folder in search_dirs:
+    for folder in _finance_csv_search_dirs():
         for csv_path in sorted(folder.glob('*.csv')):
             if csv_path.name in seen_files:
                 continue
@@ -1491,6 +1515,80 @@ def _finance_import_map() -> dict[str, dict]:
     return {row["stored_filename"]: dict(row) for row in rows}
 
 
+def _finance_account_list() -> list[dict]:
+    """Return registered accounts plus discovered CSVs that have not yet been linked."""
+    import_map = _finance_import_map()
+    source_filenames_by_account: dict[int, list[str]] = {}
+    for import_metadata in import_map.values():
+        source_filenames_by_account.setdefault(import_metadata['account_id'], []).append(
+            import_metadata['stored_filename']
+        )
+
+    accounts = [
+        {
+            **account,
+            'source_filenames': sorted(
+                source_filenames_by_account.get(account['id'], []), key=str.lower
+            ),
+            'legacy': False,
+        }
+        for account in _registered_finance_accounts()
+    ]
+    legacy_files_by_name: dict[str, list[str]] = {}
+    seen_files = set()
+    for folder in _finance_csv_search_dirs():
+        for csv_path in sorted(folder.glob('*.csv')):
+            if csv_path.name in seen_files:
+                continue
+            seen_files.add(csv_path.name)
+            if csv_path.name in import_map:
+                continue
+            legacy_files_by_name.setdefault(csv_path.stem, []).append(csv_path.name)
+
+    accounts.extend(
+        {
+            'id': None,
+            'name': name,
+            **_legacy_account_defaults(name),
+            'source_filenames': sorted(source_filenames, key=str.lower),
+            'legacy': True,
+        }
+        for name, source_filenames in sorted(
+            legacy_files_by_name.items(), key=lambda item: item[0].lower()
+        )
+    )
+    return accounts
+
+
+def _validate_finance_account_values(data: dict) -> tuple[dict | None, tuple | None]:
+    """Normalise and validate values used by account create and edit routes."""
+    name_value = data.get('name', '')
+    name = name_value.strip() if isinstance(name_value, str) else ''
+    ownership_value = data.get('ownership', '')
+    ownership = (
+        ownership_value.strip().lower()
+        if isinstance(ownership_value, str)
+        else ''
+    )
+    account_type_value = data.get('account_type', '')
+    account_type = (
+        account_type_value.strip().lower()
+        if isinstance(account_type_value, str)
+        else ''
+    )
+    if not name:
+        return None, (jsonify({'error': 'name is required'}), 400)
+    if ownership not in FINANCE_ACCOUNT_OWNERSHIPS:
+        return None, (jsonify({'error': 'ownership must be personal or business'}), 400)
+    if account_type not in FINANCE_ACCOUNT_TYPES:
+        return None, (jsonify({'error': 'account_type must be cash, credit or loan'}), 400)
+    return {
+        'name': name,
+        'ownership': ownership,
+        'account_type': account_type,
+    }, None
+
+
 @contextmanager
 def _finance_upload_lock(save_dir: Path, stored_filename: str):
     """Serialise final-file and import-metadata updates for one stored filename."""
@@ -1511,6 +1609,139 @@ def _categorise(description: str) -> str:
         if any(k in desc_l for k in keywords):
             return cat
     return 'Other'
+
+
+@app.route('/api/finance/accounts')
+@login_required
+def api_finance_accounts():
+    return jsonify({'accounts': _finance_account_list()})
+
+
+@app.route('/api/finance/accounts', methods=['POST'])
+@login_required
+def api_create_finance_account():
+    values, error = _validate_finance_account_values(request.get_json(silent=True) or {})
+    if error:
+        return error
+
+    now = datetime.now().isoformat()[:19]
+    try:
+        with get_db() as db:
+            cursor = db.execute(
+                "INSERT INTO finance_accounts "
+                "(name, ownership, account_type, active, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (values['name'], values['ownership'], values['account_type'], 1, now, now),
+            )
+            account_id = cursor.lastrowid
+            row = db.execute(
+                "SELECT id, name, ownership, account_type, active, created_at, updated_at "
+                "FROM finance_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'account name already exists'}), 409
+    return jsonify({'account': dict(row)}), 201
+
+
+@app.route('/api/finance/accounts/<int:account_id>', methods=['PUT'])
+@login_required
+def api_update_finance_account(account_id: int):
+    values, error = _validate_finance_account_values(request.get_json(silent=True) or {})
+    if error:
+        return error
+
+    now = datetime.now().isoformat()[:19]
+    try:
+        with get_db() as db:
+            exists = db.execute(
+                "SELECT 1 FROM finance_accounts WHERE id = ?", (account_id,)
+            ).fetchone()
+            if exists is None:
+                return jsonify({'error': 'account not found'}), 404
+            db.execute(
+                "UPDATE finance_accounts "
+                "SET name = ?, ownership = ?, account_type = ?, updated_at = ? "
+                "WHERE id = ?",
+                (
+                    values['name'], values['ownership'], values['account_type'], now,
+                    account_id,
+                ),
+            )
+            row = db.execute(
+                "SELECT id, name, ownership, account_type, active, created_at, updated_at "
+                "FROM finance_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'account name already exists'}), 409
+    return jsonify({'account': dict(row)})
+
+
+@app.route('/api/finance/accounts/link-legacy', methods=['POST'])
+@login_required
+def api_link_legacy_finance_account():
+    data = request.get_json(silent=True) or {}
+    stored_filename_value = data.get('stored_filename', '')
+    stored_filename = (
+        stored_filename_value.strip()
+        if isinstance(stored_filename_value, str)
+        else ''
+    )
+    try:
+        account_id = int(data.get('account_id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'account_id must be an integer'}), 400
+
+    with get_db() as db:
+        account_row = db.execute(
+            "SELECT id, name, ownership, account_type, active, created_at, updated_at "
+            "FROM finance_accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+    if account_row is None:
+        return jsonify({'error': 'account_id not found'}), 404
+
+    source_path = _find_finance_csv(stored_filename)
+    if source_path is None:
+        return jsonify({'error': 'stored_filename not found'}), 404
+
+    from finance_imports import parse_csv_file
+    account = dict(account_row)
+    transactions = parse_csv_file(source_path, account)
+    if not transactions:
+        return jsonify({'error': 'No supported transactions found in this CSV'}), 422
+
+    earliest_date = min(transaction['date'] for transaction in transactions)
+    latest_date = max(transaction['date'] for transaction in transactions)
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO finance_imports "
+            "(original_filename, stored_filename, account_id, parsed_count, "
+            "earliest_date, latest_date, status, uploaded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(stored_filename) DO UPDATE SET "
+            "original_filename = excluded.original_filename, "
+            "account_id = excluded.account_id, "
+            "parsed_count = excluded.parsed_count, "
+            "earliest_date = excluded.earliest_date, "
+            "latest_date = excluded.latest_date, "
+            "status = excluded.status, "
+            "uploaded_at = excluded.uploaded_at",
+            (
+                source_path.name, stored_filename, account_id, len(transactions), earliest_date,
+                latest_date, 'parsed', now,
+            ),
+        )
+    return jsonify({
+        'account': account,
+        'stored_filename': stored_filename,
+        'parsed_count': len(transactions),
+        'earliest_date': earliest_date,
+        'latest_date': latest_date,
+        'status': 'parsed',
+    })
 
 
 @app.route('/api/finance/upload-csv', methods=['POST'])
@@ -1546,9 +1777,9 @@ def api_finance_upload_csv():
         account_name = request.form.get('account_name', '').strip()
         ownership = request.form.get('ownership', '').strip().lower()
         account_type = request.form.get('account_type', '').strip().lower()
-        if ownership not in {'personal', 'business'}:
+        if ownership not in FINANCE_ACCOUNT_OWNERSHIPS:
             return jsonify({'error': 'ownership must be personal or business'}), 400
-        if account_type not in {'cash', 'credit', 'loan'}:
+        if account_type not in FINANCE_ACCOUNT_TYPES:
             return jsonify({'error': 'account_type must be cash, credit or loan'}), 400
         if not account_name:
             return jsonify({'error': 'account_name is required'}), 400

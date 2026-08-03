@@ -382,6 +382,180 @@ class FinanceUploadTests(unittest.TestCase):
         self.assertEqual(import_row["latest_date"], "2026-05-30")
 
 
+class FinanceAccountApiTests(unittest.TestCase):
+    """Account classification routes preserve legacy CSVs while registering metadata."""
+
+    supported_csv = (
+        b"29/05/2026,-42.50,Coffee shop,105.00\n"
+        b"28/05/2026,1500.00,Salary,1605.00\n"
+    )
+
+    def setUp(self):
+        self.temp_dir = TemporaryDirectory()
+        self.original_db_path = family_app.DB_PATH
+        self.original_data_dir = family_app.DATA_DIR
+        self.original_finance_csv_dir = family_app.FINANCE_CSV_DIR
+        family_app.DATA_DIR = Path(self.temp_dir.name)
+        family_app.DB_PATH = family_app.DATA_DIR / "family.db"
+        family_app.FINANCE_CSV_DIR = family_app.DATA_DIR / "synced-finance-volume"
+        family_app.FINANCE_CSV_DIR.mkdir()
+        family_app.init_db()
+        family_app.app.config.update(TESTING=True)
+        self.client = family_app.app.test_client()
+        with self.client.session_transaction() as session:
+            session["_user_id"] = family_app.USERNAME
+            session["_fresh"] = True
+
+    def tearDown(self):
+        family_app.DB_PATH = self.original_db_path
+        family_app.DATA_DIR = self.original_data_dir
+        family_app.FINANCE_CSV_DIR = self.original_finance_csv_dir
+        self.temp_dir.cleanup()
+
+    def _create_account(self, name="Everyday account", **overrides):
+        payload = {
+            "name": name,
+            "ownership": "personal",
+            "account_type": "cash",
+            **overrides,
+        }
+        return self.client.post("/api/finance/accounts", json=payload)
+
+    def test_list_includes_registered_accounts_and_unlinked_legacy_files(self):
+        created = self._create_account("Registered account")
+        self.assertEqual(created.status_code, 201)
+        (family_app.FINANCE_CSV_DIR / "GSB Main Mortgage.csv").write_bytes(
+            self.supported_csv
+        )
+
+        response = self.client.get("/api/finance/accounts")
+
+        self.assertEqual(response.status_code, 200)
+        accounts = response.get_json()["accounts"]
+        self.assertIn(
+            {
+                "id": None,
+                "name": "GSB Main Mortgage",
+                "ownership": "personal",
+                "account_type": "loan",
+                "source_filenames": ["GSB Main Mortgage.csv"],
+                "legacy": True,
+            },
+            accounts,
+        )
+        registered = next(account for account in accounts if account["id"] is not None)
+        self.assertEqual(registered["name"], "Registered account")
+        self.assertFalse(registered["legacy"])
+
+    def test_creates_trimmed_account_and_updates_its_classification(self):
+        created = self._create_account(
+            "  Family spending  ",
+            ownership="business",
+            account_type="credit",
+        )
+
+        self.assertEqual(created.status_code, 201)
+        account = created.get_json()["account"]
+        self.assertEqual(account["name"], "Family spending")
+        self.assertEqual(account["ownership"], "business")
+        self.assertEqual(account["account_type"], "credit")
+
+        updated = self.client.put(
+            f"/api/finance/accounts/{account['id']}",
+            json={
+                "name": "  Updated spending  ",
+                "ownership": "personal",
+                "account_type": "loan",
+            },
+        )
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            updated.get_json()["account"],
+            {
+                **account,
+                "name": "Updated spending",
+                "ownership": "personal",
+                "account_type": "loan",
+                "updated_at": updated.get_json()["account"]["updated_at"],
+            },
+        )
+
+    def test_rejects_duplicate_names_and_invalid_account_values(self):
+        self.assertEqual(self._create_account("Everyday account").status_code, 201)
+
+        duplicate = self._create_account("  everyday ACCOUNT  ")
+        invalid_ownership = self._create_account("Other account", ownership="family")
+        invalid_type = self._create_account("Other account", account_type="investment")
+        blank_name = self._create_account("   ")
+
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertEqual(duplicate.get_json(), {"error": "account name already exists"})
+        self.assertEqual(invalid_ownership.status_code, 400)
+        self.assertEqual(
+            invalid_ownership.get_json(),
+            {"error": "ownership must be personal or business"},
+        )
+        self.assertEqual(invalid_type.status_code, 400)
+        self.assertEqual(
+            invalid_type.get_json(),
+            {"error": "account_type must be cash, credit or loan"},
+        )
+        self.assertEqual(blank_name.status_code, 400)
+        self.assertEqual(blank_name.get_json(), {"error": "name is required"})
+
+    def test_returns_not_found_for_unknown_account_update_and_legacy_link(self):
+        update = self.client.put(
+            "/api/finance/accounts/999",
+            json={
+                "name": "Unknown account",
+                "ownership": "personal",
+                "account_type": "cash",
+            },
+        )
+        link = self.client.post(
+            "/api/finance/accounts/link-legacy",
+            json={"stored_filename": "CBA_29.05.26.csv", "account_id": 999},
+        )
+
+        self.assertEqual(update.status_code, 404)
+        self.assertEqual(update.get_json(), {"error": "account not found"})
+        self.assertEqual(link.status_code, 404)
+        self.assertEqual(link.get_json(), {"error": "account_id not found"})
+
+    def test_links_existing_legacy_csv_without_changing_the_source_file(self):
+        source = family_app.FINANCE_CSV_DIR / "CBA_29.05.26.csv"
+        source.write_bytes(self.supported_csv)
+        created = self._create_account("Linked CBA account", account_type="credit")
+        account_id = created.get_json()["account"]["id"]
+
+        response = self.client.post(
+            "/api/finance/accounts/link-legacy",
+            json={"stored_filename": source.name, "account_id": account_id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(source.read_bytes(), self.supported_csv)
+        self.assertEqual(response.get_json()["parsed_count"], 2)
+        self.assertEqual(response.get_json()["latest_date"], "2026-05-29")
+        with family_app.get_db() as db:
+            imported = db.execute(
+                "SELECT account_id, parsed_count, earliest_date, latest_date, status "
+                "FROM finance_imports WHERE stored_filename = ?",
+                (source.name,),
+            ).fetchone()
+        self.assertEqual(
+            dict(imported),
+            {
+                "account_id": account_id,
+                "parsed_count": 2,
+                "earliest_date": "2026-05-28",
+                "latest_date": "2026-05-29",
+                "status": "parsed",
+            },
+        )
+
+
 class FinanceAccountRuleTests(unittest.TestCase):
     def setUp(self):
         family_app.app.config.update(TESTING=True)
