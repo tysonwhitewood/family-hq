@@ -555,6 +555,66 @@ class FinanceAccountApiTests(unittest.TestCase):
             },
         )
 
+    def test_rejects_traversal_filename_without_creating_an_import_link(self):
+        created = self._create_account("Traversal target")
+        account_id = created.get_json()["account"]["id"]
+        outside_csv = family_app.DATA_DIR.parent / "outside-statement.csv"
+        outside_csv.write_bytes(self.supported_csv)
+
+        response = self.client.post(
+            "/api/finance/accounts/link-legacy",
+            json={
+                "stored_filename": f"../{outside_csv.name}",
+                "account_id": account_id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 404)
+        with family_app.get_db() as db:
+            imports = db.execute("SELECT COUNT(*) FROM finance_imports").fetchone()[0]
+        self.assertEqual(imports, 0)
+
+    def test_rejects_legacy_csv_symlink_that_escapes_allowed_directories(self):
+        created = self._create_account("Symlink target")
+        account_id = created.get_json()["account"]["id"]
+        outside_csv = family_app.DATA_DIR.parent / "outside-statement.csv"
+        outside_csv.write_bytes(self.supported_csv)
+        linked_filename = "CBA_29.05.26.csv"
+        (family_app.FINANCE_CSV_DIR / linked_filename).symlink_to(outside_csv)
+
+        response = self.client.post(
+            "/api/finance/accounts/link-legacy",
+            json={"stored_filename": linked_filename, "account_id": account_id},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        with family_app.get_db() as db:
+            imports = db.execute("SELECT COUNT(*) FROM finance_imports").fetchone()[0]
+        self.assertEqual(imports, 0)
+
+    def test_rejects_non_integer_legacy_link_account_ids_without_creating_a_link(self):
+        source = family_app.FINANCE_CSV_DIR / "CBA_29.05.26.csv"
+        source.write_bytes(self.supported_csv)
+        self.assertEqual(self._create_account("Integer target").status_code, 201)
+
+        for invalid_account_id in (True, 1.0, 1.9):
+            with self.subTest(account_id=invalid_account_id):
+                response = self.client.post(
+                    "/api/finance/accounts/link-legacy",
+                    json={
+                        "stored_filename": source.name,
+                        "account_id": invalid_account_id,
+                    },
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(
+                    response.get_json(), {"error": "account_id must be an integer"}
+                )
+        with family_app.get_db() as db:
+            imports = db.execute("SELECT COUNT(*) FROM finance_imports").fetchone()[0]
+        self.assertEqual(imports, 0)
+
 
 class FinanceAccountRuleTests(unittest.TestCase):
     def setUp(self):

@@ -1347,7 +1347,13 @@ def _find_finance_csv(stored_filename: str) -> Path | None:
         return None
     for directory in _finance_csv_search_dirs():
         candidate = directory / stored_filename
-        if candidate.is_file():
+        try:
+            resolved_directory = directory.resolve(strict=True)
+            resolved_candidate = candidate.resolve(strict=True)
+            resolved_candidate.relative_to(resolved_directory)
+        except (OSError, ValueError):
+            continue
+        if resolved_candidate.is_file():
             return candidate
     return None
 
@@ -1688,9 +1694,8 @@ def api_link_legacy_finance_account():
         if isinstance(stored_filename_value, str)
         else ''
     )
-    try:
-        account_id = int(data.get('account_id'))
-    except (TypeError, ValueError):
+    account_id = data.get('account_id')
+    if not isinstance(account_id, int) or isinstance(account_id, bool):
         return jsonify({'error': 'account_id must be an integer'}), 400
 
     with get_db() as db:
