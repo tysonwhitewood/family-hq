@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Family HQ — Whitewood Family Command Centre"""
-import base64, json, math, os, shutil, sqlite3, re, tempfile, time, urllib.request, urllib.parse
+import base64, fcntl, hashlib, json, math, os, shutil, sqlite3, re, tempfile, time, urllib.request, urllib.parse
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, abort, g, Response, redirect, url_for, render_template_string
@@ -1344,6 +1345,9 @@ def _parse_csv_files():
     search_dirs = subdirs[:3] if subdirs else []  # check three most recent folders
     if FINANCE_CSV_DIR.exists():
         search_dirs.append(FINANCE_CSV_DIR)  # also check root
+    upload_dir = DATA_DIR / 'bank_statements'
+    if upload_dir.exists() and upload_dir not in search_dirs:
+        search_dirs.append(upload_dir)
 
     seen_files = set()
     for folder in search_dirs:
@@ -1487,6 +1491,20 @@ def _finance_import_map() -> dict[str, dict]:
     return {row["stored_filename"]: dict(row) for row in rows}
 
 
+@contextmanager
+def _finance_upload_lock(save_dir: Path, stored_filename: str):
+    """Serialise final-file and import-metadata updates for one stored filename."""
+    lock_dir = save_dir / '.upload-locks'
+    lock_dir.mkdir(exist_ok=True)
+    lock_name = hashlib.sha256(stored_filename.encode('utf-8')).hexdigest()
+    with (lock_dir / f'{lock_name}.lock').open('a+b') as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def _categorise(description: str) -> str:
     desc_l = description.lower()
     for cat, keywords in CATEGORY_RULES:
@@ -1505,6 +1523,7 @@ def api_finance_upload_csv():
     safe_name = re.sub(r'[^\w\s\-.]', '', f.filename).strip()
     if not safe_name.lower().endswith('.csv'):
         return jsonify({'error': 'CSV files only'}), 400
+    safe_name = f'{safe_name[:-4]}.csv'
 
     requested_account_id = request.form.get('account_id', '').strip()
     account = None
@@ -1562,81 +1581,86 @@ def api_finance_upload_csv():
             temporary_path.unlink(missing_ok=True)
             return jsonify({'error': 'No supported transactions found in this CSV'}), 422
 
-        now = datetime.now().isoformat()[:19]
-        if destination.exists():
-            backup_fd, backup_name = tempfile.mkstemp(
-                dir=save_dir,
-                prefix='backup-',
-                suffix='.csv',
-            )
-            os.close(backup_fd)
-            backup_path = Path(backup_name)
-            backup_path.unlink()
-            try:
-                os.link(destination, backup_path)
-            except OSError:
-                shutil.copy2(destination, backup_path)
+        upload_lock = _finance_upload_lock(save_dir, safe_name)
+        upload_lock.__enter__()
+        try:
+            now = datetime.now().isoformat()[:19]
+            if destination.exists():
+                backup_fd, backup_name = tempfile.mkstemp(
+                    dir=save_dir,
+                    prefix='backup-',
+                    suffix='.csv',
+                )
+                os.close(backup_fd)
+                backup_path = Path(backup_name)
+                backup_path.unlink()
+                try:
+                    os.link(destination, backup_path)
+                except OSError:
+                    shutil.copy2(destination, backup_path)
 
-        with get_db() as db:
-            if account is None:
-                row = db.execute(
-                    "SELECT id, name, ownership, account_type, active, created_at, updated_at "
-                    "FROM finance_accounts WHERE name = ?",
-                    (metadata['name'],),
-                ).fetchone()
-                if row is None:
-                    cursor = db.execute(
-                        "INSERT INTO finance_accounts "
-                        "(name, ownership, account_type, active, created_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                        (
-                            metadata['name'], metadata['ownership'], metadata['account_type'],
-                            1, now, now,
-                        ),
-                    )
-                    account = {
-                        'id': cursor.lastrowid,
-                        'name': metadata['name'],
-                        'ownership': metadata['ownership'],
-                        'account_type': metadata['account_type'],
-                        'active': 1,
-                        'created_at': now,
-                        'updated_at': now,
-                    }
+            with get_db() as db:
+                if account is None:
+                    row = db.execute(
+                        "SELECT id, name, ownership, account_type, active, created_at, updated_at "
+                        "FROM finance_accounts WHERE name = ?",
+                        (metadata['name'],),
+                    ).fetchone()
+                    if row is None:
+                        cursor = db.execute(
+                            "INSERT INTO finance_accounts "
+                            "(name, ownership, account_type, active, created_at, updated_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?)",
+                            (
+                                metadata['name'], metadata['ownership'], metadata['account_type'],
+                                1, now, now,
+                            ),
+                        )
+                        account = {
+                            'id': cursor.lastrowid,
+                            'name': metadata['name'],
+                            'ownership': metadata['ownership'],
+                            'account_type': metadata['account_type'],
+                            'active': 1,
+                            'created_at': now,
+                            'updated_at': now,
+                        }
+                    else:
+                        account = dict(row)
+
+                earliest_date = min(transaction['date'] for transaction in transactions)
+                latest_date = max(transaction['date'] for transaction in transactions)
+                os.replace(temporary_path, destination)
+                temporary_path = None
+                replaced_destination = True
+                db.execute(
+                    "INSERT INTO finance_imports "
+                    "(original_filename, stored_filename, account_id, parsed_count, "
+                    "earliest_date, latest_date, status, uploaded_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(stored_filename) DO UPDATE SET "
+                    "original_filename = excluded.original_filename, "
+                    "account_id = excluded.account_id, "
+                    "parsed_count = excluded.parsed_count, "
+                    "earliest_date = excluded.earliest_date, "
+                    "latest_date = excluded.latest_date, "
+                    "status = excluded.status, "
+                    "uploaded_at = excluded.uploaded_at",
+                    (
+                        f.filename, safe_name, account['id'], len(transactions), earliest_date,
+                        latest_date, 'parsed', now,
+                    ),
+                )
+        except Exception:
+            if replaced_destination:
+                if backup_path is None:
+                    destination.unlink(missing_ok=True)
                 else:
-                    account = dict(row)
-
-            earliest_date = min(transaction['date'] for transaction in transactions)
-            latest_date = max(transaction['date'] for transaction in transactions)
-            os.replace(temporary_path, destination)
-            temporary_path = None
-            replaced_destination = True
-            db.execute(
-                "INSERT INTO finance_imports "
-                "(original_filename, stored_filename, account_id, parsed_count, "
-                "earliest_date, latest_date, status, uploaded_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(stored_filename) DO UPDATE SET "
-                "original_filename = excluded.original_filename, "
-                "account_id = excluded.account_id, "
-                "parsed_count = excluded.parsed_count, "
-                "earliest_date = excluded.earliest_date, "
-                "latest_date = excluded.latest_date, "
-                "status = excluded.status, "
-                "uploaded_at = excluded.uploaded_at",
-                (
-                    f.filename, safe_name, account['id'], len(transactions), earliest_date,
-                    latest_date, 'parsed', now,
-                ),
-            )
-    except Exception:
-        if replaced_destination:
-            if backup_path is None:
-                destination.unlink(missing_ok=True)
-            else:
-                os.replace(backup_path, destination)
-                backup_path = None
-        raise
+                    os.replace(backup_path, destination)
+                    backup_path = None
+            raise
+        finally:
+            upload_lock.__exit__(None, None, None)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)

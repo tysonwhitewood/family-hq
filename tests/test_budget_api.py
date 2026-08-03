@@ -4,7 +4,9 @@ from datetime import date
 from io import BytesIO
 from pathlib import Path
 import sqlite3
+from contextlib import contextmanager
 from tempfile import TemporaryDirectory
+import threading
 from unittest.mock import patch
 
 warnings.filterwarnings(
@@ -106,8 +108,11 @@ class FinanceUploadTests(unittest.TestCase):
         self.temp_dir = TemporaryDirectory()
         self.original_db_path = family_app.DB_PATH
         self.original_data_dir = family_app.DATA_DIR
+        self.original_finance_csv_dir = family_app.FINANCE_CSV_DIR
         family_app.DATA_DIR = Path(self.temp_dir.name)
         family_app.DB_PATH = family_app.DATA_DIR / "family.db"
+        family_app.FINANCE_CSV_DIR = Path(self.temp_dir.name) / "synced-finance-volume"
+        family_app.FINANCE_CSV_DIR.mkdir()
         family_app.init_db()
         family_app.app.config.update(TESTING=True)
         self.client = family_app.app.test_client()
@@ -118,7 +123,15 @@ class FinanceUploadTests(unittest.TestCase):
     def tearDown(self):
         family_app.DB_PATH = self.original_db_path
         family_app.DATA_DIR = self.original_data_dir
+        family_app.FINANCE_CSV_DIR = self.original_finance_csv_dir
         self.temp_dir.cleanup()
+
+    def _authenticated_client(self):
+        client = family_app.app.test_client()
+        with client.session_transaction() as session:
+            session["_user_id"] = family_app.USERNAME
+            session["_fresh"] = True
+        return client
 
     def _upload(self, csv_data, filename="statement.csv", **metadata):
         return self.client.post(
@@ -144,6 +157,10 @@ class FinanceUploadTests(unittest.TestCase):
         self.assertEqual(payload["parsed_count"], 2)
         self.assertEqual(payload["latest_date"], "2026-05-29")
         self.assertIn("2 transactions loaded", payload["message"])
+        self.assertEqual(payload["saved"], "May.csv")
+        transactions = family_app._parse_csv_files()
+        self.assertEqual(len(transactions), 2)
+        self.assertEqual({row["source_filename"] for row in transactions}, {"May.csv"})
 
     def test_rejects_invalid_ownership(self):
         response = self._upload(
@@ -274,6 +291,95 @@ class FinanceUploadTests(unittest.TestCase):
             (family_app.DATA_DIR / "bank_statements" / "statement.csv").read_bytes(),
             self.supported_csv,
         )
+
+    def test_same_filename_uploads_keep_file_and_import_metadata_together(self):
+        metadata = {
+            "account_name": "Everyday account",
+            "ownership": "personal",
+            "account_type": "cash",
+        }
+        initial = self._upload(self.supported_csv, "statement.csv", **metadata)
+        self.assertEqual(initial.status_code, 200)
+
+        first_replacement = threading.Event()
+        release_first = threading.Event()
+        second_lock_attempt = threading.Event()
+        second_finished = threading.Event()
+        responses = {}
+        errors = []
+        destination = family_app.DATA_DIR / "bank_statements" / "statement.csv"
+        real_replace = family_app.os.replace
+        real_upload_lock = family_app._finance_upload_lock
+
+        def delay_first_replacement(source, target):
+            result = real_replace(source, target)
+            if Path(target) == destination and not first_replacement.is_set():
+                first_replacement.set()
+                release_first.wait(timeout=5)
+            return result
+
+        def upload_in_thread(name, csv_data, finished=None):
+            try:
+                responses[name] = self._authenticated_client().post(
+                    "/api/finance/upload-csv",
+                    data={
+                        "file": (BytesIO(csv_data), "statement.csv"),
+                        **metadata,
+                    },
+                    content_type="multipart/form-data",
+                )
+            except Exception as error:
+                errors.append(error)
+            finally:
+                if finished is not None:
+                    finished.set()
+
+        @contextmanager
+        def observing_upload_lock(save_dir, stored_filename):
+            if threading.current_thread().name == "second-upload":
+                second_lock_attempt.set()
+            with real_upload_lock(save_dir, stored_filename):
+                yield
+
+        with (
+            patch.object(family_app.os, "replace", side_effect=delay_first_replacement),
+            patch.object(family_app, "_finance_upload_lock", side_effect=observing_upload_lock),
+        ):
+            first = threading.Thread(
+                target=upload_in_thread,
+                args=("first", self.supported_csv),
+                name="first-upload",
+            )
+            first.start()
+            self.assertTrue(first_replacement.wait(timeout=5))
+
+            second_csv = b"30/05/2026,-10.00,Groceries,95.00\n"
+            second = threading.Thread(
+                target=upload_in_thread,
+                args=("second", second_csv, second_finished),
+                name="second-upload",
+            )
+            second.start()
+            self.assertTrue(second_lock_attempt.wait(timeout=5))
+            self.assertFalse(second_finished.wait(timeout=0.2))
+            release_first.set()
+            first.join(timeout=5)
+            second.join(timeout=5)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(responses["first"].status_code, 200)
+        self.assertEqual(responses["second"].status_code, 200)
+        self.assertEqual(destination.read_bytes(), second_csv)
+        with family_app.get_db() as db:
+            import_row = db.execute(
+                "SELECT parsed_count, latest_date FROM finance_imports "
+                "WHERE stored_filename = ?",
+                ("statement.csv",),
+            ).fetchone()
+        self.assertEqual(import_row["parsed_count"], 1)
+        self.assertEqual(import_row["latest_date"], "2026-05-30")
 
 
 class FinanceAccountRuleTests(unittest.TestCase):
