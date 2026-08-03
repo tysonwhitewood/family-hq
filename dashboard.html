@@ -889,7 +889,7 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
 
     <!-- Account summaries -->
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><div class="card-title">Accounts</div><div id="fin-txn-count" style="font-size:12px;color:#9CA3AF"></div></div>
+      <div class="card-header"><div class="card-title">Accounts</div><div id="fin-txn-count" style="font-size:12px;color:#9CA3AF"></div><button id="fin-account-new" class="fin-action" type="button" onclick="finNewAccount(this)">New account</button></div>
       <div id="fin-accounts-body" style="padding:16px;color:#6B7280;font-size:13px">Loading…</div>
     </div>
 
@@ -2465,6 +2465,7 @@ let _finHistory = [];
 let _finAccounts = [];
 let _finUploadFile = null;
 let _finEditingAccount = null;
+let _finCreatingAccount = false;
 let _finUploadXhr = null;
 let _finUploadRequestToken = 0;
 let _finClassificationController = null;
@@ -2936,6 +2937,28 @@ function finAbortClassificationSave() {
   }
 }
 
+function finNewAccount(opener) {
+  const modal = document.getElementById('fin-account-modal');
+  if (_finActiveModal && _finActiveModal !== modal) return;
+  finAbortClassificationSave();
+  _finEditingAccount = null;
+  _finCreatingAccount = true;
+  const save = document.getElementById('fin-account-save');
+  document.getElementById('fin-account-edit-fields').style.display = 'grid';
+  document.getElementById('fin-account-link-fields').style.display = 'none';
+  document.getElementById('fin-account-error').style.display = 'none';
+  document.getElementById('fin-account-title').textContent = 'New account';
+  document.getElementById('fin-account-help').textContent =
+    'Register the account first, then link its statements from the list below.';
+  document.getElementById('fin-account-name').value = '';
+  document.getElementById('fin-account-ownership').value = 'personal';
+  document.getElementById('fin-account-type').value = 'cash';
+  save.disabled = false;
+  save.textContent = 'Create account';
+  if (!finOpenModal(modal, opener || document.activeElement)) return;
+  setTimeout(() => document.getElementById('fin-account-name').focus(), 0);
+}
+
 function finEditAccount(accountKey) {
   const modal = document.getElementById('fin-account-modal');
   if (_finActiveModal && _finActiveModal !== modal) return;
@@ -2943,6 +2966,8 @@ function finEditAccount(accountKey) {
   if (!account) return;
   finAbortClassificationSave();
   _finEditingAccount = account;
+  _finCreatingAccount = false;
+  document.getElementById('fin-account-title').textContent = 'Edit classification';
   const isLegacy = account.id == null;
   const editFields = document.getElementById('fin-account-edit-fields');
   const linkFields = document.getElementById('fin-account-link-fields');
@@ -2991,6 +3016,7 @@ function finCloseAccountModal({abortActive = true, restoreFocus = true} = {}) {
     {restoreFocus}
   )) return;
   _finEditingAccount = null;
+  _finCreatingAccount = false;
 }
 
 function finRestoreClassificationFocus(accountKey) {
@@ -3005,7 +3031,7 @@ function finRestoreClassificationFocus(accountKey) {
 
 async function finSaveAccountClassification() {
   const account = _finEditingAccount;
-  if (!account) return;
+  if (!account && !_finCreatingAccount) return;
   const save = document.getElementById('fin-account-save');
   const errorEl = document.getElementById('fin-account-error');
   save.disabled = true;
@@ -3035,9 +3061,26 @@ async function finSaveAccountClassification() {
     _finClassificationController = null;
     return true;
   };
-  let focusAccountKey = _finAccountKey(account);
+  let focusAccountKey = account ? _finAccountKey(account) : '';
   try {
-    if (account.id == null) {
+    if (_finCreatingAccount) {
+      const name = document.getElementById('fin-account-name').value.trim();
+      if (!name) throw new Error('Enter an account name.');
+      const response = await authFetch('/api/finance/accounts', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          name,
+          ownership: document.getElementById('fin-account-ownership').value,
+          account_type: document.getElementById('fin-account-type').value
+        }),
+        signal: controller.signal
+      });
+      const payload = await response.json();
+      if (!isCurrentRequest()) return;
+      if (!response.ok) throw new Error(payload.error || 'Could not create the account.');
+      focusAccountKey = 'registered:' + payload.account.id;
+    } else if (account.id == null) {
       const accountId = Number(document.getElementById('fin-account-link-target').value);
       if (!accountId) throw new Error('Choose a registered account.');
       focusAccountKey = 'registered:' + accountId;

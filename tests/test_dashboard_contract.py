@@ -323,5 +323,109 @@ class DashboardReassignmentPromptTests(unittest.TestCase):
         self.assertEqual(result["retryConfirmed"], "true")
 
 
+class DashboardNewAccountTests(unittest.TestCase):
+    """Registered accounts must be creatable without re-uploading a statement."""
+
+    def _driver(self):
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+        except ImportError as error:
+            self.skipTest(f"Selenium is unavailable: {error}")
+
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--window-size=1200,900")
+        options.add_argument("--no-sandbox")
+        try:
+            driver = webdriver.Chrome(options=options)
+        except Exception as error:
+            self.skipTest(f"Headless Chrome is unavailable: {error}")
+        self.addCleanup(driver.quit)
+        driver.set_script_timeout(10)
+        driver.get(Path("dashboard.html").resolve().as_uri())
+        return driver
+
+    def test_new_account_opens_an_enabled_form_with_no_registered_accounts(self):
+        driver = self._driver()
+
+        result = driver.execute_async_script(
+            """
+            const done = arguments[arguments.length - 1];
+            (async () => {
+              document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+              document.getElementById('page-finance').classList.add('active');
+              _finAccounts = [];
+
+              document.getElementById('fin-account-new').click();
+              await new Promise(resolve => setTimeout(resolve, 0));
+
+              done({
+                modalOpen: document.getElementById('fin-account-modal').style.display,
+                editFieldsShown: document.getElementById('fin-account-edit-fields').style.display,
+                linkFieldsHidden: document.getElementById('fin-account-link-fields').style.display,
+                saveDisabled: document.getElementById('fin-account-save').disabled,
+                saveLabel: document.getElementById('fin-account-save').textContent,
+                nameEmpty: document.getElementById('fin-account-name').value === ''
+              });
+            })().catch(error => done({error: String(error), stack: error.stack}));
+            """
+        )
+
+        self.assertEqual(result.get("modalOpen"), "flex")
+        self.assertEqual(result.get("editFieldsShown"), "grid")
+        self.assertEqual(result.get("linkFieldsHidden"), "none")
+        self.assertFalse(result.get("saveDisabled"))
+        self.assertEqual(result.get("saveLabel"), "Create account")
+        self.assertTrue(result.get("nameEmpty"))
+
+    def test_creating_an_account_posts_it_to_the_accounts_endpoint(self):
+        driver = self._driver()
+
+        result = driver.execute_async_script(
+            """
+            const done = arguments[arguments.length - 1];
+            (async () => {
+              document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+              document.getElementById('page-finance').classList.add('active');
+              _finAccounts = [];
+
+              const calls = [];
+              authFetch = async (url, options) => {
+                calls.push({url, method: options.method, body: JSON.parse(options.body)});
+                return {ok: true, json: async () => ({account: {id: 4}})};
+              };
+              loadFinance = async () => {};
+              loadBudget = async () => {};
+
+              document.getElementById('fin-account-new').click();
+              await new Promise(resolve => setTimeout(resolve, 0));
+              document.getElementById('fin-account-name').value = 'Mortgage — Great Southern';
+              document.getElementById('fin-account-ownership').value = 'personal';
+              document.getElementById('fin-account-type').value = 'loan';
+
+              await finSaveAccountClassification();
+              await new Promise(resolve => setTimeout(resolve, 0));
+
+              done({calls});
+            })().catch(error => done({error: String(error), stack: error.stack}));
+            """
+        )
+
+        self.assertIsNone(result.get("error"))
+        self.assertEqual(len(result["calls"]), 1)
+        call = result["calls"][0]
+        self.assertEqual(call["url"], "/api/finance/accounts")
+        self.assertEqual(call["method"], "POST")
+        self.assertEqual(
+            call["body"],
+            {
+                "name": "Mortgage — Great Southern",
+                "ownership": "personal",
+                "account_type": "loan",
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
