@@ -15,6 +15,14 @@ class DashboardContractTests(unittest.TestCase):
             html,
         )
 
+    def test_dashboard_exposes_forecast_controls(self):
+        html = Path("dashboard.html").read_text()
+
+        self.assertIn("bdgtEditSafetyBuffer", html)
+        self.assertIn("ownership:", html)
+        self.assertIn("direction:", html)
+        self.assertIn("recurrence:", html)
+
 
 if __name__ == "__main__":
     unittest.main()

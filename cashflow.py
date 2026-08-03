@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import calendar
+import re
+from collections import defaultdict
 from datetime import date, timedelta
+from statistics import median
 
 
 FORECAST_DAYS = 182
@@ -64,27 +67,144 @@ def _event_dates(event: dict, start: date, end: date) -> list[date]:
 
     fixed_days = {"weekly": 7, "fortnightly": 14}
     occurrences = []
-    current = first
     month_step = {"monthly": 1, "quarterly": 3, "annual": 12}.get(recurrence)
+    if month_step:
+        occurrence_number = 0
+        current = first
+        while current < start:
+            occurrence_number += 1
+            current = _add_months(
+                first,
+                month_step * occurrence_number,
+                first.day,
+            )
+        while current <= end:
+            occurrences.append(current)
+            occurrence_number += 1
+            current = _add_months(
+                first,
+                month_step * occurrence_number,
+                first.day,
+            )
+        return occurrences
+
+    current = first
     while current <= end:
         if current >= start:
             occurrences.append(current)
         if recurrence in fixed_days:
             current += timedelta(days=fixed_days[recurrence])
-        elif month_step:
-            current = _add_months(first, month_step * (len(occurrences) + (
-                0 if first >= start else 1
-            )), first.day)
-            if current <= first:
-                current = _add_months(first, month_step, first.day)
-            while current < start:
-                elapsed_months = (
-                    (current.year - first.year) * 12 + current.month - first.month
-                )
-                current = _add_months(first, elapsed_months + month_step, first.day)
         else:
             break
     return occurrences
+
+
+def _normalise_description(value: str) -> str:
+    without_numbers = re.sub(r"\d+", "", str(value).lower())
+    return re.sub(r"\s+", " ", without_numbers).strip()
+
+
+def _frequency_for_intervals(intervals: list[int]) -> str:
+    candidates = [
+        ("weekly", 7, 2),
+        ("fortnightly", 14, 2),
+        ("monthly", 30, 5),
+        ("quarterly", 91, 10),
+        ("annual", 365, 20),
+    ]
+    typical = median(intervals)
+    for name, expected, tolerance in candidates:
+        if (
+            abs(typical - expected) <= tolerance
+            and all(abs(value - expected) <= tolerance for value in intervals)
+        ):
+            return name
+    return ""
+
+
+def _next_occurrence(last: date, frequency: str, forecast_start: date) -> date:
+    fixed_days = {"weekly": 7, "fortnightly": 14}
+    if frequency in fixed_days:
+        next_date = last + timedelta(days=fixed_days[frequency])
+        while next_date < forecast_start:
+            next_date += timedelta(days=fixed_days[frequency])
+        return next_date
+
+    month_step = {"monthly": 1, "quarterly": 3, "annual": 12}[frequency]
+    occurrence = 1
+    next_date = _add_months(last, month_step, last.day)
+    while next_date < forecast_start:
+        occurrence += 1
+        next_date = _add_months(last, month_step * occurrence, last.day)
+    return next_date
+
+
+def infer_recurring_events(
+    transactions: list[dict],
+    account_ownership: dict[str, str],
+    forecast_start: date,
+) -> list[dict]:
+    """Infer stable repeated cash events from at least three historical rows."""
+    groups = defaultdict(list)
+    for transaction in transactions:
+        amount = float(transaction.get("amount", 0) or 0)
+        if amount == 0:
+            continue
+        try:
+            transaction_date = date.fromisoformat(str(transaction.get("date", "")))
+        except ValueError:
+            continue
+        account = str(transaction.get("account", ""))
+        description = str(transaction.get("description", "")).strip()
+        normalised = _normalise_description(description)
+        if len(normalised) < 4:
+            continue
+        direction = "inflow" if amount > 0 else "outflow"
+        groups[(account, normalised, direction)].append({
+            "date": transaction_date,
+            "amount": abs(amount),
+            "description": description,
+        })
+
+    events = []
+    for (account, _, direction), rows in groups.items():
+        rows.sort(key=lambda item: item["date"])
+        unique_rows = []
+        seen_dates = set()
+        for row in rows:
+            if row["date"] in seen_dates:
+                continue
+            seen_dates.add(row["date"])
+            unique_rows.append(row)
+        if len(unique_rows) < 3:
+            continue
+
+        intervals = [
+            (later["date"] - earlier["date"]).days
+            for earlier, later in zip(unique_rows, unique_rows[1:])
+        ]
+        frequency = _frequency_for_intervals(intervals)
+        if not frequency:
+            continue
+        amounts = [row["amount"] for row in unique_rows]
+        average_amount = sum(amounts) / len(amounts)
+        if max(amounts) - min(amounts) > max(2.0, average_amount * 0.15):
+            continue
+
+        last = unique_rows[-1]
+        next_date = _next_occurrence(last["date"], frequency, forecast_start)
+        events.append({
+            "description": last["description"],
+            "amount": round(average_amount, 2),
+            "due_date": next_date.isoformat(),
+            "recurring": frequency,
+            "ownership": account_ownership.get(account, "personal"),
+            "direction": direction,
+            "source": "transaction_history",
+            "confidence": "expected",
+        })
+
+    return sorted(events, key=lambda event: event["description"].lower())
 
 
 def _opening_balances(
@@ -164,12 +284,23 @@ def _build_section(
         was_below = is_below
 
     lowest_day = min(days, key=lambda item: item["closing_balance"])
+    next_income_index = next(
+        (index for index, day in enumerate(days) if day["inflows"] > 0),
+        len(days),
+    )
+    committed_before_income = sum(
+        day["outflows"] for day in days[:next_income_index]
+    )
+    safe_to_spend = max(
+        0.0,
+        opening_balance - safety_buffer - committed_before_income,
+    )
     return {
         "opening_balance": round(opening_balance, 2),
         "closing_balance": days[-1]["closing_balance"],
         "lowest_balance": lowest_day["closing_balance"],
         "lowest_balance_date": lowest_day["date"],
-        "safe_to_spend": round(max(0.0, opening_balance - safety_buffer), 2),
+        "safe_to_spend": round(safe_to_spend, 2),
         "warnings": warnings,
         "days": days,
         "cycles": _group_cycles(days),

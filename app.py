@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Family HQ — Whitewood Family Command Centre"""
-import base64, json, os, sqlite3, re, time, urllib.request, urllib.parse
+import base64, json, math, os, sqlite3, re, time, urllib.request, urllib.parse
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, abort, g, Response, redirect, url_for, render_template_string
@@ -8,7 +8,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import openpyxl
-from cashflow import build_forecast
+from cashflow import build_forecast, infer_recurring_events
 
 app = Flask(__name__)
 ROOT = Path(__file__).parent
@@ -364,11 +364,30 @@ def init_db():
                 amount REAL NOT NULL,
                 due_date TEXT NOT NULL,
                 recurring INTEGER DEFAULT 0,
+                recurrence TEXT DEFAULT '',
                 category TEXT,
+                ownership TEXT DEFAULT 'personal',
+                direction TEXT DEFAULT 'outflow',
                 status TEXT DEFAULT 'pending',
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS budget_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT
+            );
         ''')
+        for column, definition in [
+            ('recurrence', "TEXT DEFAULT ''"),
+            ('ownership', "TEXT DEFAULT 'personal'"),
+            ('direction', "TEXT DEFAULT 'outflow'"),
+        ]:
+            try:
+                db.execute(
+                    f'ALTER TABLE upcoming_expenses ADD COLUMN {column} {definition}'
+                )
+            except sqlite3.OperationalError:
+                pass
         # Seed insurance records — insert each by policy_number if not already present
         now = datetime.now().isoformat()[:19]
         seed_insurances = [
@@ -1806,7 +1825,25 @@ def _bdgt_detect_recurring(transactions):
     return recurring[:20]
 
 
-def _budget_cash_flow(transactions, upcoming, forecast_date=None):
+def _get_budget_safety_buffer():
+    with get_db() as db:
+        row = db.execute(
+            "SELECT value FROM budget_settings WHERE key='personal_safety_buffer'"
+        ).fetchone()
+    if row:
+        try:
+            return float(row['value'])
+        except (TypeError, ValueError):
+            pass
+    return float(os.environ.get('FAMILY_HQ_SAFETY_BUFFER', '1000'))
+
+
+def _budget_cash_flow(
+    transactions,
+    upcoming,
+    forecast_date=None,
+    safety_buffer=None,
+):
     """Build the deterministic six-month personal and business forecast."""
     from zoneinfo import ZoneInfo
 
@@ -1823,22 +1860,45 @@ def _budget_cash_flow(transactions, upcoming, forecast_date=None):
     for row in upcoming:
         event = dict(row)
         raw_recurring = event.get('recurring', 0)
+        recurrence = event.get('recurrence') or (
+            'annual' if raw_recurring else ''
+        )
         scheduled_events.append({
             'description': event.get('description', 'Upcoming expense'),
             'amount': event.get('amount', 0),
             'due_date': event.get('due_date', ''),
-            'recurring': 'monthly' if raw_recurring else '',
+            'recurring': recurrence,
             'category': event.get('category', ''),
-            'ownership': (
+            'ownership': event.get('ownership') or (
                 'business'
                 if str(event.get('category', '')).lower() == 'business'
                 else 'personal'
             ),
-            'direction': 'outflow',
+            'direction': event.get('direction') or 'outflow',
             'source': 'upcoming_expense',
             'confidence': 'confirmed',
         })
-    safety_buffer = float(os.environ.get('FAMILY_HQ_SAFETY_BUFFER', '1000'))
+    recurring_history = infer_recurring_events(
+        [
+            transaction
+            for transaction in transactions
+            if _categorise(transaction.get('description', '')) != 'Transfers'
+        ],
+        ownership,
+        start_date,
+    )
+    manual_descriptions = {
+        re.sub(r'\s+', ' ', event['description'].strip().lower())
+        for event in scheduled_events
+    }
+    scheduled_events.extend(
+        event
+        for event in recurring_history
+        if re.sub(r'\s+', ' ', event['description'].strip().lower())
+        not in manual_descriptions
+    )
+    if safety_buffer is None:
+        safety_buffer = _get_budget_safety_buffer()
     return build_forecast(
         transactions,
         scheduled_events,
@@ -1951,6 +2011,9 @@ def api_budget_summary():
         'recurring_detected': recurring,
         'forecast': forecast,
         'cash_flow': cash_flow,
+        'budget_settings': {
+            'safety_buffer': cash_flow['safety_buffer'],
+        },
     })
 
 
@@ -1970,6 +2033,28 @@ def api_budget_forecast():
         except ValueError:
             return jsonify({'error': 'start must be an ISO date'}), 400
     return jsonify(_budget_cash_flow(transactions, upcoming, forecast_date))
+
+
+@app.route('/api/budget/settings', methods=['POST'])
+@login_required
+def api_budget_settings():
+    data = request.get_json(force=True)
+    try:
+        safety_buffer = float(data.get('safety_buffer'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'safety_buffer must be a non-negative number'}), 400
+    if not math.isfinite(safety_buffer) or safety_buffer < 0:
+        return jsonify({'error': 'safety_buffer must be a non-negative number'}), 400
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute(
+            '''INSERT INTO budget_settings (key, value, updated_at)
+               VALUES ('personal_safety_buffer', ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value,
+               updated_at=excluded.updated_at''',
+            (str(round(safety_buffer, 2)), now),
+        )
+    return jsonify({'ok': True, 'safety_buffer': round(safety_buffer, 2)})
 
 
 @app.route('/api/budget/targets', methods=['POST'])
@@ -2056,20 +2141,56 @@ def api_budget_upcoming_save():
     desc = data.get('description', '').strip()
     amount = data.get('amount', 0)
     due_date = data.get('due_date', '')
+    ownership = data.get('ownership', 'personal')
+    direction = data.get('direction', 'outflow')
+    recurrence = data.get('recurrence', '')
     uid = data.get('id')
     now = datetime.now().isoformat()[:19]
-    if not desc or not amount or not due_date:
+    if not desc or amount in (None, '') or not due_date:
         return jsonify({'error': 'description, amount, and due_date required'}), 400
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'amount must be a non-negative number'}), 400
+    if not math.isfinite(amount) or amount < 0:
+        return jsonify({'error': 'amount must be a non-negative number'}), 400
+    try:
+        date.fromisoformat(due_date)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'due_date must be an ISO date'}), 400
+    if ownership not in {'personal', 'business'}:
+        return jsonify({'error': 'ownership must be personal or business'}), 400
+    if direction not in {'inflow', 'outflow'}:
+        return jsonify({'error': 'direction must be inflow or outflow'}), 400
+    valid_recurrence = {'', 'weekly', 'fortnightly', 'monthly', 'quarterly', 'annual'}
+    if recurrence not in valid_recurrence:
+        return jsonify({'error': 'recurrence is not supported'}), 400
+    recurring = 1 if recurrence else 0
     with get_db() as db:
         if uid:
-            db.execute('UPDATE upcoming_expenses SET description=?, amount=?, due_date=?, recurring=?, category=?, status=? WHERE id=?',
-                       (desc, amount, due_date, data.get('recurring', 0), data.get('category', ''), 'pending', uid))
-        else:
             db.execute(
-                'INSERT INTO upcoming_expenses (description, amount, due_date, recurring, category, status, created_at) VALUES (?,?,?,?,?,?,?)',
-                (desc, amount, due_date, data.get('recurring', 0), data.get('category', ''), 'pending', now)
+                '''UPDATE upcoming_expenses
+                   SET description=?, amount=?, due_date=?, recurring=?,
+                       recurrence=?, category=?, ownership=?, direction=?, status=?
+                   WHERE id=?''',
+                (
+                    desc, amount, due_date, recurring, recurrence,
+                    data.get('category', ''), ownership, direction, 'pending', uid,
+                ),
             )
-    return jsonify({'ok': True})
+        else:
+            cursor = db.execute(
+                '''INSERT INTO upcoming_expenses
+                   (description, amount, due_date, recurring, recurrence, category,
+                    ownership, direction, status, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                (
+                    desc, amount, due_date, recurring, recurrence,
+                    data.get('category', ''), ownership, direction, 'pending', now,
+                ),
+            )
+            uid = cursor.lastrowid
+    return jsonify({'ok': True, 'id': uid})
 
 
 @app.route('/api/budget/upcoming/<int:uid>', methods=['DELETE'])

@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 
-from cashflow import build_forecast
+from cashflow import build_forecast, infer_recurring_events
 
 
 class CashFlowCalendarTests(unittest.TestCase):
@@ -77,6 +77,42 @@ class CashFlowRulesTests(unittest.TestCase):
         )
         self.assertEqual(day["outflows"], 800)
         self.assertEqual(day["closing_balance"], -800)
+
+    def test_safe_to_spend_reserves_outflows_before_next_income(self):
+        transactions = [{
+            "account": "Everyday",
+            "date": "2026-08-03",
+            "amount": 0,
+            "description": "balance",
+            "balance": 2000,
+        }]
+        events = [
+            {
+                "description": "School camp",
+                "amount": 800,
+                "due_date": "2026-08-05",
+                "recurring": "",
+                "ownership": "personal",
+            },
+            {
+                "description": "Salary",
+                "amount": 1000,
+                "due_date": "2026-08-10",
+                "direction": "inflow",
+                "recurring": "",
+                "ownership": "personal",
+            },
+        ]
+
+        result = build_forecast(
+            transactions,
+            events,
+            {"Everyday": "personal"},
+            date(2026, 8, 3),
+            500,
+        )
+
+        self.assertEqual(result["personal"]["safe_to_spend"], 700)
 
     def test_business_inflow_never_increases_personal_balance(self):
         events = [{
@@ -158,6 +194,88 @@ class CashFlowRulesTests(unittest.TestCase):
             event_dates,
             ["2026-08-31", "2026-09-30", "2026-10-31"],
         )
+
+    def test_monthly_event_that_started_before_window_is_not_duplicated(self):
+        events = [{
+            "description": "Month end bill",
+            "amount": 50,
+            "due_date": "2026-01-31",
+            "recurring": "monthly",
+            "ownership": "personal",
+        }]
+
+        result = build_forecast(
+            [], events, {}, date(2026, 8, 1), 0, horizon_days=61
+        )
+
+        event_days = [
+            day
+            for day in result["personal"]["days"]
+            if day["events"]
+        ]
+        self.assertEqual(
+            [(day["date"], len(day["events"])) for day in event_days],
+            [("2026-08-31", 1), ("2026-09-30", 1)],
+        )
+
+
+class RecurrenceInferenceTests(unittest.TestCase):
+    def test_monthly_income_and_bill_are_inferred_from_three_occurrences(self):
+        transactions = [
+            {"account": "Everyday", "date": "2026-05-07", "amount": 4000, "description": "EDEN SALARY 1001"},
+            {"account": "Everyday", "date": "2026-06-07", "amount": 4000, "description": "EDEN SALARY 1002"},
+            {"account": "Everyday", "date": "2026-07-07", "amount": 4000, "description": "EDEN SALARY 1003"},
+            {"account": "Everyday", "date": "2026-05-15", "amount": -100, "description": "INTERNET BILL 501"},
+            {"account": "Everyday", "date": "2026-06-15", "amount": -101, "description": "INTERNET BILL 502"},
+            {"account": "Everyday", "date": "2026-07-15", "amount": -99, "description": "INTERNET BILL 503"},
+        ]
+
+        events = infer_recurring_events(
+            transactions,
+            {"Everyday": "personal"},
+            date(2026, 8, 3),
+        )
+
+        self.assertEqual(
+            events,
+            [
+                {
+                    "description": "EDEN SALARY 1003",
+                    "amount": 4000.0,
+                    "due_date": "2026-08-07",
+                    "recurring": "monthly",
+                    "ownership": "personal",
+                    "direction": "inflow",
+                    "source": "transaction_history",
+                    "confidence": "expected",
+                },
+                {
+                    "description": "INTERNET BILL 503",
+                    "amount": 100.0,
+                    "due_date": "2026-08-15",
+                    "recurring": "monthly",
+                    "ownership": "personal",
+                    "direction": "outflow",
+                    "source": "transaction_history",
+                    "confidence": "expected",
+                },
+            ],
+        )
+
+    def test_irregular_transactions_are_not_inferred(self):
+        transactions = [
+            {"account": "Everyday", "date": "2026-05-01", "amount": -50, "description": "SHOP"},
+            {"account": "Everyday", "date": "2026-05-20", "amount": -50, "description": "SHOP"},
+            {"account": "Everyday", "date": "2026-07-20", "amount": -50, "description": "SHOP"},
+        ]
+
+        events = infer_recurring_events(
+            transactions,
+            {"Everyday": "personal"},
+            date(2026, 8, 3),
+        )
+
+        self.assertEqual(events, [])
 
 
 if __name__ == "__main__":

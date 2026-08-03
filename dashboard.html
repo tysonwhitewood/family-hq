@@ -978,6 +978,7 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
       <div class="card-header">
         <div class="card-title">Personal Cash Flow — Six Months</div>
         <span style="font-size:11px;color:#9CA3AF;margin-left:8px">Four-week planning cycles</span>
+        <button onclick="bdgtEditSafetyBuffer()" style="margin-left:auto;background:#fff;color:#1B4332;border:1px solid #1B4332;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Safety buffer</button>
       </div>
       <div id="bdgt-personal-cashflow-body"><div class="empty-state">Loading…</div></div>
     </div>
@@ -2706,12 +2707,17 @@ function bdgtRenderUpcoming(d) {
   d.upcoming_expenses.forEach(u => {
     total += u.amount;
     const due = u.due_date || '—';
+    const recurrence = u.recurrence || (u.recurring ? 'monthly' : '');
+    const direction = u.direction || 'outflow';
+    const ownership = u.ownership || 'personal';
     html += `<div class="bdgt-upcoming-row">
       <div style="min-width:80px;font-size:12px;color:#6B7280">${due}</div>
-      <div style="flex:1;font-weight:600;font-size:13px">${u.description}${u.recurring ? ' 🔄' : ''}</div>
-      <div style="font-weight:700;font-size:13px;color:#1B4332">${fmt(u.amount)}</div>
+      <div style="flex:1;font-weight:600;font-size:13px">${escHtml(u.description)}${recurrence ? ' 🔄' : ''}
+        <div style="font-size:10px;color:#9CA3AF;font-weight:400">${escHtml(ownership)} · ${escHtml(direction)}${recurrence ? ' · ' + escHtml(recurrence) : ''}</div>
+      </div>
+      <div style="font-weight:700;font-size:13px;color:${direction === 'inflow' ? '#15803D' : '#1B4332'}">${direction === 'inflow' ? '+' : '−'}${bdgtMoney(Math.abs(u.amount))}</div>
       <div class="bdgt-actions">
-        <button onclick="bdgtEditUpcoming(${u.id},'${u.description.replace(/'/g,"\\'")}',${u.amount},'${u.due_date||''}')" title="Edit">✏️</button>
+        <button onclick="bdgtEditUpcoming(${u.id})" title="Edit">✏️</button>
         <button onclick="bdgtDeleteUpcoming(${u.id})" title="Delete">🗑️</button>
       </div>
     </div>`;
@@ -2723,36 +2729,81 @@ function bdgtRenderUpcoming(d) {
 }
 
 function bdgtAddUpcoming() {
-  const desc = prompt('Description (e.g. Car Service):');
+  const desc = prompt('Description (e.g. school camp or TCS payment):');
   if (!desc) return;
   const amt = prompt('Amount ($):');
   if (!amt) return;
   const due = prompt('Due date (YYYY-MM-DD):', new Date().toISOString().slice(0,10));
   if (!due) return;
+  const ownership = (prompt('Personal or business?', 'personal') || '').trim().toLowerCase();
+  if (!['personal','business'].includes(ownership)) return alert('Enter personal or business.');
+  const direction = (prompt('Money coming in or going out? Enter inflow or outflow.', 'outflow') || '').trim().toLowerCase();
+  if (!['inflow','outflow'].includes(direction)) return alert('Enter inflow or outflow.');
+  const recurrence = (prompt('Repeat? Leave blank, or enter weekly, fortnightly, monthly, quarterly or annual.', '') || '').trim().toLowerCase();
   authFetch('/api/budget/upcoming', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ description: desc.trim(), amount: parseFloat(amt), due_date: due })
+    body: JSON.stringify({
+      description: desc.trim(),
+      amount: parseFloat(amt),
+      due_date: due,
+      ownership: ownership,
+      direction: direction,
+      recurrence: recurrence
+    })
   }).then(() => loadBudget());
 }
 
-function bdgtEditUpcoming(id, desc, amt, due) {
-  const newDesc = prompt('Description:', desc);
+function bdgtEditUpcoming(id) {
+  const item = (_bdgtData?.upcoming_expenses || []).find(row => row.id === id);
+  if (!item) return;
+  const newDesc = prompt('Description:', item.description);
   if (!newDesc) return;
-  const newAmt = prompt('Amount ($):', amt);
+  const newAmt = prompt('Amount ($):', item.amount);
   if (!newAmt) return;
-  const newDue = prompt('Due date (YYYY-MM-DD):', due);
+  const newDue = prompt('Due date (YYYY-MM-DD):', item.due_date || '');
   if (!newDue) return;
+  const ownership = (prompt('Personal or business?', item.ownership || 'personal') || '').trim().toLowerCase();
+  if (!['personal','business'].includes(ownership)) return alert('Enter personal or business.');
+  const direction = (prompt('Enter inflow or outflow.', item.direction || 'outflow') || '').trim().toLowerCase();
+  if (!['inflow','outflow'].includes(direction)) return alert('Enter inflow or outflow.');
+  const recurrence = (prompt('Repeat? Leave blank, or enter weekly, fortnightly, monthly, quarterly or annual.', item.recurrence || '') || '').trim().toLowerCase();
   authFetch('/api/budget/upcoming', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ id: id, description: newDesc.trim(), amount: parseFloat(newAmt), due_date: newDue })
+    body: JSON.stringify({
+      id: id,
+      description: newDesc.trim(),
+      amount: parseFloat(newAmt),
+      due_date: newDue,
+      ownership: ownership,
+      direction: direction,
+      recurrence: recurrence
+    })
   }).then(() => loadBudget());
 }
 
 function bdgtDeleteUpcoming(id) {
   if (!confirm('Delete this upcoming expense?')) return;
   authFetch('/api/budget/upcoming/' + id, { method: 'DELETE' }).then(() => loadBudget());
+}
+
+function bdgtEditSafetyBuffer() {
+  const current = _bdgtData?.budget_settings?.safety_buffer ?? 1000;
+  const value = prompt(
+    'Minimum personal cash to protect ($). Safe to spend excludes this amount:',
+    current
+  );
+  if (value === null) return;
+  const safetyBuffer = Number(value);
+  if (!Number.isFinite(safetyBuffer) || safetyBuffer < 0) {
+    return alert('Enter a positive dollar amount or zero.');
+  }
+  authFetch('/api/budget/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({safety_buffer: safetyBuffer})
+  }).then(() => loadBudget());
 }
 
 // ── Six-Month Cash Flow ──
