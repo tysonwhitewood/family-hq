@@ -221,5 +221,107 @@ class DashboardBrowserTests(unittest.TestCase):
         )
 
 
+class DashboardReassignmentPromptTests(unittest.TestCase):
+    """A refused statement re-upload must ask before moving it between accounts."""
+
+    def _run(self, confirm_answer):
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+        except ImportError as error:
+            self.skipTest(f"Selenium is unavailable: {error}")
+
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--window-size=1200,900")
+        options.add_argument("--no-sandbox")
+        try:
+            driver = webdriver.Chrome(options=options)
+        except Exception as error:
+            self.skipTest(f"Headless Chrome is unavailable: {error}")
+        self.addCleanup(driver.quit)
+        driver.set_script_timeout(10)
+        driver.get(Path("dashboard.html").resolve().as_uri())
+
+        return driver.execute_async_script(
+            """
+            const confirmAnswer = arguments[0];
+            const done = arguments[arguments.length - 1];
+            (async () => {
+              document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+              document.getElementById('page-finance').classList.add('active');
+
+              const sent = [];
+              class FakeXhr {
+                constructor() {
+                  this.upload = {};
+                  this.status = 0;
+                  this.responseText = '';
+                }
+                open() {}
+                abort() {}
+                send(formData) {
+                  sent.push(formData);
+                  if (sent.length === 1) {
+                    this.status = 409;
+                    this.responseText = JSON.stringify({
+                      error: 'statement.csv already belongs to Everyday account.',
+                      conflict: 'account_reassignment',
+                      current_account: 'Everyday account'
+                    });
+                  } else {
+                    this.status = 200;
+                    this.responseText = JSON.stringify({
+                      parsed_count: 1,
+                      latest_date: '2026-05-30'
+                    });
+                  }
+                  setTimeout(() => this.onload(), 0);
+                }
+              }
+              window.XMLHttpRequest = FakeXhr;
+
+              let confirmMessage = null;
+              window.confirm = message => { confirmMessage = message; return confirmAnswer; };
+              loadFinance = async () => {};
+
+              _finUploadFile = new File(['30/05/2026,-10.00,Groceries,95.00\\n'], 'statement.csv');
+              document.getElementById('fin-upload-account').value = 'new';
+              document.getElementById('fin-upload-account-name').value = 'Eden Commercial operating';
+              document.getElementById('fin-upload-ownership').value = 'business';
+              document.getElementById('fin-upload-type').value = 'cash';
+
+              finSubmitUpload();
+              await new Promise(resolve => setTimeout(resolve, 50));
+
+              done({
+                requestCount: sent.length,
+                confirmShown: confirmMessage !== null,
+                confirmMentionsAccount: String(confirmMessage || '').includes('Everyday account'),
+                retryConfirmed: sent.length > 1
+                  ? sent[1].get('confirm_reassign')
+                  : null,
+                firstRequestUnconfirmed: sent[0].get('confirm_reassign')
+              });
+            })().catch(error => done({error: String(error), stack: error.stack}));
+            """,
+            confirm_answer,
+        )
+
+    def test_declining_the_prompt_leaves_the_statement_on_its_account(self):
+        result = self._run(False)
+
+        self.assertEqual(result["requestCount"], 1)
+        self.assertTrue(result["confirmShown"])
+        self.assertTrue(result["confirmMentionsAccount"])
+        self.assertIsNone(result["firstRequestUnconfirmed"])
+
+    def test_accepting_the_prompt_retries_the_upload_with_confirmation(self):
+        result = self._run(True)
+
+        self.assertEqual(result["requestCount"], 2)
+        self.assertEqual(result["retryConfirmed"], "true")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,7 +29,9 @@ Currently supported inputs include the existing ING, CBA-style and Great Souther
 
 Credit cards and loans are recorded for history but are not available cash. Credit-card activity can inform recurring spending; loan activity does not. If an offset account is genuinely available cash, classify the offset as **Cash**, not **Loan**.
 
-Give every statement a filename unique to its account. A statement filename is its identity: uploading a file whose name matches a statement already held replaces that statement and moves it, and its transactions, to whichever account is chosen on the second upload. No warning is shown. Date-stamped exports such as `CBA_29.05.26.csv` are safe because each name occurs once. A bank that exports the same default name every time, such as `Transactions.csv`, is not. Rename those to include the account and statement date before uploading, for example `Personal everyday 29.05.26.csv`.
+Give every statement a filename unique to its account. A statement filename is its identity. Uploading a file whose name matches a statement already held by a **different** account is refused, and Family HQ asks whether to move that statement, and its transactions, to the account now selected. Answer no unless the move is genuinely intended: accepting takes the statement away from the account that holds it today.
+
+Date-stamped exports such as `CBA_29.05.26.csv` avoid the question because each name occurs once. A bank that exports the same default name every time, such as `Transactions.csv`, does not. Rename those to include the account and statement date before uploading, for example `Personal everyday 29.05.26.csv`. Re-uploading the same filename to the **same** account is always allowed and simply replaces that snapshot.
 
 ## Review existing statement classifications
 

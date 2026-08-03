@@ -1797,6 +1797,7 @@ def api_finance_upload_csv():
         return jsonify({'error': 'CSV files only'}), 400
     safe_name = f'{safe_name[:-4]}.csv'
 
+    confirm_reassign = request.form.get('confirm_reassign', '').strip().lower() == 'true'
     requested_account_id = request.form.get('account_id', '').strip()
     account = None
     if requested_account_id:
@@ -1872,6 +1873,32 @@ def api_finance_upload_csv():
                     shutil.copy2(destination, backup_path)
 
             with get_db() as db:
+                held = db.execute(
+                    "SELECT a.id, a.name FROM finance_imports i "
+                    "JOIN finance_accounts a ON a.id = i.account_id "
+                    "WHERE i.stored_filename = ?",
+                    (safe_name,),
+                ).fetchone()
+                if held is not None and not confirm_reassign:
+                    if account is not None:
+                        target_id = account['id']
+                    else:
+                        named = db.execute(
+                            "SELECT id FROM finance_accounts WHERE name = ?",
+                            (metadata['name'],),
+                        ).fetchone()
+                        target_id = named['id'] if named is not None else None
+                    if target_id != held['id']:
+                        return jsonify({
+                            'error': (
+                                f"{safe_name} already belongs to {held['name']}. "
+                                "Re-upload it to that account, or rename the file "
+                                "before uploading it here."
+                            ),
+                            'conflict': 'account_reassignment',
+                            'current_account': held['name'],
+                        }), 409
+
                 if account is None:
                     row = db.execute(
                         "SELECT id, name, ownership, account_type, active, created_at, updated_at "

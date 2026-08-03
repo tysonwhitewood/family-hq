@@ -2811,7 +2811,7 @@ function finCloseUploadModal({abortActive = true} = {}) {
   }
 }
 
-function finSubmitUpload() {
+function finSubmitUpload(confirmReassign) {
   const file = _finUploadFile;
   const accountSelect = document.getElementById('fin-upload-account');
   const errorEl = document.getElementById('fin-upload-error');
@@ -2834,6 +2834,7 @@ function finSubmitUpload() {
   } else {
     formData.append('account_id', accountValue);
   }
+  if (confirmReassign) formData.append('confirm_reassign', 'true');
 
   errorEl.style.display = 'none';
   submit.disabled = true;
@@ -2883,6 +2884,12 @@ function finSubmitUpload() {
       finCloseUploadModal({abortActive:false});
       loadFinance();
       return;
+    }
+    if (xhr.status === 409 && payload.conflict === 'account_reassignment') {
+      if (confirm(`${payload.error}\n\nMove it to this account instead?`)) {
+        finSubmitUpload(true);
+        return;
+      }
     }
     const message = payload.error || payload.message || `Server returned ${xhr.status || 'an error'}`;
     finSetUploadStatus('error', `Upload failed — ${message}`, 100);

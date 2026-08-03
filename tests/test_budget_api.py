@@ -266,6 +266,79 @@ class FinanceUploadTests(unittest.TestCase):
             b"30/05/2026,-10.00,Groceries,95.00\n",
         )
 
+    def test_reuploading_stored_filename_against_another_account_is_refused(self):
+        first = self._upload(
+            self.supported_csv,
+            "statement.csv",
+            account_name="Everyday account",
+            ownership="personal",
+            account_type="cash",
+        )
+        self.assertEqual(first.status_code, 200)
+
+        second = self._upload(
+            b"30/05/2026,-10.00,Groceries,95.00\n",
+            "statement.csv",
+            account_name="Eden Commercial operating",
+            ownership="business",
+            account_type="cash",
+        )
+
+        self.assertEqual(second.status_code, 409)
+        payload = second.get_json()
+        self.assertEqual(payload["conflict"], "account_reassignment")
+        self.assertEqual(payload["current_account"], "Everyday account")
+        with family_app.get_db() as db:
+            import_row = db.execute(
+                "SELECT account_id FROM finance_imports WHERE stored_filename = ?",
+                ("statement.csv",),
+            ).fetchone()
+            original = db.execute(
+                "SELECT id FROM finance_accounts WHERE name = ?",
+                ("Everyday account",),
+            ).fetchone()
+            created = db.execute(
+                "SELECT id FROM finance_accounts WHERE name = ?",
+                ("Eden Commercial operating",),
+            ).fetchone()
+        self.assertEqual(import_row["account_id"], original["id"])
+        self.assertIsNone(created)
+        self.assertEqual(
+            (family_app.DATA_DIR / "bank_statements" / "statement.csv").read_bytes(),
+            self.supported_csv,
+        )
+
+    def test_confirmed_reassignment_moves_stored_filename_to_the_new_account(self):
+        first = self._upload(
+            self.supported_csv,
+            "statement.csv",
+            account_name="Everyday account",
+            ownership="personal",
+            account_type="cash",
+        )
+        self.assertEqual(first.status_code, 200)
+
+        second = self._upload(
+            b"30/05/2026,-10.00,Groceries,95.00\n",
+            "statement.csv",
+            account_name="Eden Commercial operating",
+            ownership="business",
+            account_type="cash",
+            confirm_reassign="true",
+        )
+
+        self.assertEqual(second.status_code, 200)
+        with family_app.get_db() as db:
+            import_row = db.execute(
+                "SELECT account_id FROM finance_imports WHERE stored_filename = ?",
+                ("statement.csv",),
+            ).fetchone()
+            moved_to = db.execute(
+                "SELECT id FROM finance_accounts WHERE name = ?",
+                ("Eden Commercial operating",),
+            ).fetchone()
+        self.assertEqual(import_row["account_id"], moved_to["id"])
+
     def test_failed_import_upsert_restores_existing_stored_file(self):
         metadata = {
             "account_name": "Everyday account",
