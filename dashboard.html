@@ -916,7 +916,7 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     <div class="card" style="margin-bottom:16px">
       <div class="card-header">
         <div class="card-title">Recent Transactions</div>
-        <button class="fin-action" type="button" onclick="document.getElementById('fin-upload-file').click()">Upload CSV</button>
+        <button id="fin-upload-open" class="fin-action" type="button" onclick="finChooseUploadFile(this)">Upload CSV</button>
         <input id="fin-upload-file" type="file" accept=".csv,text/csv" onchange="finSelectUploadFile(this)" style="display:none">
       </div>
       <div id="fin-txns-body" style="max-height:280px;overflow-y:auto">
@@ -948,7 +948,7 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
 
 <!-- Finance upload modal -->
 <div id="fin-upload-modal" class="fin-modal" role="dialog" aria-modal="true" aria-labelledby="fin-upload-title">
-  <div class="fin-modal-panel">
+  <div class="fin-modal-panel" tabindex="-1">
     <div id="fin-upload-title" style="font-size:17px;font-weight:750;color:#111827">Add a bank statement</div>
     <p style="margin-top:5px;color:#6B7280;font-size:12px;line-height:1.5">Choose the account this statement belongs to before it is loaded.</p>
 
@@ -999,7 +999,7 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
 
 <!-- Finance account classification modal -->
 <div id="fin-account-modal" class="fin-modal" role="dialog" aria-modal="true" aria-labelledby="fin-account-title">
-  <div class="fin-modal-panel">
+  <div class="fin-modal-panel" tabindex="-1">
     <div id="fin-account-title" style="font-size:17px;font-weight:750;color:#111827">Edit classification</div>
     <p id="fin-account-help" style="margin-top:5px;color:#6B7280;font-size:12px;line-height:1.5"></p>
 
@@ -2465,6 +2465,15 @@ let _finHistory = [];
 let _finAccounts = [];
 let _finUploadFile = null;
 let _finEditingAccount = null;
+let _finUploadXhr = null;
+let _finUploadRequestToken = 0;
+let _finClassificationController = null;
+let _finClassificationRequestToken = 0;
+let _finClassificationTimeout = null;
+let _finActiveModal = null;
+let _finModalOpener = null;
+let _finPendingUploadOpener = null;
+let _finInertBackground = [];
 
 function _finEsc(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -2472,9 +2481,99 @@ function _finEsc(value) {
 }
 
 function _finAccountKey(account) {
-  return account.id == null
-    ? 'legacy:' + String(account.name || '').trim().toLowerCase()
-    : 'registered:' + account.id;
+  if (account.id != null) return 'registered:' + account.id;
+  const sourceFilename = account.source_filenames?.[0] || '';
+  return 'legacy:' + sourceFilename.toLowerCase();
+}
+
+function finInertModalBackground(modal) {
+  _finInertBackground = [];
+  let branch = modal;
+  while (branch.parentElement) {
+    const parent = branch.parentElement;
+    Array.from(parent.children).forEach(element => {
+      if (element === branch || element.tagName === 'SCRIPT') return;
+      _finInertBackground.push({element, wasInert: element.inert});
+      element.inert = true;
+    });
+    if (parent === document.body) break;
+    branch = parent;
+  }
+}
+
+function finRestoreModalBackground() {
+  _finInertBackground.reverse().forEach(({element, wasInert}) => {
+    element.inert = wasInert;
+  });
+  _finInertBackground = [];
+}
+
+function finModalFocusableElements(modal) {
+  const selector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+  return Array.from(modal.querySelectorAll(selector)).filter(element => (
+    element.getAttribute('aria-hidden') !== 'true'
+    && window.getComputedStyle(element).display !== 'none'
+    && element.offsetParent !== null
+  ));
+}
+
+function finHandleModalKeydown(event) {
+  const modal = _finActiveModal;
+  if (!modal) return;
+  if (event.key === 'Escape') {
+    const requestActive = modal.id === 'fin-upload-modal'
+      ? Boolean(_finUploadXhr)
+      : Boolean(_finClassificationController);
+    if (requestActive) {
+      event.preventDefault();
+      return;
+    }
+    event.preventDefault();
+    if (modal.id === 'fin-upload-modal') finCloseUploadModal();
+    else finCloseAccountModal();
+    return;
+  }
+  if (event.key === 'Tab') {
+    const focusable = finModalFocusableElements(modal);
+    if (!focusable.length) {
+      event.preventDefault();
+      modal.querySelector('.fin-modal-panel')?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+}
+
+function finOpenModal(modal, opener) {
+  if (_finActiveModal && _finActiveModal !== modal) return false;
+  if (!_finActiveModal) {
+    _finActiveModal = modal;
+    _finModalOpener = opener || document.activeElement;
+    finInertModalBackground(modal);
+    document.addEventListener('keydown', finHandleModalKeydown, true);
+  }
+  modal.style.display = 'flex';
+  return true;
+}
+
+function finCloseModalShell(modal) {
+  if (_finActiveModal !== modal) return false;
+  modal.style.display = 'none';
+  document.removeEventListener('keydown', finHandleModalKeydown, true);
+  finRestoreModalBackground();
+  const opener = _finModalOpener;
+  _finActiveModal = null;
+  _finModalOpener = null;
+  if (opener?.isConnected) opener.focus();
+  return true;
 }
 
 function finFormatDate(isoDate) {
@@ -2527,7 +2626,7 @@ function _renderCatBars(cats, barColor) {
   return cats.map(([cat, amt]) => {
     const pct = Math.round((amt / maxV) * 100);
     return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
-      <div style="width:100px;color:#374151;font-weight:500;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cat}</div>
+      <div style="width:100px;color:#374151;font-weight:500;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_finEsc(cat)}</div>
       <div style="flex:1;background:#F3F4F6;border-radius:4px;height:8px;overflow:hidden;min-width:40px">
         <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px"></div>
       </div>
@@ -2588,7 +2687,7 @@ async function loadFinance() {
             const season = {now:'🔥',spring:'🌱',winter:'❄️',anytime:'⏳'}[w.season] || '';
             const cost = w.estimated_cost ? '$'+Number(w.estimated_cost).toLocaleString() : '—';
             return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 16px;border-top:1px solid #F3F4F6;font-size:13px">
-              <span style="color:#111">${season} ${w.title}</span>
+              <span style="color:#111">${season} ${_finEsc(w.title)}</span>
               <span style="color:#1B4332;font-weight:700">${cost}</span>
             </div>`;
           }).join('');
@@ -2603,8 +2702,8 @@ async function loadFinance() {
         const sign  = pos ? '+' : '';
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 16px;border-bottom:1px solid #F9FAFB;font-size:13px">
           <div>
-            <div style="color:#111;font-weight:500">${t.description||'—'}</div>
-            <div style="font-size:11px;color:#9CA3AF">${t.date} · ${t.account} · <span style="color:#6B7280">${t.category||''}</span></div>
+            <div style="color:#111;font-weight:500">${_finEsc(t.description || '—')}</div>
+            <div style="font-size:11px;color:#9CA3AF">${_finEsc(t.date)} · ${_finEsc(t.account)} · <span style="color:#6B7280">${_finEsc(t.category || '')}</span></div>
           </div>
           <div style="font-weight:700;color:${color};white-space:nowrap;margin-left:12px">${sign}$${Math.abs(t.amount).toLocaleString('en-AU',{minimumFractionDigits:2})}</div>
         </div>`;
@@ -2642,6 +2741,11 @@ function finPopulateUploadAccounts() {
   finToggleUploadAccountFields();
 }
 
+function finChooseUploadFile(opener) {
+  _finPendingUploadOpener = opener;
+  document.getElementById('fin-upload-file').click();
+}
+
 async function finSelectUploadFile(input) {
   const file = input.files && input.files[0];
   if (!file) return;
@@ -2664,7 +2768,8 @@ async function finSelectUploadFile(input) {
   }
   finPopulateUploadAccounts();
   const modal = document.getElementById('fin-upload-modal');
-  modal.style.display = 'flex';
+  if (!finOpenModal(modal, _finPendingUploadOpener || document.activeElement)) return;
+  _finPendingUploadOpener = null;
   setTimeout(() => document.getElementById('fin-upload-account').focus(), 0);
 }
 
@@ -2684,11 +2789,26 @@ function finUpdateUploadValidity() {
   if (submit) submit.disabled = !(_finUploadFile && validAccount);
 }
 
-function finCloseUploadModal() {
-  document.getElementById('fin-upload-modal').style.display = 'none';
+function finAbortActiveUpload() {
+  _finUploadRequestToken += 1;
+  if (_finUploadXhr) {
+    _finUploadXhr.abort();
+    _finUploadXhr = null;
+  }
+}
+
+function finCloseUploadModal({abortActive = true} = {}) {
+  const cancelledActiveUpload = abortActive && Boolean(_finUploadXhr);
+  if (abortActive) finAbortActiveUpload();
+  const modal = document.getElementById('fin-upload-modal');
+  if (!finCloseModalShell(modal)) return;
   document.getElementById('fin-upload-file').value = '';
   document.getElementById('fin-upload-account-name').value = '';
+  document.getElementById('fin-upload-submit').textContent = 'Upload statement';
   _finUploadFile = null;
+  if (cancelledActiveUpload) {
+    finSetUploadStatus('idle', 'Upload cancelled — no statement was loaded.', 0);
+  }
 }
 
 function finSubmitUpload() {
@@ -2720,18 +2840,33 @@ function finSubmitUpload() {
   submit.textContent = 'Uploading…';
   finSetUploadStatus('uploading', `Uploading ${file.name} — 0%`, 0);
 
+  if (_finUploadXhr) finAbortActiveUpload();
   const xhr = new XMLHttpRequest();
+  const requestToken = ++_finUploadRequestToken;
+  _finUploadXhr = xhr;
+  const isCurrentRequest = () => (
+    requestToken === _finUploadRequestToken && xhr === _finUploadXhr
+  );
+  const finishCurrentRequest = () => {
+    if (!isCurrentRequest()) return false;
+    _finUploadXhr = null;
+    return true;
+  };
   xhr.open('POST', '/api/finance/upload-csv');
   xhr.withCredentials = true;
+  xhr.timeout = 120000;
   xhr.upload.onprogress = event => {
+    if (!isCurrentRequest()) return;
     if (!event.lengthComputable) return;
     const percent = Math.round((event.loaded / event.total) * 100);
     finSetUploadStatus('uploading', `Uploading ${file.name} — ${percent}%`, percent);
   };
   xhr.upload.onload = () => {
+    if (!isCurrentRequest()) return;
     finSetUploadStatus('processing', 'Processing transactions…', 100);
   };
   xhr.onload = () => {
+    if (!finishCurrentRequest()) return;
     let payload = {};
     try {
       payload = JSON.parse(xhr.responseText || '{}');
@@ -2745,10 +2880,7 @@ function finSubmitUpload() {
         `Upload successful — ${payload.parsed_count} transactions loaded, latest ${finFormatDate(payload.latest_date)}`,
         100
       );
-      document.getElementById('fin-upload-modal').style.display = 'none';
-      document.getElementById('fin-upload-file').value = '';
-      document.getElementById('fin-upload-account-name').value = '';
-      _finUploadFile = null;
+      finCloseUploadModal({abortActive:false});
       loadFinance();
       return;
     }
@@ -2759,18 +2891,50 @@ function finSubmitUpload() {
     submit.disabled = false;
   };
   xhr.onerror = () => {
+    if (!finishCurrentRequest()) return;
     submit.textContent = 'Upload statement';
     submit.disabled = false;
     finSetUploadStatus('error', 'Upload failed — check the connection and try again.', 0);
     errorEl.textContent = 'The statement could not be sent. Check the connection and try again.';
     errorEl.style.display = 'block';
   };
+  xhr.ontimeout = () => {
+    if (!finishCurrentRequest()) return;
+    submit.textContent = 'Upload statement';
+    submit.disabled = false;
+    finSetUploadStatus('error', 'Upload failed — the request timed out. Try again.', 0);
+    errorEl.textContent = 'The upload took too long. Check the connection and try again.';
+    errorEl.style.display = 'block';
+  };
+  xhr.onabort = () => {
+    if (!finishCurrentRequest()) return;
+    submit.textContent = 'Upload statement';
+    submit.disabled = false;
+    finSetUploadStatus('error', 'Upload cancelled — the statement was not confirmed.', 0);
+    errorEl.textContent = 'The upload was cancelled. You can try again.';
+    errorEl.style.display = 'block';
+  };
   xhr.send(formData);
 }
 
+function finAbortClassificationSave() {
+  _finClassificationRequestToken += 1;
+  if (_finClassificationTimeout) {
+    clearTimeout(_finClassificationTimeout);
+    _finClassificationTimeout = null;
+  }
+  if (_finClassificationController) {
+    _finClassificationController.abort();
+    _finClassificationController = null;
+  }
+}
+
 function finEditAccount(accountKey) {
+  const modal = document.getElementById('fin-account-modal');
+  if (_finActiveModal && _finActiveModal !== modal) return;
   const account = _finAccounts.find(item => _finAccountKey(item) === accountKey);
   if (!account) return;
+  finAbortClassificationSave();
   _finEditingAccount = account;
   const isLegacy = account.id == null;
   const editFields = document.getElementById('fin-account-edit-fields');
@@ -2807,15 +2971,15 @@ function finEditAccount(accountKey) {
     save.textContent = 'Save classification';
   }
 
-  const modal = document.getElementById('fin-account-modal');
-  modal.style.display = 'flex';
+  if (!finOpenModal(modal, document.activeElement)) return;
   setTimeout(() => {
     document.getElementById(isLegacy ? 'fin-account-link-target' : 'fin-account-name').focus();
   }, 0);
 }
 
-function finCloseAccountModal() {
-  document.getElementById('fin-account-modal').style.display = 'none';
+function finCloseAccountModal({abortActive = true} = {}) {
+  if (abortActive) finAbortClassificationSave();
+  if (!finCloseModalShell(document.getElementById('fin-account-modal'))) return;
   _finEditingAccount = null;
 }
 
@@ -2826,6 +2990,31 @@ async function finSaveAccountClassification() {
   const errorEl = document.getElementById('fin-account-error');
   save.disabled = true;
   errorEl.style.display = 'none';
+  finAbortClassificationSave();
+  const controller = new AbortController();
+  const requestToken = ++_finClassificationRequestToken;
+  let timedOut = false;
+  _finClassificationController = controller;
+  _finClassificationTimeout = setTimeout(() => {
+    if (
+      requestToken === _finClassificationRequestToken
+      && controller === _finClassificationController
+    ) {
+      timedOut = true;
+      controller.abort();
+    }
+  }, 30000);
+  const isCurrentRequest = () => (
+    requestToken === _finClassificationRequestToken
+    && controller === _finClassificationController
+  );
+  const finishCurrentRequest = () => {
+    if (!isCurrentRequest()) return false;
+    clearTimeout(_finClassificationTimeout);
+    _finClassificationTimeout = null;
+    _finClassificationController = null;
+    return true;
+  };
   try {
     if (account.id == null) {
       const accountId = Number(document.getElementById('fin-account-link-target').value);
@@ -2836,9 +3025,11 @@ async function finSaveAccountClassification() {
         const response = await authFetch('/api/finance/accounts/link-legacy', {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({stored_filename: storedFilename, account_id: accountId})
+          body: JSON.stringify({stored_filename: storedFilename, account_id: accountId}),
+          signal: controller.signal
         });
         const payload = await response.json();
+        if (!isCurrentRequest()) return;
         if (!response.ok) throw new Error(payload.error || 'Could not link the statement.');
       }
     } else {
@@ -2851,15 +3042,21 @@ async function finSaveAccountClassification() {
           name,
           ownership: document.getElementById('fin-account-ownership').value,
           account_type: document.getElementById('fin-account-type').value
-        })
+        }),
+        signal: controller.signal
       });
       const payload = await response.json();
+      if (!isCurrentRequest()) return;
       if (!response.ok) throw new Error(payload.error || 'Could not update the account.');
     }
-    finCloseAccountModal();
+    if (!finishCurrentRequest()) return;
+    finCloseAccountModal({abortActive:false});
     await Promise.all([loadFinance(), loadBudget()]);
   } catch (error) {
-    errorEl.textContent = error.message || 'Could not save the classification.';
+    if (!finishCurrentRequest()) return;
+    errorEl.textContent = timedOut
+      ? 'The classification update timed out. Check the connection and try again.'
+      : (error.message || 'Could not save the classification.');
     errorEl.style.display = 'block';
     save.disabled = false;
   }
@@ -2883,15 +3080,15 @@ async function finGetSavingsTips() {
       return;
     }
     const typeIcon = {cancel:'🚫',reduce:'✂️',diy:'🔧',negotiate:'💬',switch:'🔄'};
-    const totalSaving = d.tips.reduce((s, t) => s + (t.saving || 0), 0);
+    const totalSaving = d.tips.reduce((sum, tip) => sum + (Number(tip.saving) || 0), 0);
     body.innerHTML = `<div style="font-size:12px;color:#059669;font-weight:600;margin-bottom:8px">Potential savings: ~$${totalSaving}/month</div>`
       + d.tips.map(t => `<div style="display:flex;gap:10px;padding:8px 0;border-top:1px solid #F3F4F6;font-size:13px;align-items:flex-start">
           <span style="font-size:16px;flex-shrink:0">${typeIcon[t.type]||'💡'}</span>
           <div style="flex:1">
-            <div style="font-weight:600;color:#111">${t.item}</div>
-            <div style="color:#6B7280;font-size:12px">${t.action}</div>
+            <div style="font-weight:600;color:#111">${_finEsc(t.item)}</div>
+            <div style="color:#6B7280;font-size:12px">${_finEsc(t.action)}</div>
           </div>
-          <div style="font-weight:700;color:#059669;white-space:nowrap">~$${t.saving}/mo</div>
+          <div style="font-weight:700;color:#059669;white-space:nowrap">~$${Number(t.saving) || 0}/mo</div>
         </div>`).join('');
   } catch(e) {
     body.innerHTML = '<div style="color:#DC2626;font-size:13px">Could not get suggestions — try again.</div>';
@@ -2922,7 +3119,7 @@ function finBubble(role, text) {
     <div style="max-width:80%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.5;
       background:${isUser?'#1B4332':'#F3F4F6'};color:${isUser?'#fff':'#111'};
       border-bottom-${isUser?'right':'left'}-radius:3px">
-      ${text.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>')}
+      ${_finEsc(text).replace(/\n/g,'<br>')}
     </div>
   </div>`;
 }
