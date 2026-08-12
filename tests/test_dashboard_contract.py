@@ -57,6 +57,20 @@ class DashboardContractTests(unittest.TestCase):
         self.assertNotIn("prompt('Category name", html)
         self.assertNotIn("prompt('Monthly budget", html)
 
+    def test_finance_page_offers_a_categorise_window(self):
+        html = Path("dashboard.html").read_text()
+
+        for marker in [
+            'id="fin-categorise-card"',
+            'id="fin-categorise-body"',
+            "function finLoadCategorise(",
+            "function finSaveMerchantRule(",
+            "function finDeleteMerchantRule(",
+            "/api/finance/uncategorised",
+            "/api/finance/merchant-rules",
+        ]:
+            self.assertIn(marker, html)
+
     def test_budget_headline_shows_the_four_monthly_figures(self):
         html = Path("dashboard.html").read_text()
 

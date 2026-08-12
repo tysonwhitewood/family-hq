@@ -913,6 +913,18 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
       <div id="fin-tips-body" style="padding:0 16px 12px;display:none"></div>
     </div>
 
+    <!-- Categorise transactions -->
+    <div class="card" id="fin-categorise-card" style="margin-bottom:16px;display:none">
+      <div class="card-header">
+        <div class="card-title">Categorise Transactions <span id="fin-categorise-count" style="font-size:11px;color:#DC2626;font-weight:600"></span></div>
+      </div>
+      <div id="fin-categorise-body" style="padding:0 16px 12px"></div>
+      <details style="padding:0 16px 12px">
+        <summary style="font-size:12px;color:#6B7280;cursor:pointer">Saved rules</summary>
+        <div id="fin-rules-body" style="padding-top:8px"></div>
+      </details>
+    </div>
+
     <!-- Recent transactions -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-header">
@@ -2840,8 +2852,86 @@ async function loadFinance() {
       txnsEl.innerHTML = '<div style="padding:16px;color:#9CA3AF;font-size:13px">No transactions loaded.</div>';
     }
     finLoadHistory();
+    finLoadCategorise();
   } catch(e) {
     if (accsEl) accsEl.innerHTML = '<span style="color:#DC2626;font-size:13px">Could not load finance data</span>';
+  }
+}
+
+async function finLoadCategorise() {
+  const card = document.getElementById('fin-categorise-card');
+  const body = document.getElementById('fin-categorise-body');
+  const rulesBody = document.getElementById('fin-rules-body');
+  const countEl = document.getElementById('fin-categorise-count');
+  if (!card || !body) return;
+  try {
+    const [uncatR, rulesR] = await Promise.all([
+      authFetch('/api/finance/uncategorised'),
+      authFetch('/api/finance/merchant-rules'),
+    ]);
+    const uncat = await uncatR.json();
+    const rules = (await rulesR.json()).rules || [];
+    const merchants = uncat.merchants || [];
+    const options = (uncat.categories || [])
+      .map(c => `<option value="${_finEsc(c)}">${_finEsc(c)}</option>`).join('');
+
+    if (rulesBody) {
+      rulesBody.innerHTML = rules.length
+        ? rules.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px;border-top:1px solid #F9FAFB">
+            <span>${_finEsc(r.pattern)} → <strong>${_finEsc(r.category)}</strong></span>
+            <button class="fin-action" type="button" onclick="finDeleteMerchantRule(${r.id})">Delete</button>
+          </div>`).join('')
+        : '<div style="font-size:12px;color:#9CA3AF">No saved rules yet.</div>';
+    }
+
+    if (!merchants.length) {
+      card.style.display = 'none';
+      return;
+    }
+    card.style.display = '';
+    countEl.textContent = `${merchants.length} to sort`;
+    body.innerHTML = merchants.map((m, i) => `
+      <div style="display:grid;grid-template-columns:1fr 60px 90px 160px auto;gap:8px;align-items:center;padding:6px 0;border-top:1px solid #F9FAFB;font-size:13px">
+        <div>
+          <input id="fin-cat-pattern-${i}" class="fin-field" type="text" value="${_finEsc(m.pattern)}" style="font-size:12px;padding:5px 8px">
+          <div style="font-size:10px;color:#9CA3AF;margin-top:2px">${_finEsc(m.sample)}</div>
+        </div>
+        <span style="font-size:11px;color:#6B7280;text-align:center">${m.count}×</span>
+        <span style="font-weight:600;text-align:right">$${Math.abs(m.total).toLocaleString('en-AU',{minimumFractionDigits:2})}</span>
+        <select id="fin-cat-select-${i}" class="fin-field" style="font-size:12px;padding:5px 8px">
+          <option value="">Pick a category…</option>${options}
+        </select>
+        <button class="fin-action primary" type="button" onclick="finSaveMerchantRule(${i})">Save</button>
+      </div>`).join('');
+  } catch (e) {
+    card.style.display = 'none';
+  }
+}
+
+async function finSaveMerchantRule(index) {
+  const pattern = document.getElementById(`fin-cat-pattern-${index}`)?.value.trim();
+  const category = document.getElementById(`fin-cat-select-${index}`)?.value;
+  if (!pattern || !category) return;
+  const response = await authFetch('/api/finance/merchant-rules', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pattern, category})
+  });
+  if (response.ok) {
+    await loadFinance();
+    loadBudget();
+  } else {
+    const payload = await response.json().catch(() => ({}));
+    alert(payload.error || 'Could not save this rule.');
+  }
+}
+
+async function finDeleteMerchantRule(id) {
+  if (!confirm('Delete this categorisation rule?')) return;
+  const response = await authFetch('/api/finance/merchant-rules/' + id, {method: 'DELETE'});
+  if (response.ok) {
+    await loadFinance();
+    loadBudget();
   }
 }
 
@@ -3362,6 +3452,11 @@ async function loadBudget() {
     const r = await authFetch('/api/budget/summary');
     const d = await r.json();
     _bdgtData = d;
+    const datalist = document.getElementById('bdgt-target-categories');
+    if (datalist) {
+      datalist.innerHTML = (d.categories || [])
+        .map(c => `<option value="${escHtml(c)}"></option>`).join('');
+    }
     bdgtRenderHeadline(d);
     bdgtRenderActuals(d);
     bdgtRenderGoals(d);
@@ -3431,8 +3526,11 @@ function bdgtBuildTable(items) {
           <div class="bdgt-bar-bg"><div class="bdgt-bar-fill ${cls}" style="width:${pct}%"></div></div>
           <span style="font-size:11px;color:#6B7280;white-space:nowrap">${Math.round(b.percent_used)}%</span>
         </div>`;
+    const vocabulary = _bdgtData?.categories;
+    const untracked = vocabulary && !vocabulary.includes(b.category) && b.direction !== 'inflow'
+      ? '<div style="font-size:10px;color:#9CA3AF;font-weight:400">no actuals tracked for this name</div>' : '';
     html += `<tr>
-      <td style="font-weight:600">${escHtml(b.category)}</td>
+      <td style="font-weight:600">${escHtml(b.category)}${untracked}</td>
       <td>${fmt(monthly)}${entered}</td>
       <td>${fmt(b.actual)}</td>
       <td style="${remColor}">${fmt(b.remaining)}</td>

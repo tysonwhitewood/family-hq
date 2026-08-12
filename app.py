@@ -9,7 +9,12 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import openpyxl
-from cashflow import FORECAST_MONTHS, build_forecast, infer_recurring_events
+from cashflow import (
+    FORECAST_MONTHS,
+    _normalise_description,
+    build_forecast,
+    infer_recurring_events,
+)
 
 app = Flask(__name__)
 ROOT = Path(__file__).parent
@@ -407,6 +412,12 @@ def init_db():
                 value TEXT NOT NULL,
                 updated_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS merchant_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                category TEXT NOT NULL,
+                created_at TEXT
+            );
         ''')
         for column, definition in [
             ('recurrence', "TEXT DEFAULT ''"),
@@ -429,6 +440,18 @@ def init_db():
                 )
             except sqlite3.OperationalError:
                 pass
+        for pattern, category in [
+            ('our cow', 'Groceries'),
+            ('harvest markets', 'Groceries'),
+            ('zenrows', 'Software & Tools'),
+            ('red bead', 'Education'),
+            ('united', 'Fuel'),
+        ]:
+            db.execute(
+                'INSERT OR IGNORE INTO merchant_rules (pattern, category, created_at) '
+                'VALUES (?, ?, ?)',
+                (pattern, category, datetime.now().isoformat()[:19]),
+            )
         # Seed insurance records — insert each by policy_number if not already present
         now = datetime.now().isoformat()[:19]
         seed_insurances = [
@@ -1493,11 +1516,12 @@ CATEGORY_RULES = [
     ('Groceries',         ['woolworth','coles','aldi','iga','spar','foodworks','spudshed','butcher','bakery','fruit shop','fresh market','harris farm','asian grocer','deli ']),
     ('Dining Out',        ['mcdonald','hungry jacks','kfc','subway','domino','pizza','cafe ','coffee','restaurant','bistro','canteen','grill','burger','sushi','noodle','thai','chinese','indian','hangi','donut','pastry','bakehouse','kebab','mexican','italian','tapas','food court','oporto','guzman','chatime','taco','roll\'d','bar & grill','pub meal']),
     # ── Transport ─────────────────────────────────────────────────────────────
-    ('Fuel',              ['shell','bp ','caltex','7-eleven','ampol','puma fuel','petrol','servo','united petroleum','liberty oil']),
+    ('Fuel',              ['shell ','bp ','caltex','7-eleven','ampol','puma fuel','petrol',' servo','united petroleum','liberty oil']),
     ('Transport',         ['uber','ola ride','didi','taxi','rideshare','translink','opal','myki','limousine','bus ticket']),
     ('Parking / Tolls',   ['wilson parking','secure parking','care park','linkt','citylink','transurban','e-toll','infringement']),
     # ── Family & Kids ─────────────────────────────────────────────────────────
     ('School / Kids',     ['rackley','swim school','school fees','tutor','dance','martial arts','gymnastics','montessori','preschool','daycare','child care','kindy','little athletics','soccer club','football club','cricket club','netball','sport fee']),
+    ('Education',         ['education','curriculum','homeschool','home school','school book','textbook']),
     ('Health & Medical',  ['chemist','pharmacy','priceline','terry white','amcal','doctor','medical centre','hospital','dental','dentist','physio','psychologist','health fund','medibank','bupa','nib ','optical','hearing','specialist','pathology']),
     # ── Home ──────────────────────────────────────────────────────────────────
     ('Home & Garden',     ['bunning','mitre 10','hardware store','nursery','garden centre','plumber','plumbing','electrician','reno','handyman','cleaners','cleaning service','pool ','pest control','locksmith','furniture','ikea','fantastic furn','nick scali','amart','harvey norm','callaway homes','sq *callaway']),
@@ -1529,7 +1553,7 @@ CATEGORY_RULES = [
     ('Staff / Contractors',['contractor pay','freelance','labour hire','staffing agency','recruitment fee','marina winterburn','imt nzd','nzd imt']),
     ('Accounting & Legal',['accountant','bookkeeper','solicitor','legal fee','consulting fee','advisory fee','audit fee','legalvision','legalzoom','doculivery']),
     ('POS & Payments',    ['squareup','tyro','eftpos merchant','stripe fee','pos system','rept.ai']),
-    ('Business Supplies', ['stationery','packaging','signage','uniform','workwear','office supplies','boonah hardware','boonah','mitre 10 trade','total tools','sydney tools']),
+    ('Business Supplies', ['stationery','packaging','signage','uniform','workwear','office supplies','boonah hardware','mitre 10 trade','total tools','sydney tools']),
     ('Freight & Post',    ['australia post','sendle','startrack','fastway','toll ipec','tnt ','courier please','zoom2u','freight','shipping cost']),
     ('Transfers',         ['transfer to','transfer from','pay id','osko','bpay','direct credit','autosave','linked saver']),
 ]
@@ -1665,12 +1689,119 @@ def _finance_upload_lock(save_dir: Path, stored_filename: str):
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
+# Merchant rules are user corrections and always beat the keyword table.
+# Loaded once per process and after every rule change, not per transaction.
+_MERCHANT_RULES_CACHE = None
+
+
+def _invalidate_merchant_rules():
+    global _MERCHANT_RULES_CACHE
+    _MERCHANT_RULES_CACHE = None
+
+
+def _merchant_rules():
+    global _MERCHANT_RULES_CACHE
+    if _MERCHANT_RULES_CACHE is None:
+        with get_db() as db:
+            rows = db.execute(
+                'SELECT pattern, category FROM merchant_rules'
+            ).fetchall()
+        # Longest pattern first so a specific rule beats a broad one.
+        _MERCHANT_RULES_CACHE = sorted(
+            ((row['pattern'].lower(), row['category']) for row in rows),
+            key=lambda rule: len(rule[0]),
+            reverse=True,
+        )
+    return _MERCHANT_RULES_CACHE
+
+
+def _category_vocabulary():
+    return [cat for cat, _ in CATEGORY_RULES]
+
+
 def _categorise(description: str) -> str:
+    normalised = _normalise_description(description)
+    for pattern, category in _merchant_rules():
+        if pattern in normalised:
+            return category
     desc_l = description.lower()
     for cat, keywords in CATEGORY_RULES:
         if any(k in desc_l for k in keywords):
             return cat
-    return 'Other'
+    return 'Uncategorised'
+
+
+@app.route('/api/finance/uncategorised')
+@login_required
+def api_finance_uncategorised():
+    """Uncategorised spending grouped by merchant, most frequent first."""
+    merchants = {}
+    for t in _parse_csv_files():
+        description = t.get('description', '')
+        if _categorise(description) != 'Uncategorised':
+            continue
+        pattern = _normalise_description(description)[:40]
+        if len(pattern) < 3:
+            continue
+        group = merchants.setdefault(pattern, {
+            'pattern': pattern,
+            'count': 0,
+            'total': 0.0,
+            'latest_date': '',
+            'sample': description,
+        })
+        group['count'] += 1
+        group['total'] = round(group['total'] + abs(float(t.get('amount', 0) or 0)), 2)
+        if t.get('date', '') > group['latest_date']:
+            group['latest_date'] = t['date']
+            group['sample'] = description
+    ordered = sorted(
+        merchants.values(), key=lambda g: (-g['count'], -g['total'])
+    )
+    return jsonify({'merchants': ordered, 'categories': _category_vocabulary()})
+
+
+@app.route('/api/finance/merchant-rules')
+@login_required
+def api_merchant_rules_list():
+    with get_db() as db:
+        rows = db.execute(
+            'SELECT id, pattern, category, created_at FROM merchant_rules '
+            'ORDER BY pattern'
+        ).fetchall()
+    return jsonify({'rules': [dict(row) for row in rows]})
+
+
+@app.route('/api/finance/merchant-rules', methods=['POST'])
+@login_required
+def api_merchant_rules_save():
+    data = request.get_json(force=True)
+    pattern = _normalise_description(data.get('pattern', ''))
+    category = str(data.get('category', '')).strip()
+    if len(pattern) < 3:
+        return jsonify({'error': 'pattern must be at least 3 characters'}), 400
+    if category not in _category_vocabulary():
+        return jsonify({'error': 'category is not recognised'}), 400
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO merchant_rules (pattern, category, created_at) VALUES (?, ?, ?) '
+            'ON CONFLICT(pattern) DO UPDATE SET category=excluded.category',
+            (pattern, category, now),
+        )
+    _invalidate_merchant_rules()
+    return jsonify({'ok': True, 'pattern': pattern, 'category': category})
+
+
+@app.route('/api/finance/merchant-rules/<int:rid>', methods=['DELETE'])
+@login_required
+def api_merchant_rules_delete(rid):
+    with get_db() as db:
+        deleted = db.execute('DELETE FROM merchant_rules WHERE id=?', (rid,)).rowcount
+    if not deleted:
+        return jsonify({'error': 'rule not found'}), 404
+    _invalidate_merchant_rules()
+    return jsonify({'ok': True})
 
 
 @app.route('/api/finance/accounts')
@@ -2593,6 +2724,7 @@ def api_budget_summary():
     return jsonify({
         'current_month': current_month,
         'headline': headline,
+        'categories': _category_vocabulary(),
         'budget_vs_actuals': budget_vs_actuals,
         'savings_goals': [dict(g) for g in goals],
         'upcoming_expenses': [dict(u) for u in upcoming],
