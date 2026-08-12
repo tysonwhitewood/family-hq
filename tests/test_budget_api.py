@@ -1025,12 +1025,21 @@ class BudgetTargetForecastTests(unittest.TestCase):
         family_app.DATA_DIR = self.original_data_dir
         self.temp_dir.cleanup()
 
-    def _add_target(self, category, monthly_target, budget_type="personal"):
+    def _add_target(
+        self,
+        category,
+        monthly_target,
+        budget_type="personal",
+        frequency="monthly",
+        direction="outflow",
+    ):
         with family_app.get_db() as db:
             db.execute(
-                "INSERT INTO budget_targets (category, monthly_target, type, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (category, monthly_target, budget_type, "2026-08-01", "2026-08-01"),
+                "INSERT INTO budget_targets "
+                "(category, monthly_target, type, frequency, direction, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (category, monthly_target, budget_type, frequency, direction,
+                 "2026-08-01", "2026-08-01"),
             )
 
     def test_budget_targets_become_a_monthly_outflow_in_every_month(self):
@@ -1059,6 +1068,68 @@ class BudgetTargetForecastTests(unittest.TestCase):
             [month["outflows"] for month in forecast["business"]["months"]],
             [1981.76] * 6,
         )
+
+    def test_an_annual_target_drips_its_monthly_equivalent(self):
+        self._add_target("Council Rates", 3500, frequency="annual")
+
+        forecast = family_app._budget_cash_flow(
+            [], [], forecast_date=date(2026, 8, 3), safety_buffer=0
+        )
+
+        months = forecast["personal"]["months"]
+        self.assertEqual([month["outflows"] for month in months], [291.67] * 6)
+
+    def test_quarterly_and_biannual_targets_normalise_to_monthly(self):
+        self._add_target("Kids Gymnastics", 450, frequency="quarterly")
+        self._add_target("Water", 350, frequency="biannual")
+
+        forecast = family_app._budget_cash_flow(
+            [], [], forecast_date=date(2026, 8, 3), safety_buffer=0
+        )
+
+        months = forecast["personal"]["months"]
+        # 450/3 = 150.0 plus 350/6 = 58.33 each month
+        self.assertEqual([month["outflows"] for month in months], [208.33] * 6)
+
+    def test_an_inflow_target_appears_as_income_in_every_month(self):
+        self._add_target(
+            "Transfer from Eden", 8000, direction="inflow"
+        )
+
+        forecast = family_app._budget_cash_flow(
+            [], [], forecast_date=date(2026, 8, 3), safety_buffer=0
+        )
+
+        months = forecast["personal"]["months"]
+        self.assertEqual([month["inflows"] for month in months], [8000.0] * 6)
+        self.assertEqual([month["outflows"] for month in months], [0.0] * 6)
+
+    def test_an_income_target_survives_a_scheduled_expense_in_the_same_category(self):
+        self._add_target("Insurance", 400, direction="inflow")
+
+        forecast = family_app._budget_cash_flow(
+            [],
+            [{
+                "description": "Insurance refund run-off premium",
+                "amount": 165.90,
+                "due_date": "2026-09-15",
+                "recurring": "monthly",
+                "category": "Insurance",
+                "ownership": "personal",
+                "direction": "outflow",
+            }],
+            forecast_date=date(2026, 8, 3),
+            safety_buffer=0,
+        )
+
+        budgeted_inflows = [
+            event
+            for day in forecast["personal"]["days"]
+            for event in day["events"]
+            if event.get("source") == "budget_target"
+            and event.get("direction") == "inflow"
+        ]
+        self.assertEqual(len(budgeted_inflows), 6)
 
     def test_target_is_skipped_when_its_category_is_already_scheduled(self):
         self._add_target("Insurance", 400)
@@ -1170,6 +1241,122 @@ class BudgetTargetForecastTests(unittest.TestCase):
             [month["outflows"] for month in forecast["personal"]["months"]],
             [1500.0, 1500.0, 1500.0, 1500.0, 2400.0, 1500.0],
         )
+
+
+class BudgetTargetSaveTests(unittest.TestCase):
+    """The targets endpoint must persist and validate frequency and direction."""
+
+    def setUp(self):
+        self.temp_dir = TemporaryDirectory()
+        self.original_db_path = family_app.DB_PATH
+        self.original_data_dir = family_app.DATA_DIR
+        family_app.DATA_DIR = Path(self.temp_dir.name)
+        family_app.DB_PATH = family_app.DATA_DIR / "family.db"
+        family_app.init_db()
+        with family_app.get_db() as db:
+            db.execute("DELETE FROM budget_targets")
+        self.client = family_app.app.test_client()
+        with self.client.session_transaction() as session:
+            session["_user_id"] = family_app.USERNAME
+            session["_fresh"] = True
+
+    def tearDown(self):
+        family_app.DB_PATH = self.original_db_path
+        family_app.DATA_DIR = self.original_data_dir
+        self.temp_dir.cleanup()
+
+    def test_save_persists_frequency_and_direction(self):
+        response = self.client.post(
+            "/api/budget/targets",
+            json={
+                "category": "Council Rates",
+                "monthly_target": 3500,
+                "type": "personal",
+                "frequency": "annual",
+                "direction": "outflow",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with family_app.get_db() as db:
+            row = db.execute(
+                "SELECT frequency, direction FROM budget_targets WHERE category='Council Rates'"
+            ).fetchone()
+        self.assertEqual(row["frequency"], "annual")
+        self.assertEqual(row["direction"], "outflow")
+
+    def test_save_defaults_to_a_monthly_expense(self):
+        response = self.client.post(
+            "/api/budget/targets",
+            json={"category": "Groceries", "monthly_target": 1500},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with family_app.get_db() as db:
+            row = db.execute(
+                "SELECT frequency, direction FROM budget_targets WHERE category='Groceries'"
+            ).fetchone()
+        self.assertEqual(row["frequency"], "monthly")
+        self.assertEqual(row["direction"], "outflow")
+
+    def test_save_rejects_unknown_frequency_and_direction(self):
+        bad_frequency = self.client.post(
+            "/api/budget/targets",
+            json={"category": "Rates", "monthly_target": 3500, "frequency": "daily"},
+        )
+        bad_direction = self.client.post(
+            "/api/budget/targets",
+            json={"category": "Rates", "monthly_target": 3500, "direction": "sideways"},
+        )
+
+        self.assertEqual(bad_frequency.status_code, 400)
+        self.assertIn("frequency", bad_frequency.get_json()["error"])
+        self.assertEqual(bad_direction.status_code, 400)
+        self.assertIn("direction", bad_direction.get_json()["error"])
+        with family_app.get_db() as db:
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) c FROM budget_targets").fetchone()["c"], 0
+            )
+
+    @patch.object(family_app, "_parse_csv_files")
+    def test_summary_headline_sums_monthly_equivalents(self, parse_files):
+        parse_files.return_value = []
+        for category, amount, btype, frequency, direction in [
+            ("Eden Commercial income", 12000, "business", "monthly", "inflow"),
+            ("Transfer to family", 8000, "business", "monthly", "outflow"),
+            ("LegalVision", 500, "business", "monthly", "outflow"),
+            ("Transfer from Eden", 8000, "personal", "monthly", "inflow"),
+            ("Groceries", 1500, "personal", "monthly", "outflow"),
+            ("Council Rates", 3500, "personal", "annual", "outflow"),
+        ]:
+            self.client.post(
+                "/api/budget/targets",
+                json={
+                    "category": category,
+                    "monthly_target": amount,
+                    "type": btype,
+                    "frequency": frequency,
+                    "direction": direction,
+                },
+            )
+
+        response = self.client.get("/api/budget/summary")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["headline"], {
+            "business_income": 12000.0,
+            "business_expenses": 8500.0,
+            "personal_income": 8000.0,
+            "personal_expenses": 1791.67,
+        })
+        by_category = {
+            row["category"]: row for row in payload["budget_vs_actuals"]
+        }
+        rates = by_category["Council Rates"]
+        self.assertEqual(rates["frequency"], "annual")
+        self.assertEqual(rates["monthly_equivalent"], 291.67)
+        self.assertEqual(rates["direction"], "outflow")
 
 
 if __name__ == "__main__":

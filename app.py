@@ -363,8 +363,10 @@ def init_db():
             CREATE TABLE IF NOT EXISTS budget_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT NOT NULL,
-                monthly_target REAL NOT NULL,
+                monthly_target REAL NOT NULL, -- amount as entered, at `frequency`
                 type TEXT DEFAULT 'personal',
+                frequency TEXT DEFAULT 'monthly',
+                direction TEXT DEFAULT 'outflow',
                 created_at TEXT,
                 updated_at TEXT
             );
@@ -414,6 +416,16 @@ def init_db():
             try:
                 db.execute(
                     f'ALTER TABLE upcoming_expenses ADD COLUMN {column} {definition}'
+                )
+            except sqlite3.OperationalError:
+                pass
+        for column, definition in [
+            ('frequency', "TEXT DEFAULT 'monthly'"),
+            ('direction', "TEXT DEFAULT 'outflow'"),
+        ]:
+            try:
+                db.execute(
+                    f'ALTER TABLE budget_targets ADD COLUMN {column} {definition}'
                 )
             except sqlite3.OperationalError:
                 pass
@@ -2313,21 +2325,44 @@ def _forecast_month_starts(start_date):
     return starts
 
 
-def _budget_target_events(scheduled_events, start_date):
-    """Turn monthly budget targets into expected outflows.
+BUDGET_FREQUENCIES = {
+    'weekly': 52 / 12,
+    'fortnightly': 26 / 12,
+    'monthly': 1.0,
+    'quarterly': 1 / 3,
+    'biannual': 1 / 6,
+    'annual': 1 / 12,
+}
 
-    A target is skipped when its category is already represented by a confirmed
-    upcoming expense or a payment inferred from transaction history, so real
-    spending is never counted twice against its own budget.
+
+def _monthly_equivalent(amount, frequency):
+    """Sinking-fund monthly set-aside for an amount entered at `frequency`."""
+    factor = BUDGET_FREQUENCIES.get(frequency or 'monthly', 1.0)
+    return round(float(amount) * factor, 2)
+
+
+def _budget_target_events(scheduled_events, start_date):
+    """Turn budget targets into expected monthly cash events.
+
+    Amounts are normalised to their monthly equivalent (a $3,500 annual bill
+    drips as ~$291/month set aside, never a due-date spike). A target is
+    skipped when its category is already represented by a confirmed upcoming
+    expense or a payment inferred from transaction history in the same
+    direction, so real spending is never counted twice against its own budget.
     """
     covered = set()
     for event in scheduled_events:
         category = event.get('category') or _categorise(event.get('description', ''))
-        covered.add((str(category).strip().lower(), event.get('ownership', 'personal')))
+        covered.add((
+            str(category).strip().lower(),
+            event.get('ownership', 'personal'),
+            event.get('direction', 'outflow'),
+        ))
 
     with get_db() as db:
         targets = db.execute(
-            'SELECT id, category, monthly_target, type FROM budget_targets'
+            'SELECT id, category, monthly_target, type, frequency, direction '
+            'FROM budget_targets'
         ).fetchall()
         overrides = {
             (row['target_id'], row['year_month']): row
@@ -2340,14 +2375,18 @@ def _budget_target_events(scheduled_events, start_date):
     for target in targets:
         ownership = target['type'] or 'personal'
         category = str(target['category'] or '').strip()
-        if (category.lower(), ownership) in covered:
+        direction = target['direction'] or 'outflow'
+        if (category.lower(), ownership, direction) in covered:
             continue
+        monthly_amount = _monthly_equivalent(
+            target['monthly_target'], target['frequency']
+        )
         for month_start in _forecast_month_starts(start_date):
             override = overrides.get((target['id'], month_start.strftime('%Y-%m')))
             if override is not None and override['skipped']:
                 continue
             amount = float(
-                target['monthly_target'] if override is None or override['amount'] is None
+                monthly_amount if override is None or override['amount'] is None
                 else override['amount']
             )
             if amount <= 0:
@@ -2359,7 +2398,7 @@ def _budget_target_events(scheduled_events, start_date):
                 'recurring': '',
                 'category': category,
                 'ownership': ownership,
-                'direction': 'outflow',
+                'direction': direction,
                 'source': 'budget_target',
                 'confidence': 'budgeted',
             })
@@ -2460,9 +2499,7 @@ def api_budget_summary():
     today = date.today()
     current_month = today.strftime('%Y-%m')
 
-    # ── Current month income/expenses ──
-    month_income = 0.0
-    month_expenses = 0.0
+    # ── Current month actual spend per category ──
     cat_actuals = defaultdict(float)  # category -> total spend (positive number)
     SKIP_CATS = {'Transfers'}
 
@@ -2473,10 +2510,6 @@ def api_budget_summary():
         is_biz = _is_business_account(t['account'])
         if t['amount'] < 0 and cat not in SKIP_CATS:
             cat_actuals[(cat, 'business' if is_biz else 'personal')] += abs(t['amount'])
-            if not is_biz:
-                month_expenses += abs(t['amount'])  # personal expenses only
-        elif t['amount'] > 0 and not is_biz:
-            month_income += t['amount']  # personal income only (ING)
 
     # ── Budget targets from SQLite ──
     with get_db() as db:
@@ -2484,19 +2517,33 @@ def api_budget_summary():
         goals = db.execute("SELECT * FROM savings_goals WHERE status='active' ORDER BY priority").fetchall()
         upcoming = db.execute("SELECT * FROM upcoming_expenses WHERE status='pending' ORDER BY due_date").fetchall()
 
+    # Steady-state monthly figures the family runs on, from targets alone.
+    headline = {
+        'business_income': 0.0,
+        'business_expenses': 0.0,
+        'personal_income': 0.0,
+        'personal_expenses': 0.0,
+    }
     budget_vs_actuals = []
     for tgt in targets:
         cat = tgt['category']
         btype = tgt['type'] or 'personal'
+        frequency = tgt['frequency'] or 'monthly'
+        direction = tgt['direction'] or 'outflow'
+        monthly_eq = _monthly_equivalent(tgt['monthly_target'], frequency)
+        headline_key = f"{btype}_{'income' if direction == 'inflow' else 'expenses'}"
+        headline[headline_key] = round(headline[headline_key] + monthly_eq, 2)
         actual = round(cat_actuals.get((cat, btype), 0), 2)
-        target_val = tgt['monthly_target']
-        remaining = round(target_val - actual, 2)
-        pct = round((actual / target_val * 100), 1) if target_val > 0 else 0
+        remaining = round(monthly_eq - actual, 2)
+        pct = round((actual / monthly_eq * 100), 1) if monthly_eq > 0 else 0
         budget_vs_actuals.append({
             'id': tgt['id'],
             'category': cat,
             'type': btype,
-            'target': target_val,
+            'target': tgt['monthly_target'],
+            'frequency': frequency,
+            'direction': direction,
+            'monthly_equivalent': monthly_eq,
             'actual': actual,
             'remaining': remaining,
             'percent_used': pct,
@@ -2545,9 +2592,7 @@ def api_budget_summary():
 
     return jsonify({
         'current_month': current_month,
-        'income': round(month_income, 2),
-        'expenses': round(month_expenses, 2),
-        'net': round(month_income - month_expenses, 2),
+        'headline': headline,
         'budget_vs_actuals': budget_vs_actuals,
         'savings_goals': [dict(g) for g in goals],
         'upcoming_expenses': [dict(u) for u in upcoming],
@@ -2608,17 +2653,23 @@ def api_budget_targets_save():
     cat = data.get('category', '').strip()
     target = data.get('monthly_target', 0)
     btype = data.get('type', 'personal')
+    frequency = (data.get('frequency') or 'monthly').strip().lower()
+    direction = (data.get('direction') or 'outflow').strip().lower()
     tid = data.get('id')
     now = datetime.now().isoformat()[:19]
     if not cat or not target:
         return jsonify({'error': 'category and monthly_target required'}), 400
+    if frequency not in BUDGET_FREQUENCIES:
+        return jsonify({'error': 'frequency must be one of: ' + ', '.join(BUDGET_FREQUENCIES)}), 400
+    if direction not in {'inflow', 'outflow'}:
+        return jsonify({'error': 'direction must be inflow or outflow'}), 400
     with get_db() as db:
         if tid:
-            db.execute('UPDATE budget_targets SET category=?, monthly_target=?, type=?, updated_at=? WHERE id=?',
-                       (cat, target, btype, now, tid))
+            db.execute('UPDATE budget_targets SET category=?, monthly_target=?, type=?, frequency=?, direction=?, updated_at=? WHERE id=?',
+                       (cat, target, btype, frequency, direction, now, tid))
         else:
-            db.execute('INSERT INTO budget_targets (category, monthly_target, type, created_at, updated_at) VALUES (?,?,?,?,?)',
-                       (cat, target, btype, now, now))
+            db.execute('INSERT INTO budget_targets (category, monthly_target, type, frequency, direction, created_at, updated_at) VALUES (?,?,?,?,?,?,?)',
+                       (cat, target, btype, frequency, direction, now, now))
     return jsonify({'ok': True})
 
 
@@ -2768,7 +2819,7 @@ def api_budget_upcoming_save():
         return jsonify({'error': 'ownership must be personal or business'}), 400
     if direction not in {'inflow', 'outflow'}:
         return jsonify({'error': 'direction must be inflow or outflow'}), 400
-    valid_recurrence = {'', 'weekly', 'fortnightly', 'monthly', 'quarterly', 'annual'}
+    valid_recurrence = {'', 'weekly', 'fortnightly', 'monthly', 'quarterly', 'biannual', 'annual'}
     if recurrence not in valid_recurrence:
         return jsonify({'error': 'recurrence is not supported'}), 400
     recurring = 1 if recurrence else 0

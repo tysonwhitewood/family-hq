@@ -87,7 +87,7 @@ def _event_dates(event: dict, start: date, end: date) -> list[date]:
 
     fixed_days = {"weekly": 7, "fortnightly": 14}
     occurrences = []
-    month_step = {"monthly": 1, "quarterly": 3, "annual": 12}.get(recurrence)
+    month_step = {"monthly": 1, "quarterly": 3, "biannual": 6, "annual": 12}.get(recurrence)
     if month_step:
         occurrence_number = 0
         current = first
@@ -130,6 +130,7 @@ def _frequency_for_intervals(intervals: list[int]) -> str:
         ("fortnightly", 14, 2),
         ("monthly", 30, 5),
         ("quarterly", 91, 10),
+        ("biannual", 182, 15),
         ("annual", 365, 20),
     ]
     typical = median(intervals)
@@ -150,7 +151,7 @@ def _next_occurrence(last: date, frequency: str, forecast_start: date) -> date:
             next_date += timedelta(days=fixed_days[frequency])
         return next_date
 
-    month_step = {"monthly": 1, "quarterly": 3, "annual": 12}[frequency]
+    month_step = {"monthly": 1, "quarterly": 3, "biannual": 6, "annual": 12}[frequency]
     occurrence = 1
     next_date = _add_months(last, month_step, last.day)
     while next_date < forecast_start:
@@ -304,8 +305,18 @@ def _build_section(
         was_below = is_below
 
     lowest_day = min(days, key=lambda item: item["closing_balance"])
+    # Budgeted inflows are planning set-asides, not paydays: only genuinely
+    # expected income ends the committed-spending window.
     next_income_index = next(
-        (index for index, day in enumerate(days) if day["inflows"] > 0),
+        (
+            index
+            for index, day in enumerate(days)
+            if any(
+                event["direction"] == "inflow"
+                and event["confidence"] != "budgeted"
+                for event in day["events"]
+            )
+        ),
         len(days),
     )
     committed_before_income = sum(

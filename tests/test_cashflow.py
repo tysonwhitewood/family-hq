@@ -157,6 +157,80 @@ class CashFlowRulesTests(unittest.TestCase):
 
         self.assertEqual(result["personal"]["safe_to_spend"], 700)
 
+    def test_safe_to_spend_treats_budgeted_income_as_planning_not_payday(self):
+        transactions = [{
+            "account": "Everyday",
+            "date": "2026-08-03",
+            "amount": 0,
+            "description": "balance",
+            "balance": 2000,
+        }]
+        events = [
+            {
+                "description": "Transfer from Eden (budgeted)",
+                "amount": 5000,
+                "due_date": "2026-08-03",
+                "recurring": "monthly",
+                "direction": "inflow",
+                "ownership": "personal",
+                "source": "budget_target",
+                "confidence": "budgeted",
+            },
+            {
+                "description": "School camp",
+                "amount": 800,
+                "due_date": "2026-08-05",
+                "recurring": "",
+                "ownership": "personal",
+            },
+        ]
+
+        result = build_forecast(
+            transactions,
+            events,
+            {"Everyday": "personal"},
+            date(2026, 8, 3),
+            500,
+        )
+
+        # No real (non-budgeted) income arrives in the horizon, so every
+        # outflow is committed spending: 2000 - 500 buffer - 800 camp.
+        self.assertEqual(result["personal"]["safe_to_spend"], 700)
+
+    def test_biannual_event_repeats_every_six_months(self):
+        events = [{
+            "description": "Council rates",
+            "amount": 1700,
+            "due_date": "2026-02-10",
+            "recurring": "biannual",
+            "ownership": "personal",
+        }]
+
+        result = build_forecast([], events, {}, date(2026, 8, 3), 0)
+
+        event_dates = [
+            day["date"]
+            for day in result["personal"]["days"]
+            if day["outflows"] > 0
+        ]
+        self.assertEqual(event_dates, ["2026-08-10"])
+        self.assertEqual(result["personal"]["closing_balance"], -1700)
+
+    def test_six_monthly_history_is_inferred_as_biannual(self):
+        transactions = [
+            {"account": "Everyday", "date": "2025-02-10", "amount": -1700, "description": "COUNCIL RATES 1"},
+            {"account": "Everyday", "date": "2025-08-11", "amount": -1700, "description": "COUNCIL RATES 2"},
+            {"account": "Everyday", "date": "2026-02-09", "amount": -1700, "description": "COUNCIL RATES 3"},
+        ]
+
+        events = infer_recurring_events(
+            transactions, {"Everyday": "personal"}, date(2026, 8, 3)
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["recurring"], "biannual")
+        self.assertEqual(events[0]["due_date"], "2026-08-09")
+
     def test_business_inflow_never_increases_personal_balance(self):
         events = [{
             "description": "TCS invoice",

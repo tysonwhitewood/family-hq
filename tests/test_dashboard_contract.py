@@ -42,6 +42,36 @@ class DashboardContractTests(unittest.TestCase):
         self.assertNotIn("prompt('Money coming in or going out?", html)
         self.assertNotIn("prompt('Due date (YYYY-MM-DD):'", html)
 
+    def test_budget_targets_use_a_form_with_frequency_and_direction(self):
+        html = Path("dashboard.html").read_text()
+
+        for marker in [
+            'id="bdgt-target-modal"',
+            'id="bdgt-target-frequency"',
+            'id="bdgt-target-direction"',
+            '<option value="biannual">',
+            "function bdgtSaveTarget(",
+        ]:
+            self.assertIn(marker, html)
+
+        self.assertNotIn("prompt('Category name", html)
+        self.assertNotIn("prompt('Monthly budget", html)
+
+    def test_budget_headline_shows_the_four_monthly_figures(self):
+        html = Path("dashboard.html").read_text()
+
+        for marker in [
+            'id="bdgt-hl-business-income"',
+            'id="bdgt-hl-business-expenses"',
+            'id="bdgt-hl-personal-income"',
+            'id="bdgt-hl-personal-expenses"',
+            "function bdgtRenderHeadline(",
+        ]:
+            self.assertIn(marker, html)
+
+        self.assertNotIn('id="bdgt-gauge"', html)
+        self.assertNotIn("50 / 30 / 20 RULE", html)
+
     def test_dashboard_exposes_forecast_controls(self):
         html = Path("dashboard.html").read_text()
 
