@@ -496,6 +496,11 @@ body {
 .bdgt-cf-stat .value { color: #111827; font-size: 18px; font-weight: 700; margin-top: 5px; }
 .bdgt-cf-stat .value.good { color: #15803D; }
 .bdgt-cf-stat .value.bad { color: #DC2626; }
+.bdgt-month-scroll { overflow-x: auto; margin: 4px 0 10px; }
+.bdgt-month-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 520px; }
+.bdgt-month-table th, .bdgt-month-table td { padding: 6px 8px; text-align: right; border-bottom: 1px solid #F3F4F6; white-space: nowrap; }
+.bdgt-month-table thead th { color: #6B7280; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+.bdgt-month-table tbody th { text-align: left; color: #6B7280; font-weight: 600; }
 .bdgt-cycle { border: 1px solid #E5E7EB; border-radius: 10px; margin-top: 8px; overflow: hidden; }
 .bdgt-cycle summary { cursor: pointer; display: flex; gap: 12px; align-items: center; padding: 12px 14px; background: #FAFAFA; list-style: none; }
 .bdgt-cycle summary::-webkit-details-marker { display: none; }
@@ -1287,13 +1292,13 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     </div>
 
     <!-- Budget vs Actuals — Personal -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Personal Budget vs Actuals</div>
-        <button onclick="bdgtAddTarget('personal', this)" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
-      </div>
+    <details class="card" open>
+      <summary class="bdgt-collapsible-header">
+        <span class="card-title">Personal Budget vs Actuals</span>
+        <button onclick="event.preventDefault();event.stopPropagation();bdgtAddTarget('personal', this)" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
+      </summary>
       <div id="bdgt-personal-table" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
-    </div>
+    </details>
 
     <!-- Six-month forecast — personal first, business separate -->
     <div class="card" id="bdgt-personal-cashflow">
@@ -1322,22 +1327,13 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     </details>
 
     <!-- Budget vs Actuals — Business -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Business Budget vs Actuals</div>
-        <button onclick="bdgtAddTarget('business', this)" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
-      </div>
+    <details class="card">
+      <summary class="bdgt-collapsible-header">
+        <span class="card-title">Business Budget vs Actuals</span>
+        <button onclick="event.preventDefault();event.stopPropagation();bdgtAddTarget('business', this)" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
+      </summary>
       <div id="bdgt-business-table" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
-    </div>
-
-    <!-- Savings Goals -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Savings Goals</div>
-        <button onclick="bdgtAddGoal()" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add Goal</button>
-      </div>
-      <div id="bdgt-goals-container" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
-    </div>
+    </details>
 
     <!-- Upcoming Expenses -->
     <div class="card">
@@ -2753,7 +2749,9 @@ function finRenderAccounts(summaryAccounts) {
           <span class="fin-account-badge ownership">${_finEsc(account.ownership || 'personal')}</span>
           <span class="fin-account-badge">${_finEsc(typeLabels[account.account_type] || account.account_type || 'cash')}</span>
         </div>
-        <div style="font-size:17px;font-weight:700;color:${balanceColour};font-variant-numeric:tabular-nums">${balance}</div>
+        <div style="font-size:17px;font-weight:700;color:${balanceColour};font-variant-numeric:tabular-nums">${balance}
+          ${account.last_date ? `<span style="font-size:10px;font-weight:400;color:#9CA3AF">as of ${lastDate}</span>` : ''}
+        </div>
         <div style="font-size:11px;color:#9CA3AF;margin-top:2px">${Number(account.count || 0)} transactions · last ${lastDate}</div>
         <button class="fin-action" type="button" data-account-key="${_finEsc(account.account_key)}" onclick="finEditAccount(this.dataset.accountKey)" style="margin-top:10px;border-color:#D1D5DB;color:#374151;padding:4px 8px">Edit classification</button>
       </div>`;
@@ -3459,7 +3457,6 @@ async function loadBudget() {
     }
     bdgtRenderHeadline(d);
     bdgtRenderActuals(d);
-    bdgtRenderGoals(d);
     bdgtRenderUpcoming(d);
     renderCashFlow(d.cash_flow);
   } catch (e) {
@@ -3639,80 +3636,6 @@ function bdgtDeleteTarget(id) {
   authFetch('/api/budget/targets/' + id, { method: 'DELETE' }).then(() => loadBudget());
 }
 
-// ── Savings Goals ──
-
-function bdgtRenderGoals(d) {
-  const container = document.getElementById('bdgt-goals-container');
-  if (!d.savings_goals || !d.savings_goals.length) {
-    container.innerHTML = '<div style="padding:12px;color:#9CA3AF;font-size:13px">No savings goals yet. Click + Add Goal to start.</div>';
-    return;
-  }
-  let html = '';
-  d.savings_goals.forEach(g => {
-    const pct = g.target_amount > 0 ? Math.min(100, Math.round(g.current_amount / g.target_amount * 100)) : 0;
-    html += `<div class="bdgt-goal-row">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div>
-          <span style="font-weight:600;font-size:14px">${g.name}</span>
-          ${g.target_date ? '<span style="font-size:11px;color:#9CA3AF;margin-left:8px">Target: ' + g.target_date + '</span>' : ''}
-        </div>
-        <div class="bdgt-actions">
-          <button onclick="bdgtContributeGoal(${g.id})" title="Add contribution">💰</button>
-          <button onclick="bdgtEditGoal(${g.id},'${g.name.replace(/'/g,"\\'")}',${g.target_amount},'${g.target_date||''}')" title="Edit">✏️</button>
-          <button onclick="bdgtDeleteGoal(${g.id})" title="Delete">🗑��</button>
-        </div>
-      </div>
-      <div class="bdgt-goal-bar"><div class="bdgt-goal-fill" style="width:${pct}%"></div></div>
-      <div style="display:flex;justify-content:space-between;font-size:12px;color:#6B7280">
-        <span>${fmt(g.current_amount)} / ${fmt(g.target_amount)}</span>
-        <span style="font-weight:600;color:${pct >= 100 ? '#16a34a' : '#1B4332'}">${pct}%</span>
-      </div>
-    </div>`;
-  });
-  container.innerHTML = html;
-}
-
-function bdgtAddGoal() {
-  const name = prompt('Goal name (e.g. Emergency Fund):');
-  if (!name) return;
-  const target = prompt('Target amount ($):');
-  if (!target) return;
-  const targetDate = prompt('Target date (YYYY-MM-DD, or leave blank):', '');
-  authFetch('/api/budget/goals', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ name: name.trim(), target_amount: parseFloat(target), target_date: targetDate || '' })
-  }).then(() => loadBudget());
-}
-
-function bdgtEditGoal(id, name, target, targetDate) {
-  const newName = prompt('Goal name:', name);
-  if (!newName) return;
-  const newTarget = prompt('Target amount ($):', target);
-  if (!newTarget) return;
-  const newDate = prompt('Target date (YYYY-MM-DD):', targetDate);
-  authFetch('/api/budget/goals', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ id: id, name: newName.trim(), target_amount: parseFloat(newTarget), target_date: newDate || '' })
-  }).then(() => loadBudget());
-}
-
-function bdgtDeleteGoal(id) {
-  if (!confirm('Delete this savings goal?')) return;
-  authFetch('/api/budget/goals/' + id, { method: 'DELETE' }).then(() => loadBudget());
-}
-
-function bdgtContributeGoal(id) {
-  const amt = prompt('Contribution amount ($):');
-  if (!amt || parseFloat(amt) <= 0) return;
-  authFetch('/api/budget/goals/' + id + '/contribute', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ amount: parseFloat(amt) })
-  }).then(() => loadBudget());
-}
-
 // ─�� Upcoming Expenses ──
 
 function bdgtRenderUpcoming(d) {
@@ -3722,9 +3645,11 @@ function bdgtRenderUpcoming(d) {
     return;
   }
   let html = '';
-  let total = 0;
+  let totalOut = 0;
+  let totalIn = 0;
   d.upcoming_expenses.forEach(u => {
-    total += u.amount;
+    if ((u.direction || 'outflow') === 'inflow') totalIn += u.amount;
+    else totalOut += u.amount;
     const due = u.due_date || '—';
     const recurrence = u.recurrence || (u.recurring ? 'monthly' : '');
     const direction = u.direction || 'outflow';
@@ -3742,8 +3667,13 @@ function bdgtRenderUpcoming(d) {
     </div>`;
   });
   html += `<div style="display:flex;justify-content:space-between;padding:12px 0 0;border-top:2px solid #E5E7EB;font-weight:700;font-size:14px">
-    <span>Total Expected</span><span style="color:#DC2626">${fmt(total)}</span>
+    <span>Money out</span><span style="color:#DC2626">${fmt(totalOut)}</span>
   </div>`;
+  if (totalIn > 0) {
+    html += `<div style="display:flex;justify-content:space-between;padding:4px 0 0;font-weight:700;font-size:14px">
+      <span>Money in</span><span style="color:#15803D">${fmt(totalIn)}</span>
+    </div>`;
+  }
   container.innerHTML = html;
 }
 
@@ -3983,6 +3913,24 @@ function bdgtMonthEvents(month) {
   }).join('');
 }
 
+function bdgtMonthColumns(months) {
+  const head = months.map(month =>
+    `<th>${escHtml(month.label.split(' ')[0].slice(0, 3))}</th>`).join('');
+  const cell = (value, colourWhenNegative) => {
+    const bad = colourWhenNegative && value < 0;
+    return `<td style="${bad ? 'color:#DC2626;font-weight:600' : ''}">${bdgtMoney(value)}</td>`;
+  };
+  return `<div class="bdgt-month-scroll"><table class="bdgt-month-table">
+    <thead><tr><th></th>${head}</tr></thead>
+    <tbody>
+      <tr><th>Money in</th>${months.map(m => `<td style="color:#15803D">${bdgtMoney(m.inflows)}</td>`).join('')}</tr>
+      <tr><th>Money out</th>${months.map(m => `<td style="color:#DC2626">${bdgtMoney(m.outflows)}</td>`).join('')}</tr>
+      <tr><th>Closing</th>${months.map(m => cell(m.closing_balance, true)).join('')}</tr>
+      <tr><th>Lowest</th>${months.map(m => cell(m.lowest_balance, true)).join('')}</tr>
+    </tbody>
+  </table></div>`;
+}
+
 function bdgtRenderCashSection(section, options={}) {
   if (!section || !section.months) {
     return '<div class="empty-state">Cash-flow data is not available yet.</div>';
@@ -3990,6 +3938,8 @@ function bdgtRenderCashSection(section, options={}) {
   const safeStat = options.personal
     ? `<div class="bdgt-cf-stat"><div class="label">Safe to spend now</div><div class="value good">${bdgtMoney(section.safe_to_spend)}</div></div>`
     : `<div class="bdgt-cf-stat"><div class="label">Closing balance</div><div class="value">${bdgtMoney(section.closing_balance)}</div></div>`;
+  const asOf = section.balance_as_of
+    ? `<div style="font-size:10px;color:#9CA3AF">as of ${bdgtShortDate(section.balance_as_of)}</div>` : '';
   const warnings = (section.warnings || []).map(warning =>
     `<div class="bdgt-cf-warning">⚠ Projected balance ${bdgtMoney(warning.projected_balance)}
       on ${bdgtShortDate(warning.date)}. Add or defer ${bdgtMoney(warning.amount_required)} to stay above the protected level.</div>`
@@ -4016,11 +3966,12 @@ function bdgtRenderCashSection(section, options={}) {
   }).join('');
   return `<div class="bdgt-cf-shell">
     <div class="bdgt-cf-summary">
-      <div class="bdgt-cf-stat"><div class="label">Available now</div><div class="value">${bdgtMoney(section.opening_balance)}</div></div>
+      <div class="bdgt-cf-stat"><div class="label">Available now</div><div class="value">${bdgtMoney(section.opening_balance)}</div>${asOf}</div>
       ${safeStat}
       <div class="bdgt-cf-stat"><div class="label">Lowest balance</div><div class="value ${section.lowest_balance < 0 ? 'bad' : ''}">${bdgtMoney(section.lowest_balance)}</div></div>
       <div class="bdgt-cf-stat"><div class="label">Lowest date</div><div class="value">${bdgtShortDate(section.lowest_balance_date)}</div></div>
     </div>
+    ${bdgtMonthColumns(section.months)}
     ${warnings}
     ${months}
   </div>`;

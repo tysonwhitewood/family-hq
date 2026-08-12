@@ -2,9 +2,21 @@
 
 ## What the forecast shows
 
-Family HQ projects personal and Eden Commercial cash for the next 182 days. It calculates every calendar day and groups the result into six complete four-week cycles plus a final partial cycle.
+Family HQ projects personal and Eden Commercial cash to the end of the sixth calendar month. It calculates every calendar day and groups the result into calendar months, shown as a table with one column per month (money in, money out, closing balance, lowest balance) and expandable per-month detail below it.
 
 Personal cash is shown first. Eden Commercial and the combined position are collapsed by default. Business cash never increases the personal safe-to-spend figure unless a transfer is entered as a personal inflow and business outflow.
+
+The four figures at the top of the Budget page come from the budget items alone: Eden income a month, Eden expenses a month, the transfer to personal a month, and personal expenses a month. Until a personal income item exists, the transfer box shows the personal expenses total as "Transfer needed".
+
+## Budget items
+
+Add or edit budget items with the **+ Add** button on either Budget vs Actuals card. Enter the amount the bill actually is and how often it happens — weekly, fortnightly, monthly, quarterly, every 6 months, or annually. Family HQ sets aside the monthly equivalent automatically: $3,500 of annual council rates appears as about $291 a month, matching the practice of moving a fixed amount into the future-expenses account each month rather than absorbing the bill when it lands.
+
+Income is a budget item whose **Money** field is "Coming in". Enter Eden Commercial's expected monthly income as a business inflow, the monthly family transfer as a business outflow, and the same transfer as a personal inflow. The forecast then shows income in every month instead of six months of spending with no pay.
+
+## Categorising transactions
+
+Family HQ categorises transactions by merchant rules first, then built-in keywords. Anything it cannot place is **Uncategorised** and appears in the **Categorise Transactions** card on the Finance page, grouped by merchant with the most frequent first. Pick a category and save: the rule applies to every existing and future transaction of that merchant. Delete a bad rule under **Saved rules** in the same card.
 
 ## Initial statement upload
 
@@ -53,7 +65,7 @@ Use **Upcoming Expenses → Add** for every known event:
 2. Enter the amount and due date.
 3. Choose `personal` or `business`.
 4. Choose `outflow` for a payment or `inflow` for money expected.
-5. Leave recurrence blank for a one-off event, or enter `weekly`, `fortnightly`, `monthly`, `quarterly` or `annual`.
+5. Leave recurrence blank for a one-off event, or enter `weekly`, `fortnightly`, `monthly`, `quarterly`, `biannual` or `annual`.
 
 Enter separate events when a camp or birthday has deposits and final payments on different dates.
 
@@ -63,19 +75,19 @@ Open **Personal Cash Flow → Safety buffer** and enter the minimum personal cas
 
 The safe-to-spend figure is current personal cash less this buffer. A warning appears when the daily forecast first drops below the protected amount.
 
-## Reading a four-week cycle
+## Reading a month
 
-Each cycle shows:
+The month-columns table gives the whole horizon at a glance. Each expandable month below it shows:
 
 - money expected in;
 - money expected out;
-- balance at the end of the cycle;
-- the lowest balance reached during the cycle;
+- balance at the end of the month;
+- the lowest balance reached during the month;
 - confirmed events and their dates.
 
-Cycle 1 opens automatically. Expand later cycles to inspect camps, birthdays, annual bills or other events further ahead.
+The current month opens automatically. Expand later months to inspect camps, birthdays, annual bills or other events further ahead.
 
-The seventh cycle is intentionally shorter. A rolling six-calendar-month window is 182 days, while six full four-week cycles cover 168 days.
+Every balance is only as fresh as the newest uploaded statement: the "as of" date beside **Available now** and on each account card shows when the balance was last confirmed by real bank data.
 
 ## Weekly update
 

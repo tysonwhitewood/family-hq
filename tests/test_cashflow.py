@@ -197,6 +197,37 @@ class CashFlowRulesTests(unittest.TestCase):
         # outflow is committed spending: 2000 - 500 buffer - 800 camp.
         self.assertEqual(result["personal"]["safe_to_spend"], 700)
 
+    def test_sections_report_when_their_opening_balance_was_last_confirmed(self):
+        transactions = [
+            {"account": "Everyday", "date": "2026-08-03", "amount": -10,
+             "description": "coffee", "balance": 2000},
+            {"account": "Dormant saver", "date": "2026-06-01", "amount": 5,
+             "description": "interest", "balance": 100},
+            {"account": "Eden operating", "date": "2026-07-28", "amount": -50,
+             "description": "software", "balance": 9000},
+        ]
+
+        result = build_forecast(
+            transactions,
+            [],
+            {"Everyday": "personal", "Dormant saver": "personal",
+             "Eden operating": "business"},
+            date(2026, 8, 12),
+            0,
+        )
+
+        # The freshest statement per side dates the balance, so one dormant
+        # account cannot make the whole section look ancient.
+        self.assertEqual(result["personal"]["balance_as_of"], "2026-08-03")
+        self.assertEqual(result["business"]["balance_as_of"], "2026-07-28")
+        self.assertEqual(result["combined"]["balance_as_of"], "2026-08-03")
+
+    def test_balance_as_of_is_null_without_any_balances(self):
+        result = build_forecast([], [], {}, date(2026, 8, 12), 0)
+
+        self.assertIsNone(result["personal"]["balance_as_of"])
+        self.assertIsNone(result["combined"]["balance_as_of"])
+
     def test_biannual_event_repeats_every_six_months(self):
         events = [{
             "description": "Council rates",

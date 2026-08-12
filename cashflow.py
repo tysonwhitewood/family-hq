@@ -231,7 +231,7 @@ def infer_recurring_events(
 def _opening_balances(
     transactions: list[dict],
     account_ownership: dict[str, str],
-) -> dict[str, float]:
+) -> tuple[dict[str, float], dict[str, str | None]]:
     latest: dict[str, tuple[str, float]] = {}
     for transaction in transactions:
         balance = transaction.get("balance")
@@ -244,12 +244,17 @@ def _opening_balances(
             latest[account] = (transaction_date, float(balance))
 
     totals = {"personal": 0.0, "business": 0.0}
-    for account, (_, balance) in latest.items():
+    # Freshest statement per side; one dormant account must not date the
+    # whole section, and the balance is only as current as the newest data.
+    as_of: dict[str, str | None] = {"personal": None, "business": None}
+    for account, (balance_date, balance) in latest.items():
         ownership = account_ownership.get(account, "personal")
         if ownership not in totals:
             ownership = "personal"
         totals[ownership] += balance
-    return {key: round(value, 2) for key, value in totals.items()}
+        if balance_date and (as_of[ownership] is None or balance_date > as_of[ownership]):
+            as_of[ownership] = balance_date
+    return {key: round(value, 2) for key, value in totals.items()}, as_of
 
 
 def _build_section(
@@ -381,7 +386,7 @@ def build_forecast(
     if horizon_months <= 0:
         raise ValueError("horizon_months must be positive")
     horizon_days = _horizon_days(today, horizon_months)
-    opening = _opening_balances(transactions, account_ownership)
+    opening, balance_as_of = _opening_balances(transactions, account_ownership)
     personal = _build_section(
         "personal",
         opening["personal"],
@@ -398,7 +403,12 @@ def build_forecast(
         horizon_days,
         0.0,
     )
+    personal["balance_as_of"] = balance_as_of["personal"]
+    business["balance_as_of"] = balance_as_of["business"]
     combined = _combine_sections(personal, business, today)
+    combined["balance_as_of"] = max(
+        (value for value in balance_as_of.values() if value), default=None
+    )
     return {
         "start_date": today.isoformat(),
         "end_date": (today + timedelta(days=horizon_days - 1)).isoformat(),

@@ -86,6 +86,26 @@ class DashboardContractTests(unittest.TestCase):
         self.assertNotIn('id="bdgt-gauge"', html)
         self.assertNotIn("50 / 30 / 20 RULE", html)
 
+    def test_cash_flow_leads_with_months_as_columns(self):
+        html = Path("dashboard.html").read_text()
+
+        for marker in [
+            "function bdgtMonthColumns(",
+            'class="bdgt-month-table"',
+            "balance_as_of",
+        ]:
+            self.assertIn(marker, html)
+
+    def test_savings_goals_are_gone_and_upcoming_totals_split_by_direction(self):
+        html = Path("dashboard.html").read_text()
+
+        self.assertNotIn("bdgt-goals-container", html)
+        self.assertNotIn("bdgtRenderGoals", html)
+        self.assertNotIn("Savings Goals", html)
+        self.assertNotIn("Total Expected", html)
+        self.assertIn("<span>Money out</span>", html)
+        self.assertIn("<span>Money in</span>", html)
+
     def test_dashboard_exposes_forecast_controls(self):
         html = Path("dashboard.html").read_text()
 

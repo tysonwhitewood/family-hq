@@ -2406,33 +2406,6 @@ def api_finance_chat_history():
 
 # ── Budget ───────────────────────────────────────────────────────────────────
 
-def _bdgt_detect_recurring(transactions):
-    """Detect recurring expenses: transactions with similar descriptions appearing in 2+ months."""
-    from collections import defaultdict
-    desc_months = defaultdict(lambda: {'months': set(), 'amounts': []})
-    for t in transactions:
-        if t['amount'] >= 0:
-            continue
-        # Normalise description: strip digits/spaces, lowercase, first 40 chars
-        norm = re.sub(r'[0-9]+', '', t['description']).strip().lower()[:40]
-        if len(norm) < 4:
-            continue
-        month = t['date'][:7]
-        desc_months[norm]['months'].add(month)
-        desc_months[norm]['amounts'].append(abs(t['amount']))
-    recurring = []
-    for desc, data in desc_months.items():
-        if len(data['months']) >= 2:
-            avg_amt = round(sum(data['amounts']) / len(data['amounts']), 2)
-            recurring.append({
-                'description': desc,
-                'avg_amount': avg_amt,
-                'frequency': len(data['months']),
-            })
-    recurring.sort(key=lambda x: -x['avg_amount'])
-    return recurring[:20]
-
-
 def _get_budget_safety_buffer():
     with get_db() as db:
         row = db.execute(
@@ -2645,7 +2618,6 @@ def api_budget_summary():
     # ── Budget targets from SQLite ──
     with get_db() as db:
         targets = db.execute('SELECT * FROM budget_targets ORDER BY monthly_target DESC').fetchall()
-        goals = db.execute("SELECT * FROM savings_goals WHERE status='active' ORDER BY priority").fetchall()
         upcoming = db.execute("SELECT * FROM upcoming_expenses WHERE status='pending' ORDER BY due_date").fetchall()
 
     # Steady-state monthly figures the family runs on, from targets alone.
@@ -2680,45 +2652,6 @@ def api_budget_summary():
             'percent_used': pct,
         })
 
-    # ── 3-month forecast — ING personal account only ──
-    monthly_in = defaultdict(float)
-    monthly_out = defaultdict(float)
-    for t in transactions:
-        if _is_business_account(t['account']):
-            continue  # personal forecast only — exclude CBA/business accounts
-        month = t['date'][:7]
-        if t['amount'] > 0:
-            monthly_in[month] += t['amount']  # includes transfers in from business (salary)
-        elif t['amount'] < 0 and _categorise(t['description']) not in SKIP_CATS:
-            monthly_out[month] += abs(t['amount'])
-
-    # Get last 3 complete months (not current month)
-    past_months = sorted([m for m in set(list(monthly_in.keys()) + list(monthly_out.keys())) if m < current_month], reverse=True)[:3]
-    avg_in = round(sum(monthly_in[m] for m in past_months) / max(len(past_months), 1), 2)
-    avg_out = round(sum(monthly_out[m] for m in past_months) / max(len(past_months), 1), 2)
-
-    # Sum upcoming expenses per future month
-    upcoming_by_month = defaultdict(float)
-    for ue in upcoming:
-        m = ue['due_date'][:7] if ue['due_date'] else ''
-        if m:
-            upcoming_by_month[m] += ue['amount']
-
-    forecast = []
-    for i in range(1, 4):
-        fm = (today.replace(day=1) + timedelta(days=32 * i)).strftime('%Y-%m')
-        proj_out = round(avg_out + upcoming_by_month.get(fm, 0), 2)
-        net = round(avg_in - proj_out, 2)
-        forecast.append({
-            'month': fm,
-            'income': avg_in,
-            'expenses': proj_out,
-            'net': net,
-            'flagged': net < 0,
-        })
-
-    # ── Recurring detection ──
-    recurring = _bdgt_detect_recurring(transactions)
     cash_flow = _budget_cash_flow(transactions, upcoming)
 
     return jsonify({
@@ -2726,10 +2659,7 @@ def api_budget_summary():
         'headline': headline,
         'categories': _category_vocabulary(),
         'budget_vs_actuals': budget_vs_actuals,
-        'savings_goals': [dict(g) for g in goals],
         'upcoming_expenses': [dict(u) for u in upcoming],
-        'recurring_detected': recurring,
-        'forecast': forecast,
         'cash_flow': cash_flow,
         'budget_settings': {
             'safety_buffer': cash_flow['safety_buffer'],
@@ -2873,52 +2803,6 @@ def api_budget_target_months_save(tid):
 def api_budget_targets_delete(tid):
     with get_db() as db:
         db.execute('DELETE FROM budget_targets WHERE id=?', (tid,))
-    return jsonify({'ok': True})
-
-
-@app.route('/api/budget/goals', methods=['POST'])
-@login_required
-def api_budget_goals_save():
-    """Create or update a savings goal."""
-    data = request.get_json(force=True)
-    name = data.get('name', '').strip()
-    target_amount = data.get('target_amount', 0)
-    gid = data.get('id')
-    now = datetime.now().isoformat()[:19]
-    if not name or not target_amount:
-        return jsonify({'error': 'name and target_amount required'}), 400
-    with get_db() as db:
-        if gid:
-            db.execute('UPDATE savings_goals SET name=?, target_amount=?, target_date=?, updated_at=? WHERE id=?',
-                       (name, target_amount, data.get('target_date', ''), now, gid))
-        else:
-            db.execute(
-                'INSERT INTO savings_goals (name, target_amount, current_amount, priority, status, target_date, created_at, updated_at) VALUES (?,?,0,1,\'active\',?,?,?)',
-                (name, target_amount, data.get('target_date', ''), now, now)
-            )
-    return jsonify({'ok': True})
-
-
-@app.route('/api/budget/goals/<int:gid>', methods=['DELETE'])
-@login_required
-def api_budget_goals_delete(gid):
-    with get_db() as db:
-        db.execute('DELETE FROM savings_goals WHERE id=?', (gid,))
-    return jsonify({'ok': True})
-
-
-@app.route('/api/budget/goals/<int:gid>/contribute', methods=['POST'])
-@login_required
-def api_budget_goals_contribute(gid):
-    """Add a contribution to a savings goal."""
-    data = request.get_json(force=True)
-    amount = data.get('amount', 0)
-    if not amount or amount <= 0:
-        return jsonify({'error': 'positive amount required'}), 400
-    now = datetime.now().isoformat()[:19]
-    with get_db() as db:
-        db.execute('UPDATE savings_goals SET current_amount = current_amount + ?, updated_at=? WHERE id=?',
-                   (amount, now, gid))
     return jsonify({'ok': True})
 
 

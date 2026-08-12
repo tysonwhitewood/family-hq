@@ -1319,6 +1319,25 @@ class BudgetTargetSaveTests(unittest.TestCase):
             )
 
     @patch.object(family_app, "_parse_csv_files")
+    def test_summary_no_longer_carries_goals_or_dead_forecast_blocks(self, parse_files):
+        parse_files.return_value = []
+
+        payload = self.client.get("/api/budget/summary").get_json()
+
+        self.assertNotIn("savings_goals", payload)
+        self.assertNotIn("forecast", payload)
+        self.assertNotIn("recurring_detected", payload)
+
+    def test_savings_goal_endpoints_are_gone(self):
+        save = self.client.post(
+            "/api/budget/goals", json={"name": "Emergency", "target_amount": 1000}
+        )
+        contribute = self.client.post("/api/budget/goals/1/contribute", json={"amount": 5})
+
+        self.assertEqual(save.status_code, 404)
+        self.assertEqual(contribute.status_code, 404)
+
+    @patch.object(family_app, "_parse_csv_files")
     def test_summary_headline_sums_monthly_equivalents(self, parse_files):
         parse_files.return_value = []
         for category, amount, btype, frequency, direction in [
