@@ -1173,7 +1173,7 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
         </div>
         <div>
           <label class="fin-field-label" for="bdgt-target-ownership">Whose</label>
-          <select id="bdgt-target-ownership" class="fin-field">
+          <select id="bdgt-target-ownership" class="fin-field" onchange="bdgtFillCategoryList()">
             <option value="personal">Personal</option>
             <option value="business">Eden Commercial</option>
           </select>
@@ -1292,7 +1292,7 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     </div>
 
     <!-- Budget vs Actuals — Personal -->
-    <details class="card" open>
+    <details class="card">
       <summary class="bdgt-collapsible-header">
         <span class="card-title">Personal Budget vs Actuals</span>
         <button onclick="event.preventDefault();event.stopPropagation();bdgtAddTarget('personal', this)" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
@@ -2870,7 +2870,8 @@ async function finLoadCategorise() {
     const uncat = await uncatR.json();
     const rules = (await rulesR.json()).rules || [];
     const merchants = uncat.merchants || [];
-    const options = (uncat.categories || [])
+    const categories = uncat.categories || {};
+    const optionsFor = ownership => (categories[ownership] || categories.both || [])
       .map(c => `<option value="${_finEsc(c)}">${_finEsc(c)}</option>`).join('');
 
     if (rulesBody) {
@@ -2889,15 +2890,16 @@ async function finLoadCategorise() {
     card.style.display = '';
     countEl.textContent = `${merchants.length} to sort`;
     body.innerHTML = merchants.map((m, i) => `
-      <div style="display:grid;grid-template-columns:1fr 60px 90px 160px auto;gap:8px;align-items:center;padding:6px 0;border-top:1px solid #F9FAFB;font-size:13px">
+      <div style="display:grid;grid-template-columns:1fr 84px 60px 90px 160px auto;gap:8px;align-items:center;padding:6px 0;border-top:1px solid #F9FAFB;font-size:13px">
         <div>
           <input id="fin-cat-pattern-${i}" class="fin-field" type="text" value="${_finEsc(m.pattern)}" style="font-size:12px;padding:5px 8px">
           <div style="font-size:10px;color:#9CA3AF;margin-top:2px">${_finEsc(m.sample)}</div>
         </div>
+        <span class="fin-account-badge ownership" style="justify-self:start">${_finEsc(m.ownership === 'business' ? 'Eden' : m.ownership === 'both' ? 'both' : 'personal')}</span>
         <span style="font-size:11px;color:#6B7280;text-align:center">${m.count}×</span>
         <span style="font-weight:600;text-align:right">$${Math.abs(m.total).toLocaleString('en-AU',{minimumFractionDigits:2})}</span>
         <select id="fin-cat-select-${i}" class="fin-field" style="font-size:12px;padding:5px 8px">
-          <option value="">Pick a category…</option>${options}
+          <option value="">Pick a category…</option>${optionsFor(m.ownership)}
         </select>
         <button class="fin-action primary" type="button" onclick="finSaveMerchantRule(${i})">Save</button>
       </div>`).join('');
@@ -3450,11 +3452,7 @@ async function loadBudget() {
     const r = await authFetch('/api/budget/summary');
     const d = await r.json();
     _bdgtData = d;
-    const datalist = document.getElementById('bdgt-target-categories');
-    if (datalist) {
-      datalist.innerHTML = (d.categories || [])
-        .map(c => `<option value="${escHtml(c)}"></option>`).join('');
-    }
+    bdgtFillCategoryList();
     bdgtRenderHeadline(d);
     bdgtRenderActuals(d);
     bdgtRenderUpcoming(d);
@@ -3523,7 +3521,7 @@ function bdgtBuildTable(items) {
           <div class="bdgt-bar-bg"><div class="bdgt-bar-fill ${cls}" style="width:${pct}%"></div></div>
           <span style="font-size:11px;color:#6B7280;white-space:nowrap">${Math.round(b.percent_used)}%</span>
         </div>`;
-    const vocabulary = _bdgtData?.categories;
+    const vocabulary = (_bdgtData?.categories || {})[b.type];
     const untracked = vocabulary && !vocabulary.includes(b.category) && b.direction !== 'inflow'
       ? '<div style="font-size:10px;color:#9CA3AF;font-weight:400">no actuals tracked for this name</div>' : '';
     html += `<tr>
@@ -3562,9 +3560,18 @@ function bdgtOpenTargetModal(item, btype, opener) {
   document.getElementById('bdgt-target-ownership').value = item ? (item.type || 'personal') : (btype || 'personal');
   document.getElementById('bdgt-target-error').style.display = 'none';
   document.getElementById('bdgt-target-save').disabled = false;
+  bdgtFillCategoryList();
   bdgtUpdateTargetNote();
   if (!finOpenModal(modal, opener || document.activeElement)) return;
   setTimeout(() => document.getElementById('bdgt-target-category').focus(), 0);
+}
+
+function bdgtFillCategoryList() {
+  const datalist = document.getElementById('bdgt-target-categories');
+  if (!datalist) return;
+  const ownership = document.getElementById('bdgt-target-ownership')?.value || 'personal';
+  const categories = (_bdgtData?.categories || {})[ownership] || [];
+  datalist.innerHTML = categories.map(c => `<option value="${escHtml(c)}"></option>`).join('');
 }
 
 function bdgtCloseTargetModal({restoreFocus = true} = {}) {
@@ -3940,6 +3947,11 @@ function bdgtRenderCashSection(section, options={}) {
     : `<div class="bdgt-cf-stat"><div class="label">Closing balance</div><div class="value">${bdgtMoney(section.closing_balance)}</div></div>`;
   const asOf = section.balance_as_of
     ? `<div style="font-size:10px;color:#9CA3AF">as of ${bdgtShortDate(section.balance_as_of)}</div>` : '';
+  // Every balance below is meaningless while nothing is coming in.
+  const noIncome = section.months.every(month => !month.inflows)
+    ? `<div class="bdgt-cf-warning">No income budgeted yet — these balances only count money going out.
+        Add a budget item with Money set to “Coming in” so the forecast shows what arrives each month.</div>`
+    : '';
   const warnings = (section.warnings || []).map(warning =>
     `<div class="bdgt-cf-warning">⚠ Projected balance ${bdgtMoney(warning.projected_balance)}
       on ${bdgtShortDate(warning.date)}. Add or defer ${bdgtMoney(warning.amount_required)} to stay above the protected level.</div>`
@@ -3971,6 +3983,7 @@ function bdgtRenderCashSection(section, options={}) {
       <div class="bdgt-cf-stat"><div class="label">Lowest balance</div><div class="value ${section.lowest_balance < 0 ? 'bad' : ''}">${bdgtMoney(section.lowest_balance)}</div></div>
       <div class="bdgt-cf-stat"><div class="label">Lowest date</div><div class="value">${bdgtShortDate(section.lowest_balance_date)}</div></div>
     </div>
+    ${noIncome}
     ${bdgtMonthColumns(section.months)}
     ${warnings}
     ${months}

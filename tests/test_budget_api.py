@@ -832,8 +832,12 @@ class FinanceAccountRuleTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(len(payload["accounts"]), 2)
-        self.assertEqual(payload["category_spend_business"]["Groceries"], 20)
+        # Ownership drives which category list applies: groceries are a
+        # household category, so the same merchant on the business account
+        # cannot be filed as one.
         self.assertEqual(payload["category_spend_personal"]["Groceries"], 30)
+        self.assertNotIn("Groceries", payload["category_spend_business"])
+        self.assertEqual(payload["category_spend_business"]["Uncategorised"], 20)
 
     @patch.object(family_app, "_parse_csv_files")
     def test_finance_summary_excludes_loan_spending(self, parse_files):

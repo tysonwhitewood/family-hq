@@ -68,8 +68,18 @@ class DashboardContractTests(unittest.TestCase):
             "function finDeleteMerchantRule(",
             "/api/finance/uncategorised",
             "/api/finance/merchant-rules",
+            "optionsFor(m.ownership)",
         ]:
             self.assertIn(marker, html)
+
+    def test_budget_page_opens_on_the_cash_flow_not_the_target_table(self):
+        html = Path("dashboard.html").read_text()
+
+        personal_card = html[html.index("Personal Budget vs Actuals") - 200:
+                             html.index("Personal Budget vs Actuals")]
+        self.assertNotIn("<details class=\"card\" open>", personal_card)
+        self.assertIn("function bdgtFillCategoryList(", html)
+        self.assertIn("No income budgeted yet", html)
 
     def test_budget_headline_shows_the_four_monthly_figures(self):
         html = Path("dashboard.html").read_text()

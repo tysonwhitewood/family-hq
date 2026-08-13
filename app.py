@@ -445,12 +445,17 @@ def init_db():
             ('harvest markets', 'Groceries'),
             ('zenrows', 'Software & Tools'),
             ('red bead', 'Education'),
-            ('united', 'Fuel'),
+            ('united', 'Fuel & Vehicle'),
         ]:
             db.execute(
                 'INSERT OR IGNORE INTO merchant_rules (pattern, category, created_at) '
                 'VALUES (?, ?, ?)',
                 (pattern, category, datetime.now().isoformat()[:19]),
+            )
+        # Rules saved before the personal/business split keep working.
+        for old, new in RETIRED_CATEGORIES.items():
+            db.execute(
+                'UPDATE merchant_rules SET category=? WHERE category=?', (new, old)
             )
         # Seed insurance records — insert each by policy_number if not already present
         now = datetime.now().isoformat()[:19]
@@ -1511,52 +1516,71 @@ def _finance_context_summary(transactions, max_txns=80):
     return '\n'.join(lines)
 
 
+# (category, ownership scope, keywords). The scope limits which side of the
+# household a rule can match: fuel is only ever a business expense, groceries
+# only ever a personal one, and 'both' covers what genuinely occurs on each.
+# 'General' carries no keywords — it exists to be chosen by hand.
 CATEGORY_RULES = [
-    # ── Groceries & Food ──────────────────────────────────────────────────────
-    ('Groceries',         ['woolworth','coles','aldi','iga','spar','foodworks','spudshed','butcher','bakery','fruit shop','fresh market','harris farm','asian grocer','deli ']),
-    ('Dining Out',        ['mcdonald','hungry jacks','kfc','subway','domino','pizza','cafe ','coffee','restaurant','bistro','canteen','grill','burger','sushi','noodle','thai','chinese','indian','hangi','donut','pastry','bakehouse','kebab','mexican','italian','tapas','food court','oporto','guzman','chatime','taco','roll\'d','bar & grill','pub meal']),
-    # ── Transport ─────────────────────────────────────────────────────────────
-    ('Fuel',              ['shell ','bp ','caltex','7-eleven','ampol','puma fuel','petrol',' servo','united petroleum','liberty oil']),
-    ('Transport',         ['uber','ola ride','didi','taxi','rideshare','translink','opal','myki','limousine','bus ticket']),
-    ('Parking / Tolls',   ['wilson parking','secure parking','care park','linkt','citylink','transurban','e-toll','infringement']),
-    # ── Family & Kids ─────────────────────────────────────────────────────────
-    ('School / Kids',     ['rackley','swim school','school fees','tutor','dance','martial arts','gymnastics','montessori','preschool','daycare','child care','kindy','little athletics','soccer club','football club','cricket club','netball','sport fee']),
-    ('Education',         ['education','curriculum','homeschool','home school','school book','textbook']),
-    ('Health & Medical',  ['chemist','pharmacy','priceline','terry white','amcal','doctor','medical centre','hospital','dental','dentist','physio','psychologist','health fund','medibank','bupa','nib ','optical','hearing','specialist','pathology']),
-    # ── Home ──────────────────────────────────────────────────────────────────
-    ('Home & Garden',     ['bunning','mitre 10','hardware store','nursery','garden centre','plumber','plumbing','electrician','reno','handyman','cleaners','cleaning service','pool ','pest control','locksmith','furniture','ikea','fantastic furn','nick scali','amart','harvey norm','callaway homes','sq *callaway']),
-    ('Home Utilities',    ['agl','origin energy','energy australia','electricity','ergon','endeavour energy','council rates','water corp','synergy','seqwater','unitywater','origin gas','nt power']),
-    ('Rent / Mortgage',   ['home loan repay','mortgage repay','rental payment','strata levy','body corporate','property manager']),
-    # ── Lifestyle ─────────────────────────────────────────────────────────────
-    ('Clothing',          ['kmart','target','big w','myer','david jones','cotton on','uniqlo','h&m','country road','clothing','fashion','shoes','nike','adidas','rebel sport','glue store','factorie','jeanswest','rivers']),
-    ('Electronics',       ['jb hi-fi','harvey norman','officeworks','apple store','bing lee','jaycar','dji','sony','samsung','the good guys','microsoft store','camera house']),
-    ('Online Shopping',   ['ebay','etsy','aliexpress','wish.com','catch.com','kogan','temu','shein','the iconic','net-a-porter']),
-    ('Entertainment',     ['hoyts','event cinemas','village cinema','reading cinema','ticketek','ticketmaster','moshtix','oztix','theme park','dreamworld','movieworld','sea world','bowling','minigolf','escape room','laser tag','trampoline']),
-    ('Beauty / Wellbeing',['salon','hairdresser','barber','nail bar','spa ','massage','waxing','blow dry','lash ','mecca cosme','sephora']),
-    ('Sports / Fitness',  ['crossfit','f45','anytime fitness','jetts','goodlife','planet fitness','yoga','pilates','swim centre','aquatic centre','golf club','tennis club','sportsmans']),
-    ('Travel',            ['airbnb','hotel','motel','jetstar','qantas','virgin australia','tigerair','bonza','booking.com','expedia','wotif','trivago','car hire','hertz','budget rent','avis','campervan','hireace','rental car','thrifty','europcar']),
-    ('Streaming / TV',    ['netflix','spotify','disney+','foxtel','binge','stan ','paramount','apple tv','youtube premium','amazon prime','kindle','audible']),
-    # ── Insurance & Finance ───────────────────────────────────────────────────
-    ('Insurance',         ['racq','insurance','insur','iag','allianz','suncorp','nrma','gt insurance','aami','cgu ','qbe','zurich','woolworths insurance','budget direct']),
-    ('Banking / Fees',    ['monthly fee','account fee','bank fee','dishonour fee','overdrawn fee','card fee','annual card fee','late payment fee']),
-    ('ATM / Cash',        ['atm ','cash out','cash withdrawal','currency exchange','foreign atm']),
-    # ── Digital / Software (personal + business) ─────────────────────────────
-    ('AI & Cloud',        ['openai','anthropic','claude','perplexity','midjourney','runway','elevenlabs','aws ','google cloud','azure','digitalocean','linode','vultr','hetzner','coolify','cloudflare','vercel','railway']),
-    ('Software & Tools',  ['github','dropbox','notion','slack','zoom','figma','loom','canva','adobe','1password','lastpass','bitwarden','namecheap','godaddy','squarespace','wix','mailchimp','hubspot','salesforce','shopify','klaviyo','xero','myob','quickbooks','reckon','property data solutions','propertyme','corelogic','pricefinder','rea group','domain.com.au','realestateview','pricespy']),
-    ('Telco / Internet',  ['telstra','optus','vodafone','boost mobile','amaysim','circles.life','belong','aussie broadband','superloop','nbn','kogan mobile','dodo','iinet','internode','starlink','click data','click wifi','click network']),
+    # ── Shared ────────────────────────────────────────────────────────────────
+    ('Transfers',        'both',     ['transfer to','transfer from','pay id','osko','bpay','direct credit','autosave','linked saver']),
+    # ── Personal ──────────────────────────────────────────────────────────────
+    ('Groceries',        'personal', ['woolworth','coles','aldi','iga','spar','foodworks','spudshed','butcher','bakery','fruit shop','fresh market','harris farm','asian grocer','costco','our cow','harvest market','deli ']),
+    ('Dining Out',       'personal', ['mcdonald','hungry jacks','kfc','subway','domino','pizza','cafe ','coffee','restaurant','bistro','canteen','grill','burger','sushi','noodle','kebab','bakehouse','pastry','donut','food court','oporto','guzman','chatime','taco','uber eats','menulog','doordash','deliveroo']),
+    ('Education',        'personal', ['education','curriculum','homeschool','home school','school fee','school book','textbook','tutor','montessori','preschool','kindy','daycare','child care','red bead']),
+    ('Kids Activities',  'personal', ['rackley','swim school','swimming','gymnastics','martial arts','little athletics','soccer club','football club','cricket club','netball','sport fee','trampoline','dance class']),
+    ('Health & Medical', 'personal', ['chemist','pharmacy','priceline','terry white','amcal','doctor','medical centre','hospital','dental','dentist','physio','psychologist','health fund','medibank','bupa','nib ','optical','hearing','specialist','pathology']),
+    ('Clothing',         'personal', ['kmart','target','big w','myer','david jones','cotton on','uniqlo','h&m','country road','clothing','fashion','shoes','nike','adidas','rebel sport','factorie','jeanswest','rivers']),
+    ('Home & Garden',    'personal', ['bunning','mitre 10','hardware store','nursery','garden centre','plumber','plumbing','electrician','handyman','cleaning service','pest control','locksmith','furniture','ikea','fantastic furn','nick scali','amart','harvey norm','callaway homes','sq *callaway']),
+    ('Home Utilities',   'personal', ['agl','origin energy','energy australia','electricity','ergon','endeavour energy','globird','alinta','council rates','rates notice','water corp','synergy','seqwater','unitywater','urban util','origin gas','nt power','gas bill']),
+    ('Rent / Mortgage',  'personal', ['home loan','mortgage repay','rental payment','strata levy','body corporate','property manager']),
+    ('Birthdays & Gifts','personal', ['birthday','gift card','gift shop','florist','toyworld','toy shop','lego ']),
+    ('Banking / Fees',   'personal', ['monthly fee','account fee','bank fee','dishonour fee','overdrawn fee','card fee','annual card fee','late payment fee','atm ','cash withdrawal']),
+    ('Subscriptions',    'personal', ['netflix','spotify','disney+','foxtel','binge','stan ','paramount','apple tv','youtube premium','amazon prime','kindle','audible','icloud','apple.com/bill']),
+    ('Internet',         'personal', ['starlink','nbn','aussie broadband','superloop','iinet','internode','dodo','click data','click wifi','click network']),
+    ('Entertainment',    'personal', ['hoyts','event cinemas','village cinema','reading cinema','ticketek','ticketmaster','moshtix','oztix','theme park','dreamworld','movieworld','sea world','bowling','minigolf','escape room','laser tag']),
     # ── Business ──────────────────────────────────────────────────────────────
-    ('Payroll / Super',   ['payroll','salary payment','wages','superannuation','australiansuper','rest super','hostplus','sunsuper','colonial first','amp super','bt super','cbus','hesta']),
-    ('ASIC / Compliance', ['asic ','asic/','company reg','business reg','abn reg','australian securities']),
-    ('ATO / Tax',         ['ato ','australian taxation','bas payment','payg','gst payment','tax office','tax instalment','fringe benefit']),
-    ('Commercial Rent',   ['commercial lease','shop lease','office lease','body corp levy','commercial property']),
-    ('Marketing',         ['google ads','facebook ads','meta ads','instagram ads','tiktok ads','adwords','advertising','marketing agency','pr agency']),
-    ('Staff / Contractors',['contractor pay','freelance','labour hire','staffing agency','recruitment fee','marina winterburn','imt nzd','nzd imt']),
-    ('Accounting & Legal',['accountant','bookkeeper','solicitor','legal fee','consulting fee','advisory fee','audit fee','legalvision','legalzoom','doculivery']),
-    ('POS & Payments',    ['squareup','tyro','eftpos merchant','stripe fee','pos system','rept.ai']),
-    ('Business Supplies', ['stationery','packaging','signage','uniform','workwear','office supplies','boonah hardware','mitre 10 trade','total tools','sydney tools']),
-    ('Freight & Post',    ['australia post','sendle','startrack','fastway','toll ipec','tnt ','courier please','zoom2u','freight','shipping cost']),
-    ('Transfers',         ['transfer to','transfer from','pay id','osko','bpay','direct credit','autosave','linked saver']),
+    ('Accounting & Legal','business',['accountant','bookkeeper','solicitor','legal fee','legalvision','legal vision','legalzoom','consulting fee','advisory fee','audit fee','doculivery','asic ','asic/','company reg','australian securities']),
+    ('Tax / ATO',        'business', ['ato ','australian taxation','bas payment','payg','gst payment','tax office','tax instalment','income tax','fringe benefit']),
+    ('Software & Tools', 'business', ['openai','anthropic','claude','perplexity','midjourney','runway','elevenlabs','aws ','google cloud','azure','digitalocean','linode','vultr','hetzner','coolify','cloudflare','vercel','railway','zenrows','github','dropbox','notion','slack','zoom','figma','loom','canva','adobe','1password','lastpass','bitwarden','namecheap','godaddy','squarespace','wix','mailchimp','hubspot','salesforce','shopify','klaviyo','xero','myob','quickbooks','reckon','property data solutions','propertyme','corelogic','pricefinder','rea group','domain.com.au','realestateview']),
+    ('Food & Coffee',    'business', ['cafe ','coffee','restaurant','bistro','food court','catering','lunch meeting']),
+    ('Freight & Post',   'business', ['australia post','sendle','startrack','fastway','toll ipec','courier','zoom2u','freight','shipping cost']),
+    ('Fuel & Vehicle',   'business', ['shell ','bp ','caltex','7-eleven','ampol','puma fuel','petrol',' servo','united petroleum','liberty oil','rego','vehicle registration','tyre','car service','mechanic','roadside assist','car wash','e-toll','toll road','linkt','citylink','transurban','wilson parking','secure parking','care park']),
+    ('Telco / Internet', 'business', ['telstra','optus','vodafone','boost mobile','amaysim','circles.life','belong','kogan mobile']),
+    ('Office Supplies',  'business', ['officeworks','stationery','packaging','signage','uniform','workwear','office supplies','boonah hardware','printing','total tools','sydney tools']),
+    ('Marketing',        'business', ['google ads','facebook ads','meta ads','instagram ads','tiktok ads','adwords','advertising','marketing agency','pr agency']),
+    ('Staff & Contractors','business',['payroll','salary payment','wages','superannuation','australiansuper','rest super','hostplus','sunsuper','contractor pay','freelance','labour hire','staffing agency','recruitment fee','marina winterburn','imt nzd','nzd imt']),
+    ('Professional Development','business',['conference','training course','seminar','professional development','membership fee','institute of']),
+    ('Bank Fees',        'business', ['merchant fee','eftpos merchant','stripe fee','squareup','tyro','pos system','rept.ai']),
+    # ── Both ──────────────────────────────────────────────────────────────────
+    ('Insurance',        'both',     ['racq','insurance','insur','iag','allianz','suncorp','nrma','gt insurance','aami','cgu ','qbe','zurich','budget direct']),
+    ('Travel',           'both',     ['airbnb','hotel','motel','jetstar','qantas','virgin australia','tigerair','bonza','booking.com','expedia','wotif','trivago','car hire','hertz','budget rent','avis','campervan','rental car','thrifty','europcar']),
+    ('General',          'both',     []),
 ]
+
+# Categories retired by the personal/business split, mapped to their successor
+# so merchant rules saved under an old name keep working.
+RETIRED_CATEGORIES = {
+    'Fuel': 'Fuel & Vehicle',
+    'Transport': 'Fuel & Vehicle',
+    'Parking / Tolls': 'Fuel & Vehicle',
+    'School / Kids': 'Kids Activities',
+    'Sports / Fitness': 'Kids Activities',
+    'AI & Cloud': 'Software & Tools',
+    'Streaming / TV': 'Subscriptions',
+    'ATM / Cash': 'Banking / Fees',
+    'Business Supplies': 'Office Supplies',
+    'POS & Payments': 'Bank Fees',
+    'ASIC / Compliance': 'Accounting & Legal',
+    'ATO / Tax': 'Tax / ATO',
+    'Payroll / Super': 'Staff & Contractors',
+    'Staff / Contractors': 'Staff & Contractors',
+    'Telco / Internet ': 'Telco / Internet',
+    'Commercial Rent': 'General',
+    'Electronics': 'General',
+    'Online Shopping': 'General',
+    'Beauty / Wellbeing': 'General',
+    'Other': 'General',
+}
 
 BUSINESS_ACCOUNT_KEYWORDS = ['eden', 'commercial', 'business', 'pty', 'company']
 
@@ -1715,17 +1739,23 @@ def _merchant_rules():
     return _MERCHANT_RULES_CACHE
 
 
-def _category_vocabulary():
-    return [cat for cat, _ in CATEGORY_RULES]
+def _category_vocabulary(ownership=None):
+    """Category names, limited to one side of the household when asked."""
+    return [
+        cat for cat, scope, _ in CATEGORY_RULES
+        if ownership is None or scope in ('both', ownership)
+    ]
 
 
-def _categorise(description: str) -> str:
+def _categorise(description: str, ownership: str = 'personal') -> str:
     normalised = _normalise_description(description)
     for pattern, category in _merchant_rules():
         if pattern in normalised:
             return category
     desc_l = description.lower()
-    for cat, keywords in CATEGORY_RULES:
+    for cat, scope, keywords in CATEGORY_RULES:
+        if scope not in ('both', ownership):
+            continue
         if any(k in desc_l for k in keywords):
             return cat
     return 'Uncategorised'
@@ -1738,7 +1768,8 @@ def api_finance_uncategorised():
     merchants = {}
     for t in _parse_csv_files():
         description = t.get('description', '')
-        if _categorise(description) != 'Uncategorised':
+        ownership = t.get('ownership', 'personal')
+        if _categorise(description, ownership) != 'Uncategorised':
             continue
         pattern = _normalise_description(description)[:40]
         if len(pattern) < 3:
@@ -1749,16 +1780,28 @@ def api_finance_uncategorised():
             'total': 0.0,
             'latest_date': '',
             'sample': description,
+            'sides': set(),
         })
         group['count'] += 1
         group['total'] = round(group['total'] + abs(float(t.get('amount', 0) or 0)), 2)
+        group['sides'].add(ownership)
         if t.get('date', '') > group['latest_date']:
             group['latest_date'] = t['date']
             group['sample'] = description
-    ordered = sorted(
-        merchants.values(), key=lambda g: (-g['count'], -g['total'])
-    )
-    return jsonify({'merchants': ordered, 'categories': _category_vocabulary()})
+    ordered = []
+    for group in sorted(merchants.values(), key=lambda g: (-g['count'], -g['total'])):
+        sides = group.pop('sides')
+        # A merchant seen on both sides gets the full category list.
+        group['ownership'] = sides.pop() if len(sides) == 1 else 'both'
+        ordered.append(group)
+    return jsonify({
+        'merchants': ordered,
+        'categories': {
+            'personal': _category_vocabulary('personal'),
+            'business': _category_vocabulary('business'),
+            'both': _category_vocabulary(),
+        },
+    })
 
 
 @app.route('/api/finance/merchant-rules')
@@ -2168,9 +2211,9 @@ def api_finance_summary():
     for t in transactions:
         if t.get('account_type', 'cash') == 'loan' or t['date'] < cutoff:
             continue
-        cat = _categorise(t['description'])
-        month = t['date'][:7]
         is_biz = t.get('ownership', 'personal') == 'business'
+        cat = _categorise(t['description'], 'business' if is_biz else 'personal')
+        month = t['date'][:7]
         if t['amount'] < 0 and cat not in SKIP_CATS:
             if is_biz:
                 cat_spend_business[cat] += abs(t['amount'])
@@ -2183,7 +2226,10 @@ def api_finance_summary():
     # Annotate recent with category
     recent = []
     for t in transactions[:50]:
-        recent.append({**t, 'category': _categorise(t['description'])})
+        recent.append({
+            **t,
+            'category': _categorise(t['description'], t.get('ownership', 'personal')),
+        })
 
     return jsonify({
         'accounts': list(accounts.values()),
@@ -2456,7 +2502,9 @@ def _budget_target_events(scheduled_events, start_date):
     """
     covered = set()
     for event in scheduled_events:
-        category = event.get('category') or _categorise(event.get('description', ''))
+        category = event.get('category') or _categorise(
+            event.get('description', ''), event.get('ownership', 'personal')
+        )
         covered.add((
             str(category).strip().lower(),
             event.get('ownership', 'personal'),
@@ -2537,7 +2585,9 @@ def _budget_cash_flow(
     recurrence_transactions = [
         row for row in forecast_transactions
         if row.get('account_type', 'cash') in {'cash', 'credit'}
-        and _categorise(row.get('description', '')) != 'Transfers'
+        and _categorise(
+            row.get('description', ''), row.get('ownership', 'personal')
+        ) != 'Transfers'
     ]
     ownership = {
         row['account']: row.get('ownership', 'personal')
@@ -2610,10 +2660,14 @@ def api_budget_summary():
     for t in transactions:
         if t['date'][:7] != current_month:
             continue
-        cat = _categorise(t['description'])
-        is_biz = _is_business_account(t['account'])
+        # The account the money came from decides the side, falling back to the
+        # name heuristic only for statements with no registered account.
+        side = t.get('ownership') or (
+            'business' if _is_business_account(t['account']) else 'personal'
+        )
+        cat = _categorise(t['description'], side)
         if t['amount'] < 0 and cat not in SKIP_CATS:
-            cat_actuals[(cat, 'business' if is_biz else 'personal')] += abs(t['amount'])
+            cat_actuals[(cat, side)] += abs(t['amount'])
 
     # ── Budget targets from SQLite ──
     with get_db() as db:
@@ -2657,7 +2711,10 @@ def api_budget_summary():
     return jsonify({
         'current_month': current_month,
         'headline': headline,
-        'categories': _category_vocabulary(),
+        'categories': {
+            'personal': _category_vocabulary('personal'),
+            'business': _category_vocabulary('business'),
+        },
         'budget_vs_actuals': budget_vs_actuals,
         'upcoming_expenses': [dict(u) for u in upcoming],
         'cash_flow': cash_flow,
