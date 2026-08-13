@@ -228,6 +228,60 @@ def infer_recurring_events(
     return sorted(events, key=lambda event: event["description"].lower())
 
 
+def match_internal_transfers(
+    transactions: list[dict],
+    window_days: int = 5,
+) -> list[dict]:
+    """Pair a debit on one side of the household with the credit it arrived as
+    on the other.
+
+    Banks describe this money as a transfer or a loan repayment on both
+    statements, so the wording alone never reveals that Eden Commercial paid
+    the family. Only the matching pair does: the same amount leaving one side
+    and landing on the other within a few days.
+    """
+    debits: list[tuple[date, dict]] = []
+    credits: list[tuple[date, dict]] = []
+    for transaction in transactions:
+        amount = float(transaction.get("amount", 0) or 0)
+        if amount == 0:
+            continue
+        try:
+            when = date.fromisoformat(str(transaction.get("date", "")))
+        except ValueError:
+            continue
+        (credits if amount > 0 else debits).append((when, transaction))
+
+    debits.sort(key=lambda row: row[0])
+    credits.sort(key=lambda row: row[0])
+
+    matched = []
+    used: set[int] = set()
+    for credit_date, credit in credits:
+        credit_side = credit.get("ownership", "personal")
+        for index, (debit_date, debit) in enumerate(debits):
+            if index in used:
+                continue
+            debit_side = debit.get("ownership", "personal")
+            if debit_side == credit_side:
+                continue  # money moved within one side, not between them
+            if round(abs(float(debit["amount"])), 2) != round(float(credit["amount"]), 2):
+                continue
+            if abs((debit_date - credit_date).days) > window_days:
+                continue
+            used.add(index)
+            matched.append({
+                "amount": round(float(credit["amount"]), 2),
+                "date": credit["date"],
+                "from_side": debit_side,
+                "to_side": credit_side,
+                "paid": debit,
+                "received": credit,
+            })
+            break
+    return matched
+
+
 def _opening_balances(
     transactions: list[dict],
     account_ownership: dict[str, str],

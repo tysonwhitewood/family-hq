@@ -1310,6 +1310,15 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
       <div id="bdgt-personal-cashflow-body"><div class="empty-state">Loading…</div></div>
     </div>
 
+    <!-- Actual money in, reconciled from the statements -->
+    <div class="card" id="bdgt-actual-income">
+      <div class="card-header">
+        <div class="card-title">Money In — Actual</div>
+        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">Reconciled between Eden and personal accounts</span>
+      </div>
+      <div id="bdgt-actual-income-body" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </div>
+
     <details class="card" id="bdgt-business-cashflow">
       <summary class="bdgt-collapsible-header">
         <span class="card-title">Eden Commercial Cash Flow</span>
@@ -1333,6 +1342,15 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
         <button onclick="event.preventDefault();event.stopPropagation();bdgtAddTarget('business', this)" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
       </summary>
       <div id="bdgt-business-table" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </details>
+
+    <!-- Owings -->
+    <details class="card" id="bdgt-owings">
+      <summary class="bdgt-collapsible-header">
+        <span class="card-title">Money We Owe</span>
+        <button onclick="event.preventDefault();event.stopPropagation();bdgtAddOwing()" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Add</button>
+      </summary>
+      <div id="bdgt-owings-container" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
     </details>
 
     <!-- Upcoming Expenses -->
@@ -3455,6 +3473,8 @@ async function loadBudget() {
     bdgtFillCategoryList();
     bdgtRenderHeadline(d);
     bdgtRenderActuals(d);
+    bdgtRenderActualIncome(d);
+    bdgtRenderOwings(d);
     bdgtRenderUpcoming(d);
     renderCashFlow(d.cash_flow);
   } catch (e) {
@@ -3496,6 +3516,80 @@ function bdgtRenderActuals(d) {
   document.getElementById('bdgt-business-table').innerHTML = business.length
     ? bdgtBuildTable(business)
     : '<div style="padding:12px;color:#9CA3AF;font-size:13px">No business budget targets set yet.</div>';
+}
+
+function bdgtRenderActualIncome(d) {
+  const body = document.getElementById('bdgt-actual-income-body');
+  const actual = d.actual_income;
+  if (!body) return;
+  if (!actual || !actual.months || !actual.months.length) {
+    body.innerHTML = '<div class="empty-state">Upload statements to see what actually came in.</div>';
+    return;
+  }
+  const monthName = key => {
+    const [y, m] = key.split('-');
+    return new Date(Number(y), Number(m) - 1, 1)
+      .toLocaleDateString('en-AU', {month: 'short'});
+  };
+  const head = actual.months.map(m => `<th>${escHtml(monthName(m.month))}</th>`).join('');
+  const row = (label, pick, colour) =>
+    `<tr><th>${label}</th>${actual.months.map(m =>
+      `<td style="color:${colour}">${bdgtMoney(pick(m))}</td>`).join('')}</tr>`;
+
+  body.innerHTML = `<div class="bdgt-month-scroll"><table class="bdgt-month-table">
+      <thead><tr><th></th>${head}</tr></thead>
+      <tbody>
+        ${row('From Eden (personal)', m => m.personal_income, '#15803D')}
+        ${row('Eden earned', m => m.business_income, '#1B4332')}
+      </tbody>
+    </table></div>
+    <div style="font-size:12px;color:#6B7280;margin-top:8px">
+      Averaging <strong>${bdgtMoney(actual.average_personal_income)}</strong> a month into personal
+      and <strong>${bdgtMoney(actual.average_business_income)}</strong> a month earned by Eden,
+      over completed months. Only money with a matching payment out of Eden counts here —
+      family loans and moving money between your own accounts do not.
+    </div>`;
+}
+
+function bdgtRenderOwings(d) {
+  const container = document.getElementById('bdgt-owings-container');
+  if (!container) return;
+  const owings = d.owings || [];
+  if (!owings.length) {
+    container.innerHTML = '<div style="padding:12px;color:#9CA3AF;font-size:13px">Nothing recorded. Click + Add to note money you owe.</div>';
+    return;
+  }
+  const total = owings.reduce((sum, o) => sum + o.amount, 0);
+  container.innerHTML = owings.map(o => `<div class="bdgt-upcoming-row">
+      <div style="flex:1;font-weight:600;font-size:13px">${escHtml(o.party)}
+        ${o.note ? `<div style="font-size:10px;color:#9CA3AF;font-weight:400">${escHtml(o.note)}</div>` : ''}
+      </div>
+      <div style="font-weight:700;font-size:13px;color:#DC2626">${fmt(o.amount)}</div>
+      <div class="bdgt-actions">
+        <button onclick="bdgtDeleteOwing(${o.id})" title="Delete">🗑️</button>
+      </div>
+    </div>`).join('')
+    + `<div style="display:flex;justify-content:space-between;padding:12px 0 0;border-top:2px solid #E5E7EB;font-weight:700;font-size:14px">
+        <span>Total owed</span><span style="color:#DC2626">${fmt(total)}</span>
+      </div>`;
+}
+
+function bdgtAddOwing() {
+  const party = prompt('Who do you owe? (e.g. Sister, Parents)');
+  if (!party) return;
+  const amount = prompt('How much ($)?');
+  if (!amount) return;
+  const note = prompt('Note (optional):', '') || '';
+  authFetch('/api/budget/owings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({party: party.trim(), amount: parseFloat(amount), note})
+  }).then(() => loadBudget());
+}
+
+function bdgtDeleteOwing(id) {
+  if (!confirm('Remove this from what you owe?')) return;
+  authFetch('/api/budget/owings/' + id, {method: 'DELETE'}).then(() => loadBudget());
 }
 
 const BDGT_FREQ_LABELS = {

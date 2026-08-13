@@ -1342,6 +1342,65 @@ class BudgetTargetSaveTests(unittest.TestCase):
         self.assertEqual(contribute.status_code, 404)
 
     @patch.object(family_app, "_parse_csv_files")
+    def test_actual_income_counts_only_money_that_came_from_the_business(self, parse_files):
+        today = date.today()
+        month = today.strftime("%Y-%m")
+        parse_files.return_value = [
+            # Eden pays the family — both legs present, so this is real income.
+            {"account": "Eden", "ownership": "business", "account_type": "cash",
+             "date": f"{month}-05", "amount": -5000,
+             "description": "Transfer to T and R Whitewood loan repayment", "balance": 1000},
+            {"account": "ING", "ownership": "personal", "account_type": "cash",
+             "date": f"{month}-05", "amount": 5000,
+             "description": "ROBYN WHITEWOOD loan repayment - Osko Payment", "balance": 6000},
+            # Eden's own revenue.
+            {"account": "Eden", "ownership": "business", "account_type": "cash",
+             "date": f"{month}-03", "amount": 12000,
+             "description": "Property advisory fee", "balance": 6000},
+            # A family loan and a one-off transfer with no Eden leg: not income.
+            {"account": "ING", "ownership": "personal", "account_type": "cash",
+             "date": f"{month}-07", "amount": 10000,
+             "description": "MISS ihipera isobel whitewood - Deposit", "balance": 16000},
+            {"account": "ING", "ownership": "personal", "account_type": "cash",
+             "date": f"{month}-08", "amount": 74790,
+             "description": "Credit Transfer From: Whitewood Robyn", "balance": 90790},
+        ]
+
+        payload = self.client.get("/api/budget/summary").get_json()
+
+        actual = payload["actual_income"]
+        this_month = next(m for m in actual["months"] if m["month"] == month)
+        self.assertEqual(this_month["personal_income"], 5000.0)
+        self.assertEqual(this_month["drawings"], 5000.0)
+        self.assertEqual(this_month["business_income"], 12000.0)
+        self.assertEqual(len(actual["months"]), 6)
+
+    @patch.object(family_app, "_parse_csv_files")
+    def test_owings_round_trip_through_the_summary(self, parse_files):
+        parse_files.return_value = []
+
+        created = self.client.post(
+            "/api/budget/owings",
+            json={"party": "Sister", "amount": 4000, "note": "borrowed funds"},
+        )
+        self.assertEqual(created.status_code, 200)
+
+        owings = self.client.get("/api/budget/summary").get_json()["owings"]
+        self.assertEqual(len(owings), 1)
+        self.assertEqual(owings[0]["party"], "Sister")
+        self.assertEqual(owings[0]["amount"], 4000)
+
+        rejected = self.client.post("/api/budget/owings", json={"party": "", "amount": 10})
+        bad_amount = self.client.post("/api/budget/owings", json={"party": "X", "amount": -5})
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(bad_amount.status_code, 400)
+
+        deleted = self.client.delete(f"/api/budget/owings/{owings[0]['id']}")
+        missing = self.client.delete(f"/api/budget/owings/{owings[0]['id']}")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(missing.status_code, 404)
+
+    @patch.object(family_app, "_parse_csv_files")
     def test_summary_headline_sums_monthly_equivalents(self, parse_files):
         parse_files.return_value = []
         for category, amount, btype, frequency, direction in [

@@ -14,6 +14,7 @@ from cashflow import (
     _normalise_description,
     build_forecast,
     infer_recurring_events,
+    match_internal_transfers,
 )
 
 app = Flask(__name__)
@@ -411,6 +412,13 @@ def init_db():
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 updated_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS owings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                party TEXT NOT NULL,
+                amount REAL NOT NULL,
+                note TEXT,
+                created_at TEXT
             );
             CREATE TABLE IF NOT EXISTS merchant_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2475,6 +2483,58 @@ def _forecast_month_starts(start_date):
     return starts
 
 
+def _actual_income_by_month(transactions, months=6):
+    """What actually came in per month, from the statements themselves.
+
+    Personal income is money Eden Commercial genuinely paid the family, proven
+    by a matching pair of entries. Family loans, refunds and moving money
+    between the household's own accounts have no Eden leg, so they never count.
+    """
+    from collections import defaultdict
+    from zoneinfo import ZoneInfo
+
+    matched = match_internal_transfers(transactions)
+    drawn = {id(pair['received']) for pair in matched}
+    internal = drawn | {id(pair['paid']) for pair in matched}
+
+    buckets = defaultdict(
+        lambda: {'personal_income': 0.0, 'business_income': 0.0, 'drawings': 0.0}
+    )
+    for pair in matched:
+        if pair['from_side'] != 'business':
+            continue
+        month = buckets[pair['date'][:7]]
+        month['personal_income'] = round(month['personal_income'] + pair['amount'], 2)
+        month['drawings'] = round(month['drawings'] + pair['amount'], 2)
+    for t in transactions:
+        amount = float(t.get('amount', 0) or 0)
+        if amount <= 0 or t.get('ownership') != 'business' or id(t) in internal:
+            continue
+        month = buckets[str(t.get('date', ''))[:7]]
+        month['business_income'] = round(month['business_income'] + amount, 2)
+
+    today = datetime.now(ZoneInfo('Australia/Brisbane')).date()
+    wanted = []
+    for offset in range(months - 1, -1, -1):
+        index = today.year * 12 + today.month - 1 - offset
+        year, zero_based = divmod(index, 12)
+        wanted.append(f'{year:04d}-{zero_based + 1:02d}')
+
+    rows = [{'month': m, **buckets.get(m, {
+        'personal_income': 0.0, 'business_income': 0.0, 'drawings': 0.0})} for m in wanted]
+    # The current month is still filling up, so it would drag any average down.
+    complete = [r for r in rows[:-1] if r['personal_income'] or r['business_income']]
+    return {
+        'months': rows,
+        'average_personal_income': round(
+            sum(r['personal_income'] for r in complete) / len(complete), 2
+        ) if complete else 0.0,
+        'average_business_income': round(
+            sum(r['business_income'] for r in complete) / len(complete), 2
+        ) if complete else 0.0,
+    }
+
+
 BUDGET_FREQUENCIES = {
     'weekly': 52 / 12,
     'fortnightly': 26 / 12,
@@ -2707,10 +2767,16 @@ def api_budget_summary():
         })
 
     cash_flow = _budget_cash_flow(transactions, upcoming)
+    with get_db() as db:
+        owings = db.execute(
+            'SELECT id, party, amount, note FROM owings ORDER BY amount DESC'
+        ).fetchall()
 
     return jsonify({
         'current_month': current_month,
         'headline': headline,
+        'actual_income': _actual_income_by_month(transactions),
+        'owings': [dict(o) for o in owings],
         'categories': {
             'personal': _category_vocabulary('personal'),
             'business': _category_vocabulary('business'),
@@ -2860,6 +2926,47 @@ def api_budget_target_months_save(tid):
 def api_budget_targets_delete(tid):
     with get_db() as db:
         db.execute('DELETE FROM budget_targets WHERE id=?', (tid,))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/budget/owings', methods=['POST'])
+@login_required
+def api_budget_owings_save():
+    """Record money the family owes someone."""
+    data = request.get_json(force=True)
+    party = str(data.get('party', '')).strip()
+    try:
+        amount = float(data.get('amount'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'amount must be a positive number'}), 400
+    if not party:
+        return jsonify({'error': 'party is required'}), 400
+    if not math.isfinite(amount) or amount <= 0:
+        return jsonify({'error': 'amount must be a positive number'}), 400
+    note = str(data.get('note', '')).strip()
+    oid = data.get('id')
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        if oid:
+            db.execute(
+                'UPDATE owings SET party=?, amount=?, note=? WHERE id=?',
+                (party, amount, note, oid),
+            )
+        else:
+            db.execute(
+                'INSERT INTO owings (party, amount, note, created_at) VALUES (?,?,?,?)',
+                (party, amount, note, now),
+            )
+    return jsonify({'ok': True})
+
+
+@app.route('/api/budget/owings/<int:oid>', methods=['DELETE'])
+@login_required
+def api_budget_owings_delete(oid):
+    with get_db() as db:
+        deleted = db.execute('DELETE FROM owings WHERE id=?', (oid,)).rowcount
+    if not deleted:
+        return jsonify({'error': 'owing not found'}), 404
     return jsonify({'ok': True})
 
 

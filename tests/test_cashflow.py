@@ -1,7 +1,74 @@
 import unittest
 from datetime import date
 
-from cashflow import build_forecast, infer_recurring_events
+from cashflow import build_forecast, infer_recurring_events, match_internal_transfers
+
+
+class InternalTransferMatchingTests(unittest.TestCase):
+    """Eden paying the family is only visible as a matching pair of entries."""
+
+    def _txn(self, account, ownership, day, amount, description):
+        return {"account": account, "ownership": ownership, "date": day,
+                "amount": amount, "description": description}
+
+    def test_a_business_payment_is_matched_to_the_personal_credit(self):
+        matched = match_internal_transfers([
+            self._txn("Eden", "business", "2026-08-01", -5000,
+                      "Transfer to T and R Whitewood director payment"),
+            self._txn("ING", "personal", "2026-08-01", 5000,
+                      "TYSON WHITEWOOD director payment - Deposit"),
+        ])
+
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(matched[0]["amount"], 5000)
+        self.assertEqual(matched[0]["from_side"], "business")
+        self.assertEqual(matched[0]["to_side"], "personal")
+
+    def test_a_few_days_of_settlement_lag_still_matches(self):
+        matched = match_internal_transfers([
+            self._txn("Eden", "business", "2026-08-01", -2000, "Transfer out"),
+            self._txn("ING", "personal", "2026-08-04", 2000, "Osko payment"),
+        ])
+
+        self.assertEqual(len(matched), 1)
+
+    def test_money_moved_between_two_personal_accounts_is_not_a_match(self):
+        matched = match_internal_transfers([
+            self._txn("ING", "personal", "2026-08-01", -900, "Transfer to savings"),
+            self._txn("GSB", "personal", "2026-08-01", 900, "Transfer from ING"),
+        ])
+
+        self.assertEqual(matched, [])
+
+    def test_a_credit_with_no_matching_payment_is_not_income_from_the_business(self):
+        # Family lending money, or an unrelated deposit, has no Eden leg.
+        matched = match_internal_transfers([
+            self._txn("Eden", "business", "2026-08-01", -5000, "Transfer to family"),
+            self._txn("ING", "personal", "2026-08-01", 5000, "Deposit"),
+            self._txn("ING", "personal", "2026-08-02", 10000, "Sister loan deposit"),
+            self._txn("ING", "personal", "2026-03-26", 74790, "Credit Transfer From"),
+        ])
+
+        self.assertEqual([m["amount"] for m in matched], [5000])
+
+    def test_each_payment_is_only_matched_once(self):
+        matched = match_internal_transfers([
+            self._txn("Eden", "business", "2026-08-01", -1000, "Transfer"),
+            self._txn("ING", "personal", "2026-08-01", 1000, "Deposit"),
+            self._txn("ING", "personal", "2026-08-02", 1000, "Another deposit"),
+        ])
+
+        self.assertEqual(len(matched), 1)
+
+    def test_money_injected_into_the_business_is_matched_the_other_way(self):
+        matched = match_internal_transfers([
+            self._txn("ING", "personal", "2026-08-01", -3000, "Transfer to Eden"),
+            self._txn("Eden", "business", "2026-08-01", 3000, "Owner funds in"),
+        ])
+
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(matched[0]["from_side"], "personal")
+        self.assertEqual(matched[0]["to_side"], "business")
 
 
 class CashFlowCalendarTests(unittest.TestCase):

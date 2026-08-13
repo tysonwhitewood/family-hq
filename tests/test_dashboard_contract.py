@@ -72,6 +72,19 @@ class DashboardContractTests(unittest.TestCase):
         ]:
             self.assertIn(marker, html)
 
+    def test_budget_shows_reconciled_actual_income_and_owings(self):
+        html = Path("dashboard.html").read_text()
+
+        for marker in [
+            'id="bdgt-actual-income"',
+            'id="bdgt-actual-income-body"',
+            "function bdgtRenderActualIncome(",
+            'id="bdgt-owings-container"',
+            "function bdgtRenderOwings(",
+            "/api/budget/owings",
+        ]:
+            self.assertIn(marker, html)
+
     def test_budget_page_opens_on_the_cash_flow_not_the_target_table(self):
         html = Path("dashboard.html").read_text()
 
