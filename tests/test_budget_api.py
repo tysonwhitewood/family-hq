@@ -1364,6 +1364,10 @@ class BudgetTargetSaveTests(unittest.TestCase):
             {"account": "ING", "ownership": "personal", "account_type": "cash",
              "date": f"{month}-08", "amount": 74790,
              "description": "Credit Transfer From: Whitewood Robyn", "balance": 90790},
+            # A failed payment bouncing back is not revenue.
+            {"account": "Eden", "ownership": "business", "account_type": "cash",
+             "date": f"{month}-09", "amount": 12500,
+             "description": "Reversal Transfer To Tyson and Robyn joint", "balance": 18500},
         ]
 
         payload = self.client.get("/api/budget/summary").get_json()
@@ -1371,6 +1375,7 @@ class BudgetTargetSaveTests(unittest.TestCase):
         actual = payload["actual_income"]
         this_month = next(m for m in actual["months"] if m["month"] == month)
         self.assertEqual(this_month["personal_income"], 5000.0)
+        self.assertEqual(this_month["drawings"], 5000.0)
         self.assertEqual(this_month["drawings"], 5000.0)
         self.assertEqual(this_month["business_income"], 12000.0)
         self.assertEqual(len(actual["months"]), 6)

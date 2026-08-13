@@ -2395,6 +2395,9 @@ def _actual_income_by_month(transactions, months=6):
         amount = float(t.get('amount', 0) or 0)
         if amount <= 0 or t.get('ownership') != 'business' or id(t) in internal:
             continue
+        # A reversal is a failed payment coming back, not money earned.
+        if 'reversal' in str(t.get('description', '')).lower():
+            continue
         month = buckets[str(t.get('date', ''))[:7]]
         month['business_income'] = round(month['business_income'] + amount, 2)
 
