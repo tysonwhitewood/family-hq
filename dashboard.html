@@ -399,6 +399,9 @@ body {
 .cf-val { font-size: 22px; font-weight: 700; color: #D4A017; }
 .cf-lbl { font-size: 10px; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
 .cf-note { font-size: 10px; color: #F87171; font-weight: 600; margin-top: 2px; }
+.cf-edit { font-size: 10px; color: rgba(255,255,255,0.45); margin-top: 3px; }
+.bdgt-hl-editable { cursor: pointer; border-radius: 8px; padding: 4px 8px; transition: background .15s; }
+.bdgt-hl-editable:hover, .bdgt-hl-editable:focus-visible { background: rgba(255,255,255,0.08); outline: none; }
 .seasonal-alert {
   background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 10px;
   padding: 12px 16px; margin-bottom: 16px; font-size: 12px; color: #92400E;
@@ -881,18 +884,6 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
   <div class="topbar"><div class="topbar-title">💰 Finance</div></div>
   <div class="page-body">
 
-    <!-- Finance AI Chat (top) -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><div class="card-title">💬 Finance Chat</div></div>
-      <div id="fin-chat-msgs" style="height:120px;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px">
-        <div style="text-align:center;color:#9CA3AF;font-size:13px;margin:auto">Ask me anything about your finances…</div>
-      </div>
-      <div style="padding:10px 16px;border-top:1px solid #F3F4F6;display:flex;gap:8px">
-        <input id="fin-chat-input" placeholder="e.g. How much did we spend on food last month?" style="flex:1;padding:8px 14px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;font-family:inherit;outline:none" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();finSend()}" />
-        <button onclick="finSend()" style="background:#1B4332;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Send</button>
-      </div>
-    </div>
-
     <!-- Account summaries -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-header"><div class="card-title">Accounts</div><div id="fin-txn-count" style="font-size:12px;color:#9CA3AF"></div><button id="fin-account-new" class="fin-action" type="button" onclick="finNewAccount(this)">New account</button></div>
@@ -1271,19 +1262,27 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
 
     <!-- Monthly headline — the numbers the family runs on -->
     <div class="cashflow-bar" id="bdgt-headline-bar">
-      <div class="cf-item">
+      <div class="cf-item bdgt-hl-editable" id="bdgt-hl-business-income-box"
+           role="button" tabindex="0" title="Click to change Eden's income"
+           onclick="bdgtEditIncome('business')"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();bdgtEditIncome('business')}">
         <div class="cf-val" id="bdgt-hl-business-income">—</div>
         <div class="cf-lbl">Eden income /mo</div>
         <div class="cf-note" id="bdgt-hl-business-note"></div>
+        <div class="cf-edit">change ✏️</div>
       </div>
       <div class="cf-item">
         <div class="cf-val" id="bdgt-hl-business-expenses">—</div>
         <div class="cf-lbl">Eden expenses /mo</div>
       </div>
-      <div class="cf-item">
+      <div class="cf-item bdgt-hl-editable" id="bdgt-hl-personal-income-box"
+           role="button" tabindex="0" title="Click to change the money coming in"
+           onclick="bdgtEditIncome('personal')"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();bdgtEditIncome('personal')}">
         <div class="cf-val" id="bdgt-hl-personal-income">—</div>
         <div class="cf-lbl" id="bdgt-hl-personal-income-lbl">Transfer to personal /mo</div>
         <div class="cf-note" id="bdgt-hl-personal-note"></div>
+        <div class="cf-edit">change ✏️</div>
       </div>
       <div class="cf-item">
         <div class="cf-val" id="bdgt-hl-personal-expenses">—</div>
@@ -2614,7 +2613,6 @@ loadWarranties();
 
 // ── FINANCE ───────────────────────────────────────────────────────────────────
 
-let _finHistory = [];
 let _finAccounts = [];
 let _finUploadFile = null;
 let _finEditingAccount = null;
@@ -2867,7 +2865,6 @@ async function loadFinance() {
     } else if (txnsEl) {
       txnsEl.innerHTML = '<div style="padding:16px;color:#9CA3AF;font-size:13px">No transactions loaded.</div>';
     }
-    finLoadHistory();
     finLoadCategorise();
   } catch(e) {
     if (accsEl) accsEl.innerHTML = '<span style="color:#DC2626;font-size:13px">Could not load finance data</span>';
@@ -3399,68 +3396,6 @@ async function finGetSavingsTips() {
   }
 }
 
-async function finLoadHistory() {
-  try {
-    const r = await authFetch('/api/finance/chat-history');
-    const msgs = await r.json();
-    _finHistory = msgs.map(m => ({role: m.role, content: m.content}));
-    const el = document.getElementById('fin-chat-msgs');
-    if (!el) return;
-    if (!msgs.length) {
-      el.innerHTML = '<div style="text-align:center;color:#9CA3AF;font-size:13px;margin:auto">Ask me anything about your finances…</div>';
-      return;
-    }
-    el.innerHTML = msgs.map(m => finBubble(m.role, m.content)).join('');
-    el.scrollTop = el.scrollHeight;
-  } catch(e) {}
-}
-
-function finBubble(role, text) {
-  const isUser = role === 'user';
-  return `<div style="display:flex;justify-content:${isUser?'flex-end':'flex-start'}">
-    <div style="max-width:80%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.5;
-      background:${isUser?'#1B4332':'#F3F4F6'};color:${isUser?'#fff':'#111'};
-      border-bottom-${isUser?'right':'left'}-radius:3px">
-      ${_finEsc(text).replace(/\n/g,'<br>')}
-    </div>
-  </div>`;
-}
-
-async function finSend() {
-  const input = document.getElementById('fin-chat-input');
-  const msgs  = document.getElementById('fin-chat-msgs');
-  const msg   = (input?.value || '').trim();
-  if (!msg || !msgs) return;
-  input.value = '';
-  // Show user bubble
-  msgs.innerHTML += finBubble('user', msg);
-  msgs.scrollTop = msgs.scrollHeight;
-  // Typing indicator
-  const tid = 'fin-typing-' + Date.now();
-  msgs.innerHTML += `<div id="${tid}" style="color:#9CA3AF;font-size:12px;padding:4px 8px">Thinking…</div>`;
-  msgs.scrollTop = msgs.scrollHeight;
-  _finHistory.push({role:'user', content:msg});
-  try {
-    const r = await authFetch('/api/finance/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg, history: _finHistory.slice(-10)})
-    });
-    const d = await r.json();
-    document.getElementById(tid)?.remove();
-    if (d.reply) {
-      msgs.innerHTML += finBubble('assistant', d.reply);
-      _finHistory.push({role:'assistant', content:d.reply});
-    } else {
-      msgs.innerHTML += finBubble('assistant', d.error || 'Sorry, something went wrong.');
-    }
-  } catch(e) {
-    document.getElementById(tid)?.remove();
-    msgs.innerHTML += finBubble('assistant', 'Connection error — please try again.');
-  }
-  msgs.scrollTop = msgs.scrollHeight;
-}
-
 // ── BUDGET ────────────────────────────────────────��───────────────────────────
 
 let _bdgtData = null;
@@ -3658,6 +3593,22 @@ function bdgtOpenTargetModal(item, btype, opener) {
   bdgtUpdateTargetNote();
   if (!finOpenModal(modal, opener || document.activeElement)) return;
   setTimeout(() => document.getElementById('bdgt-target-category').focus(), 0);
+}
+
+function bdgtEditIncome(side) {
+  // Open the existing income line for this side, or start a new one.
+  const rows = (_bdgtData?.budget_vs_actuals || [])
+    .filter(row => row.type === side && row.direction === 'inflow')
+    .sort((a, b) => b.monthly_equivalent - a.monthly_equivalent);
+  if (rows.length) {
+    bdgtOpenTargetModal(rows[0], side, document.activeElement);
+    return;
+  }
+  bdgtOpenTargetModal(null, side, document.activeElement);
+  document.getElementById('bdgt-target-direction').value = 'inflow';
+  document.getElementById('bdgt-target-category').value =
+    side === 'business' ? 'Eden Commercial income' : 'Transfer from Eden';
+  bdgtFillCategoryList();
 }
 
 function bdgtFillCategoryList() {
@@ -4017,17 +3968,16 @@ function bdgtMonthEvents(month) {
 function bdgtMonthColumns(months) {
   const head = months.map(month =>
     `<th>${escHtml(month.label.split(' ')[0].slice(0, 3))}</th>`).join('');
-  const cell = (value, colourWhenNegative) => {
-    const bad = colourWhenNegative && value < 0;
-    return `<td style="${bad ? 'color:#DC2626;font-weight:600' : ''}">${bdgtMoney(value)}</td>`;
-  };
+  const leftOver = m => Math.round((m.inflows - m.outflows) * 100) / 100;
   return `<div class="bdgt-month-scroll"><table class="bdgt-month-table">
     <thead><tr><th></th>${head}</tr></thead>
     <tbody>
       <tr><th>Money in</th>${months.map(m => `<td style="color:#15803D">${bdgtMoney(m.inflows)}</td>`).join('')}</tr>
       <tr><th>Money out</th>${months.map(m => `<td style="color:#DC2626">${bdgtMoney(m.outflows)}</td>`).join('')}</tr>
-      <tr><th>Closing</th>${months.map(m => cell(m.closing_balance, true)).join('')}</tr>
-      <tr><th>Lowest</th>${months.map(m => cell(m.lowest_balance, true)).join('')}</tr>
+      <tr><th>Left over</th>${months.map(m => {
+        const v = leftOver(m);
+        return `<td style="font-weight:700;color:${v < 0 ? '#DC2626' : '#111827'}">${bdgtMoney(v)}</td>`;
+      }).join('')}</tr>
     </tbody>
   </table></div>`;
 }
@@ -4074,8 +4024,6 @@ function bdgtRenderCashSection(section, options={}) {
     <div class="bdgt-cf-summary">
       <div class="bdgt-cf-stat"><div class="label">Available now</div><div class="value">${bdgtMoney(section.opening_balance)}</div>${asOf}</div>
       ${safeStat}
-      <div class="bdgt-cf-stat"><div class="label">Lowest balance</div><div class="value ${section.lowest_balance < 0 ? 'bad' : ''}">${bdgtMoney(section.lowest_balance)}</div></div>
-      <div class="bdgt-cf-stat"><div class="label">Lowest date</div><div class="value">${bdgtShortDate(section.lowest_balance_date)}</div></div>
     </div>
     ${noIncome}
     ${bdgtMonthColumns(section.months)}

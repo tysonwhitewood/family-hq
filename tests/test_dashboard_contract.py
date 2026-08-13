@@ -174,9 +174,35 @@ class DashboardContractTests(unittest.TestCase):
             "_finEsc(t.category || '')",
             "_finEsc(t.item)",
             "_finEsc(t.action)",
-            "_finEsc(text)",
         ]:
             self.assertIn(marker, dashboard)
+
+    def test_finance_chat_is_removed(self):
+        dashboard = Path("dashboard.html").read_text()
+        app_source = Path("app.py").read_text()
+
+        for gone in ['id="fin-chat-msgs"', 'id="fin-chat-input"',
+                     "function finSend(", "function finBubble("]:
+            self.assertNotIn(gone, dashboard)
+        for gone in ["/api/finance/chat", "/api/finance/chat-history"]:
+            self.assertNotIn(gone, app_source)
+
+    def test_cash_flow_columns_read_money_in_out_and_left_over(self):
+        dashboard = Path("dashboard.html").read_text()
+
+        self.assertIn("<th>Money in</th>", dashboard)
+        self.assertIn("<th>Money out</th>", dashboard)
+        self.assertIn("<th>Left over</th>", dashboard)
+        self.assertNotIn("<th>Closing</th>", dashboard)
+        self.assertNotIn("<th>Lowest</th>", dashboard)
+        self.assertNotIn("Lowest balance</div>", dashboard)
+
+    def test_headline_income_boxes_are_editable(self):
+        dashboard = Path("dashboard.html").read_text()
+
+        self.assertIn("function bdgtEditIncome(", dashboard)
+        self.assertIn('onclick="bdgtEditIncome(\'personal\')"', dashboard)
+        self.assertIn('onclick="bdgtEditIncome(\'business\')"', dashboard)
 
     def test_finance_modal_requests_ignore_stale_callbacks_and_can_abort(self):
         dashboard = Path("dashboard.html").read_text()
