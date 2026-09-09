@@ -66,6 +66,42 @@ Any key left out falls back to the default shown. `mattermost.enabled` (default 
 `false` stops all sending without removing the environment variables; `mattermost.allowed_users`
 is reserved for step 2 (two-way).
 
+### Replying in Mattermost (two-way)
+
+With a bot token and channel id set, Family HQ reads the Family Finance channel every minute and
+acts on posts from the usernames in `mattermost.allowed_users`. It never acts on its own posts or
+on anyone else's. Every reply is logged on the Obligations page under Conversation.
+
+| You post | It does |
+|---|---|
+| `status` or `position` | Posts the reserve position, next 30 days and birthdays |
+| `done` | Marks the last monthly set-aside as moved |
+| `paid` / `skip` | Marks the nearest open bill paid or skipped |
+| `<bill> paid` e.g. `rates paid` | Marks that bill's open occurrence paid |
+| `yes` | Confirms PropVesting is registered (switches the hold to pay-now) |
+| `gst 9262`, `ing home 2142` | Records a balance (aliases from `obligations.accounts[].aliases`) |
+| `eden 5280` | Adds a receipt to this month; `eden total 24500` sets the month |
+| `rates due 27 Feb 2027 1614`, `rego 965` | Sets or creates a bill (new ones are flagged "needs confirming") |
+| a screenshot of a bank app | Reads balances into the reserve accounts and confirms what it read |
+| a photo of a bill or notice | Reads payee, amount and due date into a bill |
+| anything else | Answered as a question from the current position and upcoming bills |
+
+Screenshots are read by Claude when `ANTHROPIC_API_KEY` is set, otherwise by a free
+vision-capable model on OpenRouter (`OPENROUTER_API_KEY`), which is less reliable. Set the
+Anthropic key for dependable screenshot reading. The bot always says what it read so you can
+correct it with a typed figure.
+
+Direct debits: tick **Paid by direct debit** on an obligation and its warnings say when the debit
+will be taken and what the account must hold; the occurrence is marked paid automatically the day
+after. Overdue open items show as "overdue" in the position and on the Obligations page.
+
+Manual controls: `POST /api/mattermost/poll` runs one read of the channel now;
+`POST /api/mattermost/simulate` with `{"text": "..."}` shows how a reply would be understood (and,
+for free text, the answer) without writing anything or posting.
+
+Other settings under `mattermost`: `allowed_users` (list of Mattermost usernames, default empty,
+meaning nobody's posts are acted on), `enabled` (default `true`).
+
 ### Testing a message without waiting for 7am
 
 On the Obligations page, **Preview today's message** shows exactly what would be posted, without

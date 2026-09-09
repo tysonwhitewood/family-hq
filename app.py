@@ -10,6 +10,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import openpyxl
 
+import conversation
 import mattermost
 import obligations as ob
 import reminders
@@ -3545,14 +3546,50 @@ def api_obligations_run():
     return jsonify(runner(today, dry_run=bool(data.get('dry_run'))))
 
 
+def _vision_label():
+    if _anthropic_key():
+        return 'Claude'
+    if _openrouter_key():
+        return 'OpenRouter (free vision model)'
+    return 'none'
+
+
 @app.route('/api/mattermost/status')
 @login_required
 def api_mattermost_status():
     client = mattermost_client()
+    service = reminder_service()
+    extra = {'last_poll_at': service.get_state('mm_last_poll_at'), 'watermark': service.get_state('mm_last_post_create_at'),
+             'poll_failures': int(service.get_state('mm_poll_failures') or 0), 'vision': _vision_label()}
     if client is None:
-        return jsonify({'configured': False, 'can_read': False, 'can_post': False, 'reachable': False})
+        return jsonify({'configured': False, 'can_read': False, 'can_post': False, 'reachable': False, **extra})
     return jsonify({'configured': True, 'can_read': client.can_read, 'can_post': client.can_post,
-                    'reachable': client.ping()})
+                    'reachable': client.ping(), **extra})
+
+
+@app.route('/api/mattermost/poll', methods=['POST'])
+@login_required
+def api_mattermost_poll():
+    return jsonify(reminder_service().poll_once())
+
+
+@app.route('/api/mattermost/simulate', methods=['POST'])
+@login_required
+def api_mattermost_simulate():
+    """Show how a reply would be understood without touching the database or the channel."""
+    data = request.get_json(force=True) or {}
+    text = str(data.get('text') or '').strip()
+    if not text:
+        return jsonify({'error': 'text is required'}), 400
+    service = reminder_service()
+    command = conversation.parse_command(text, service.settings, service.today())
+    reply = None
+    if command is None and service.llm is not None:
+        try:
+            reply = conversation.answer_question(service.llm, text, conversation.money_context(service, service.today()))
+        except Exception as exc:  # noqa: BLE001
+            reply = f'AI error: {str(exc)[:200]}'
+    return jsonify({'command': command, 'reply': reply, 'help': conversation.compose_help() if command is None else None})
 
 
 @app.route('/api/mattermost/test', methods=['POST'])

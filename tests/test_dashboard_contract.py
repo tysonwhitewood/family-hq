@@ -591,3 +591,9 @@ class ObligationsPageContractTests(unittest.TestCase):
     def test_settings_has_mattermost_block(self):
         self.assertIn('id="mm-status"', self.html)
         self.assertIn("Send test message", self.html)
+
+    def test_obligations_page_has_direct_debit_and_poll_status(self):
+        self.assertIn('id="obl-auto-pay"', self.html)
+        self.assertIn("auto_pay: document.getElementById('obl-auto-pay').checked", self.html)
+        self.assertIn("screenshots read by", self.html)
+        self.assertIn("reply to you", self.html)

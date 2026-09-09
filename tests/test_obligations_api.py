@@ -26,8 +26,8 @@ class ObligationsDbCase(unittest.TestCase):
             "obligations": {
                 "accounts": [
                     {"key": "eden_operating", "display": "Eden Commercial", "bank": "CBA", "match": "1027 8937"},
-                    {"key": "ecomm_gst", "display": "EComm GST", "bank": "CBA", "match": "1027 8945"},
-                    {"key": "ing_home", "display": "ING Home", "bank": "ING", "match": "48305167"},
+                    {"key": "ecomm_gst", "display": "EComm GST", "bank": "CBA", "match": "1027 8945", "aliases": ["gst"]},
+                    {"key": "ing_home", "display": "ING Home", "bank": "ING", "match": "48305167", "aliases": ["home"]},
                     {"key": "ing_emergency", "display": "ING Emergency", "bank": "ING", "match": "46789692"},
                     {"key": "gsb_everyday", "display": "GSB Everyday", "bank": "GSB", "match": "51978620"},
                 ]
@@ -214,7 +214,9 @@ class ObligationRoutesTests(ObligationsDbCase):
     def test_mattermost_status_and_test_message(self):
         with patch.object(family_app, "mattermost_client", return_value=None):
             status = self.client.get("/api/mattermost/status").get_json()
-            self.assertEqual(status, {"configured": False, "can_read": False, "can_post": False, "reachable": False})
+            self.assertEqual({k: status[k] for k in ("configured", "can_read", "can_post", "reachable")},
+                             {"configured": False, "can_read": False, "can_post": False, "reachable": False})
+            self.assertIn("vision", status)
             r = self.client.post("/api/mattermost/test")
             self.assertEqual(r.status_code, 503)
 
@@ -271,6 +273,38 @@ class ObligationRoutesTests(ObligationsDbCase):
     def test_discord_routes_are_gone(self):
         self.assertFalse(hasattr(family_app, "send_discord_webhook"))
         self.assertEqual(self.client.post("/api/discord/webhook-test").status_code, 404)
+
+    def test_poll_and_simulate_routes(self):
+        class Fake:
+            can_read, can_post = True, True
+            incoming = [{"id": "p1", "user_id": "u1", "message": "gst 9262", "create_at": 5000, "file_ids": [], "root_id": "", "type": ""}]
+            posts = []
+            def ping(self): return True
+            def me(self): return {"id": "botid"}
+            def posts_since(self, since): return [p for p in self.incoming if p["create_at"] > since]
+            def users_by_ids(self, ids): return {"u1": "tawhai"}
+            def add_reaction(self, post_id, emoji_name="white_check_mark"): pass
+            def post(self, message): self.posts.append(message); return "r1"
+        fake = Fake()
+        cfg = json.loads(family_app.CONFIG_PATH.read_text())
+        cfg["mattermost"] = {"allowed_users": ["tawhai"]}
+        family_app.CONFIG_PATH.write_text(json.dumps(cfg))
+        with patch.object(family_app, "mattermost_client", return_value=fake):
+            first = self.client.post("/api/mattermost/poll").get_json()
+            self.assertEqual(first["reason"], "watermark initialised")
+            family_app.reminder_service().set_state("mm_last_post_create_at", "1000")
+            second = self.client.post("/api/mattermost/poll").get_json()
+            self.assertEqual((second["processed"], second["replied"]), (1, 1))
+            self.assertIn("Got it: EComm GST", fake.posts[0])
+            status = self.client.get("/api/mattermost/status").get_json()
+            self.assertTrue(status["can_read"])
+            self.assertIsNotNone(status["last_poll_at"])
+            self.assertIn(status["vision"], ("Claude", "OpenRouter (free vision model)", "none"))
+            sim = self.client.post("/api/mattermost/simulate", json={"text": "ing home 2142"}).get_json()
+            self.assertEqual(sim["command"]["kind"], "balance")
+            self.assertEqual(self.client.post("/api/mattermost/simulate", json={"text": ""}).status_code, 400)
+        with family_app.get_db() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM account_balances WHERE account_key='ing_home' AND balance=2142").fetchone()[0], 0)
 
     def test_routes_require_login(self):
         anonymous = family_app.app.test_client()

@@ -126,7 +126,14 @@ schedule.
 Obligation payments appear in the six-month forecast as confirmed events. If an obligation names
 a **budget item it replaces**, that budget line is suppressed so the bill is not counted twice.
 
-## Backup and restore
+## Replying in Mattermost
+
+Post in the Family Finance channel and the bot answers within a minute. A screenshot of the CBA or
+ING app updates the reserve balances; a photo of a rates, water or insurance notice creates or
+updates the bill; short words (`status`, `done`, `paid`, `gst 9262`, `eden 5280`) do what they say;
+anything else is answered as a question from the current position. The bot ticks a post it acted
+on and always repeats what it read, so a wrong reading can be corrected by typing the figure.
+
 
 The live SQLite database is `/app/data/family.db`. The container's daily job creates SQLite backups in `/app/backups` and retains fourteen days.
 
