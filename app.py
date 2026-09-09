@@ -751,6 +751,12 @@ OBLIGATION_SEED = [
      'rolling', None, 0, [], 0, 'active', None, 'schedule-doc 2026-09-09'),
 ]
 
+# Eden Commercial receipts already known from the statements on the server (GST inclusive).
+# Later months are assumed at the retainer until reported through the app or Mattermost.
+OPENING_RECEIPTS = [
+    ('2026-07', 40587.02, 'statement:Eden Commercial MAIN.csv (all credits July 2026 excluding director loans)'),
+]
+
 OPENING_BALANCES = [
     # account_key, balance, available
     ('eden_operating', 7324.64, 7295.64),
@@ -788,6 +794,11 @@ def _seed_obligations(db, now):
                VALUES (?,?,?,?,?,?,?)''',
             (account_key, balance, available, '2026-09-09', 'screenshot',
              'Seeded from screenshots Tyson posted on 2026-09-09', now),
+        )
+    for year_month, amount, source in OPENING_RECEIPTS:
+        db.execute(
+            'INSERT OR IGNORE INTO receipts_log (year_month, amount_incl_gst, detail, updated_at) VALUES (?,?,?,?)',
+            (year_month, amount, json.dumps([{'source': source, 'amount': amount}]), now),
         )
     db.execute(
         "INSERT INTO reminder_state (key, value, updated_at) VALUES ('seeded_v1', '1', ?)", (now,)

@@ -78,6 +78,11 @@ class SchemaAndSeedTests(ObligationsDbCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM obligations").fetchone()[0], len(names))
             self.assertEqual(db.execute("SELECT COUNT(*) FROM account_balances").fetchone()[0], 9)
 
+    def test_seed_records_julys_known_receipts(self):
+        with family_app.get_db() as db:
+            row = db.execute("SELECT amount_incl_gst FROM receipts_log WHERE year_month='2026-07'").fetchone()
+        self.assertAlmostEqual(row["amount_incl_gst"], 40587.02, places=2)
+
     def test_seeded_bas_obligation_matches_spec(self):
         with family_app.get_db() as db:
             row = db.execute("SELECT * FROM obligations WHERE name='Quarterly BAS + PAYG instalment'").fetchone()
