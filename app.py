@@ -426,6 +426,73 @@ def init_db():
                 category TEXT NOT NULL,
                 created_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS obligations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                ownership TEXT NOT NULL CHECK (ownership IN ('personal','business')),
+                pay_from_account TEXT,
+                reserve_account TEXT,
+                amount_rule TEXT NOT NULL CHECK (amount_rule IN ('fixed','receipts_share','bas_formula','sinking_hold')),
+                amount REAL,
+                frequency TEXT NOT NULL CHECK (frequency IN ('once','monthly','quarterly','biannual','annual','rolling')),
+                anchor_date TEXT,
+                due_rule TEXT NOT NULL DEFAULT 'standard',
+                extension_days INTEGER NOT NULL DEFAULT 0,
+                lead_days TEXT NOT NULL DEFAULT '[30, 7]',
+                remind INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','pending_confirmation','retired')),
+                budget_category TEXT,
+                source TEXT,
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS obligation_occurrences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                obligation_id INTEGER NOT NULL REFERENCES obligations(id) ON DELETE CASCADE,
+                standard_date TEXT NOT NULL,
+                due_date TEXT NOT NULL,
+                estimate REAL,
+                estimate_detail TEXT,
+                actual REAL,
+                state TEXT NOT NULL DEFAULT 'upcoming' CHECK (state IN ('upcoming','funds_confirmed','paid','skipped')),
+                state_changed_at TEXT,
+                state_changed_by TEXT,
+                UNIQUE (obligation_id, standard_date)
+            );
+            CREATE TABLE IF NOT EXISTS account_balances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_key TEXT NOT NULL,
+                balance REAL NOT NULL,
+                available REAL,
+                as_of TEXT NOT NULL,
+                source TEXT NOT NULL,
+                mattermost_post_id TEXT,
+                raw TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS receipts_log (
+                year_month TEXT PRIMARY KEY,
+                amount_incl_gst REAL NOT NULL,
+                detail TEXT,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS reminder_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                dedupe_key TEXT NOT NULL UNIQUE,
+                obligation_id INTEGER,
+                occurrence_id INTEGER,
+                mattermost_post_id TEXT,
+                body TEXT NOT NULL,
+                sent_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS reminder_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
         ''')
         for column, definition in [
             ('recurrence', "TEXT DEFAULT ''"),
@@ -643,6 +710,84 @@ def init_db():
                     'INSERT INTO upcoming_expenses (description, amount, due_date, recurring, category, status, created_at) VALUES (?,?,?,?,?,?,?)',
                     (desc, amt, due, recurring, cat, 'pending', now)
                 )
+        _seed_obligations(db, datetime.now().isoformat()[:19])
+
+
+OBLIGATION_SEED = [
+    # name, ownership, pay_from, reserve, rule, amount, frequency, anchor, extension_days, lead_days, remind, status, budget_category, source
+    ('Monthly tax reserve transfer', 'business', 'eden_operating', 'ecomm_gst', 'receipts_share', None,
+     'monthly', '2026-10-01', 0, [0], 1, 'active', None, 'schedule-doc 2026-09-09'),
+    ('Quarterly BAS + PAYG instalment', 'business', 'ecomm_gst', 'ecomm_gst', 'bas_formula', None,
+     'quarterly', '2026-10-28', 28, [30, 7, 1], 1, 'active', 'Tax/ATO', 'schedule-doc 2026-09-09'),
+    ('PropVesting BAS + final return', 'business', 'ecomm_gst', 'ecomm_gst', 'fixed', 7755.88,
+     'once', None, 0, [7, 1], 1, 'active', None, 'schedule-doc 2026-09-09'),
+    ('ProRisk PI/PL renewal', 'business', 'eden_operating', 'eden_operating', 'fixed', 2505.00,
+     'annual', '2026-11-20', 0, [30, 7], 1, 'active', 'Insurance', 'insurances table'),
+    ('ASIC annual fee', 'business', 'eden_operating', 'eden_operating', 'fixed', 1798.00,
+     'annual', '2027-04-14', 0, [30, 7], 1, 'pending_confirmation', 'Govt Fees (ASIC etc)', 'upcoming_expenses'),
+    ('RACQ car insurance', 'business', 'eden_operating', 'eden_operating', 'fixed', 98.41,
+     'monthly', '2026-10-03', 0, [], 0, 'active', None, 'statement:Eden Commercial MAIN.csv:2026-08-03'),
+    ('Council rates (Scenic Rim)', 'personal', 'ing_home', 'ing_home', 'fixed', 1614.19,
+     'biannual', '2027-02-27', 0, [30, 7], 1, 'pending_confirmation', 'Council Rates', 'statement:ING Main.csv:2026-04-26; upcoming_expenses 2026-08-27'),
+    ('Water (Urban Utilities)', 'personal', 'ing_home', 'ing_home', 'fixed', 713.45,
+     'quarterly', '2026-11-28', 0, [30, 7], 1, 'active', 'Water (Qld Urban Util)', 'statement:ING Main.csv:2026-05-28'),
+    ('SMS Insurance', 'personal', 'ing_home', 'ing_home', 'fixed', 2955.00,
+     'annual', '2027-03-05', 0, [30, 7], 1, 'pending_confirmation', None, 'statement:Eden Commercial MAIN.csv:2026-03-05'),
+    ('RACQ roadside assistance', 'personal', 'ing_home', 'ing_home', 'fixed', 310.00,
+     'annual', '2027-07-17', 0, [30, 7], 1, 'active', None, 'statement:Eden Commercial MAIN.csv:2026-07-17'),
+    ('Car registration (TMR)', 'personal', 'ing_home', 'ing_home', 'fixed', None,
+     'once', None, 0, [30, 7], 1, 'pending_confirmation', None, 'statements: TMR payments 2026-04-28 $964.96, 2026-05-26 $438.74, 2026-05-27 $502.45, 2026-06-20 $334.63'),
+    ('Home & contents (RACQ)', 'personal', 'ing_everyday', 'ing_everyday', 'fixed', 165.90,
+     'monthly', '2026-09-22', 0, [], 0, 'active', 'Insurance', 'statement:ING Main.csv'),
+    ('Electricity (GloBird)', 'personal', 'ing_everyday', 'ing_everyday', 'fixed', 230.00,
+     'monthly', '2026-09-13', 0, [], 0, 'active', 'Power (Globird)', 'statement:ING Main.csv average Apr-Jul 2026'),
+    ('Mortgage repayment', 'personal', 'gsb_everyday', 'gsb_everyday', 'sinking_hold', 4810.38,
+     'monthly', '2026-10-05', 0, [7], 1, 'active', 'Mortgage', 'GSB statement; Tyson 2026-09-09'),
+    ('Food / tight-month buffer', 'personal', 'ing_emergency', 'ing_emergency', 'sinking_hold', 3000.00,
+     'rolling', None, 0, [], 0, 'active', None, 'schedule-doc 2026-09-09'),
+]
+
+OPENING_BALANCES = [
+    # account_key, balance, available
+    ('eden_operating', 7324.64, 7295.64),
+    ('ecomm_gst', 9048.03, 92.03),
+    ('cba_utilities', 81.74, 81.74),
+    ('ing_everyday', 7779.02, 7102.16),
+    ('ing_emergency', 3001.03, 3001.03),
+    ('ing_home', 0.41, 0.41),
+    ('ing_savings', 3.50, 3.50),
+    ('gsb_everyday', 5246.45, 5246.45),
+    ('gsb_mortgage', -756265.54, 0.0),
+]
+
+
+def _seed_obligations(db, now):
+    """Seed the obligation list and opening balances exactly once."""
+    done = db.execute("SELECT value FROM reminder_state WHERE key='seeded_v1'").fetchone()
+    if done:
+        return
+    for (name, ownership, pay_from, reserve, rule, amount, frequency, anchor,
+         extension_days, lead_days, remind, status, budget_category, source) in OBLIGATION_SEED:
+        db.execute(
+            '''INSERT INTO obligations
+               (name, ownership, pay_from_account, reserve_account, amount_rule, amount, frequency,
+                anchor_date, due_rule, extension_days, lead_days, remind, status, budget_category,
+                source, notes, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (name, ownership, pay_from, reserve, rule, amount, frequency, anchor, 'standard',
+             extension_days, json.dumps(lead_days), remind, status, budget_category, source, '', now, now),
+        )
+    for account_key, balance, available in OPENING_BALANCES:
+        db.execute(
+            '''INSERT INTO account_balances
+               (account_key, balance, available, as_of, source, raw, created_at)
+               VALUES (?,?,?,?,?,?,?)''',
+            (account_key, balance, available, '2026-09-09', 'screenshot',
+             'Seeded from screenshots Tyson posted on 2026-09-09', now),
+        )
+    db.execute(
+        "INSERT INTO reminder_state (key, value, updated_at) VALUES ('seeded_v1', '1', ?)", (now,)
+    )
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -656,6 +801,17 @@ def load_config():
 def save_config(cfg):
     with open(CONFIG_PATH, 'w') as f:
         json.dump(cfg, f, indent=2)
+
+
+def obligation_settings() -> dict:
+    """Engine settings: documented defaults overlaid by the `obligations` key in config.json."""
+    import obligations as _obligations
+    settings = dict(_obligations.DEFAULT_SETTINGS)
+    settings['accounts'] = []
+    configured = load_config().get('obligations') or {}
+    for key, value in configured.items():
+        settings[key] = value
+    return settings
 
 
 # ── Birthdays ─────────────────────────────────────────────────────────────────

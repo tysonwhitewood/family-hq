@@ -45,5 +45,90 @@
   "discord": {
     "channel_id": "1490644719829516469",
     "webhook_url": "https://discord.com/api/webhooks/1490644757469335583/Nh3nXnMEOfeUjF0_qrMmX_hrs0_ctKplX2-YNdoI-IBtW3rlKgH1q77HSXpvi9yzCo6q"
+  },
+  "obligations": {
+    "gst_fraction": 0.0909090909,
+    "income_tax_reserve_rate": 0.15,
+    "assumed_monthly_retainer": 10083.34,
+    "gst_credit_allowance_monthly": 636,
+    "payg_instalment_quarterly": 3188,
+    "sl_trading_trust_bas": 545,
+    "emergency_floor": 3000,
+    "mortgage_repayment": 4810.38,
+    "reserve_start_month": "2026-09",
+    "post_hour_local": 7,
+    "weekly_day": 6,
+    "weekly_hour_local": 17,
+    "quiet_hours": [
+      21,
+      7
+    ],
+    "timezone": "Australia/Brisbane",
+    "stale_balance_days": 14,
+    "bas_lookahead_days": 30,
+    "accounts": [
+      {
+        "key": "eden_operating",
+        "display": "Eden Commercial",
+        "bank": "CBA",
+        "match": "1027 8937"
+      },
+      {
+        "key": "ecomm_gst",
+        "display": "EComm GST",
+        "bank": "CBA",
+        "match": "1027 8945"
+      },
+      {
+        "key": "cba_utilities",
+        "display": "Utilities / Vehicles",
+        "bank": "CBA",
+        "match": "2645 1922"
+      },
+      {
+        "key": "ing_everyday",
+        "display": "ING Orange Everyday",
+        "bank": "ING",
+        "match": "65683967"
+      },
+      {
+        "key": "ing_emergency",
+        "display": "ING Emergency",
+        "bank": "ING",
+        "match": "46789692"
+      },
+      {
+        "key": "ing_home",
+        "display": "ING Home",
+        "bank": "ING",
+        "match": "48305167"
+      },
+      {
+        "key": "ing_savings",
+        "display": "ING Savings",
+        "bank": "ING",
+        "match": "804020739"
+      },
+      {
+        "key": "gsb_everyday",
+        "display": "GSB Everyday",
+        "bank": "GSB",
+        "match": "51978620"
+      },
+      {
+        "key": "gsb_mortgage",
+        "display": "GSB Basic Variable Inv P&I",
+        "bank": "GSB",
+        "match": "51991707",
+        "loan": true
+      }
+    ]
+  },
+  "mattermost": {
+    "enabled": true,
+    "allowed_users": [
+      "tyson",
+      "robyn"
+    ]
   }
 }
