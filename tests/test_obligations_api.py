@@ -101,5 +101,134 @@ class SchemaAndSeedTests(ObligationsDbCase):
         self.assertEqual(settings["accounts"], [])
 
 
+class ObligationRoutesTests(ObligationsDbCase):
+    def test_list_returns_seed_with_next_occurrence_and_accounts(self):
+        r = self.client.get("/api/obligations")
+        self.assertEqual(r.status_code, 200)
+        data = r.get_json()
+        bas = next(o for o in data["obligations"] if o["name"] == "Quarterly BAS + PAYG instalment")
+        self.assertEqual(bas["next_occurrence"]["due_date"], "2026-10-28")
+        self.assertEqual(bas["lead_days"], [30, 7, 1])
+        self.assertEqual(data["accounts"][0]["key"], "eden_operating")
+        self.assertEqual(data["settings"]["payg_instalment_quarterly"], 3188.0)
+
+    def test_create_validates_and_generates_occurrences(self):
+        bad = self.client.post("/api/obligations", json={"name": "", "amount_rule": "fixed"})
+        self.assertEqual(bad.status_code, 400)
+        bad_rule = self.client.post("/api/obligations", json={"name": "X", "ownership": "personal",
+                                                              "amount_rule": "magic", "frequency": "annual"})
+        self.assertEqual(bad_rule.status_code, 400)
+        bad_account = self.client.post("/api/obligations", json={
+            "name": "X", "ownership": "personal", "amount_rule": "fixed", "amount": 10,
+            "frequency": "annual", "anchor_date": "2026-12-01", "reserve_account": "nope"})
+        self.assertEqual(bad_account.status_code, 400)
+
+        ok = self.client.post("/api/obligations", json={
+            "name": "Car registration (Tiggo)", "ownership": "personal", "amount_rule": "fixed",
+            "amount": 964.96, "frequency": "annual", "anchor_date": "2027-04-28",
+            "pay_from_account": "ing_home", "reserve_account": "ing_home", "lead_days": [30, 7],
+            "remind": True, "status": "active", "source": "typed"})
+        self.assertEqual(ok.status_code, 200, ok.get_json())
+        oid = ok.get_json()["id"]
+        with family_app.get_db() as db:
+            occ = db.execute("SELECT due_date, estimate FROM obligation_occurrences WHERE obligation_id=?", (oid,)).fetchall()
+        self.assertEqual([o["due_date"] for o in occ], ["2027-04-28"])
+        self.assertEqual(occ[0]["estimate"], 964.96)
+
+    def test_update_replaces_open_occurrences_and_delete_retires(self):
+        with family_app.get_db() as db:
+            water = db.execute("SELECT id FROM obligations WHERE name='Water (Urban Utilities)'").fetchone()["id"]
+        family_app.reminder_service().regenerate_occurrences(date(2026, 9, 9))
+        r = self.client.post("/api/obligations", json={
+            "id": water, "name": "Water (Urban Utilities)", "ownership": "personal", "amount_rule": "fixed",
+            "amount": 750.0, "frequency": "quarterly", "anchor_date": "2026-12-05",
+            "pay_from_account": "ing_home", "reserve_account": "ing_home", "lead_days": [30, 7],
+            "remind": True, "status": "active"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        with family_app.get_db() as db:
+            dates = [o["due_date"] for o in db.execute(
+                "SELECT due_date FROM obligation_occurrences WHERE obligation_id=? AND state='upcoming' ORDER BY due_date", (water,))]
+        self.assertEqual(dates[0], "2026-12-07")  # 5 Dec 2026 is a Saturday
+        self.assertNotIn("2026-11-30", dates)
+
+        d = self.client.delete(f"/api/obligations/{water}")
+        self.assertEqual(d.status_code, 200)
+        with family_app.get_db() as db:
+            self.assertEqual(db.execute("SELECT status FROM obligations WHERE id=?", (water,)).fetchone()["status"], "retired")
+        names = [o["name"] for o in self.client.get("/api/obligations").get_json()["obligations"]]
+        self.assertNotIn("Water (Urban Utilities)", names)
+
+    def test_position_log_state_receipts_and_balances(self):
+        position = self.client.get("/api/obligations/position?today=2026-09-09").get_json()
+        keys = {t["account_key"] for t in position["targets"]}
+        self.assertIn("ecomm_gst", keys)
+        gst = next(t for t in position["targets"] if t["account_key"] == "ecomm_gst")
+        self.assertEqual(gst["balance"], 9048.03)
+
+        occ_id = position["upcoming"][0]["occurrence_id"]
+        bad = self.client.post(f"/api/obligations/occurrences/{occ_id}/state", json={"state": "lost"})
+        self.assertEqual(bad.status_code, 400)
+        ok = self.client.post(f"/api/obligations/occurrences/{occ_id}/state", json={"state": "paid"})
+        self.assertEqual(ok.status_code, 200)
+        with family_app.get_db() as db:
+            row = db.execute("SELECT state, state_changed_by FROM obligation_occurrences WHERE id=?", (occ_id,)).fetchone()
+        self.assertEqual((row["state"], row["state_changed_by"]), ("paid", "app"))
+
+        self.assertEqual(self.client.post("/api/obligations/receipts", json={"year_month": "2026-9", "amount": 1}).status_code, 400)
+        self.assertEqual(self.client.post("/api/obligations/receipts", json={"year_month": "2026-09", "amount": 15363.34}).status_code, 200)
+        self.assertEqual(self.client.post("/api/obligations/receipts", json={"year_month": "2026-09", "amount": 16000}).status_code, 200)
+        with family_app.get_db() as db:
+            rows = db.execute("SELECT amount_incl_gst FROM receipts_log WHERE year_month='2026-09'").fetchall()
+        self.assertEqual([r["amount_incl_gst"] for r in rows], [16000.0])
+
+        self.assertEqual(self.client.post("/api/obligations/balances", json={"account_key": "nope", "balance": 1}).status_code, 400)
+        ok = self.client.post("/api/obligations/balances", json={"account_key": "ing_home", "balance": 780.0})
+        self.assertEqual(ok.status_code, 200)
+        position = self.client.get("/api/obligations/position?today=2026-09-09").get_json()
+        home = next(t for t in position["targets"] if t["account_key"] == "ing_home")
+        self.assertEqual(home["balance"], 780.0)
+
+        log = self.client.get("/api/obligations/log").get_json()["log"]
+        self.assertEqual(log, [])
+
+    def test_run_dry_run_returns_body_without_mattermost(self):
+        with patch.object(family_app, "mattermost_client", return_value=None):
+            r = self.client.post("/api/obligations/run", json={"job": "daily", "dry_run": True, "today": "2026-10-01"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("September 2026 set-aside", r.get_json()["body"])
+        bad = self.client.post("/api/obligations/run", json={"job": "hourly"})
+        self.assertEqual(bad.status_code, 400)
+
+    def test_run_without_dry_run_reports_missing_mattermost(self):
+        with patch.object(family_app, "mattermost_client", return_value=None):
+            r = self.client.post("/api/obligations/run", json={"job": "weekly", "today": "2026-09-13"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["reason"], "Mattermost not configured")
+
+    def test_mattermost_status_and_test_message(self):
+        with patch.object(family_app, "mattermost_client", return_value=None):
+            status = self.client.get("/api/mattermost/status").get_json()
+            self.assertEqual(status, {"configured": False, "can_read": False, "can_post": False, "reachable": False})
+            r = self.client.post("/api/mattermost/test")
+            self.assertEqual(r.status_code, 503)
+
+        class Fake:
+            can_read, can_post = True, True
+            def ping(self): return True
+            def post(self, message): self.message = message; return "p1"
+        fake = Fake()
+        with patch.object(family_app, "mattermost_client", return_value=fake):
+            status = self.client.get("/api/mattermost/status").get_json()
+            self.assertTrue(status["configured"] and status["reachable"])
+            r = self.client.post("/api/mattermost/test")
+        self.assertEqual(r.get_json(), {"ok": True, "post_id": "p1"})
+        self.assertIn("Family HQ", fake.message)
+
+    def test_routes_require_login(self):
+        anonymous = family_app.app.test_client()
+        self.assertIn(anonymous.get("/api/obligations").status_code, (302, 401))
+        self.assertIn(anonymous.post("/api/obligations/run", json={"job": "daily"}).status_code, (302, 401))
+
+
 if __name__ == "__main__":
     unittest.main()

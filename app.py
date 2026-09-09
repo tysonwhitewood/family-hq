@@ -9,6 +9,10 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import openpyxl
+
+import mattermost
+import obligations as ob
+import reminders
 from cashflow import (
     FORECAST_MONTHS,
     _normalise_description,
@@ -3239,6 +3243,308 @@ def api_stock_price(ticker):
 init_db()
 
 # ── Daily 6am AEST screener run ───────────────────────────────────────────────
+
+# ── Obligations & reminders ──────────────────────────────────────────────────
+
+def mattermost_client():
+    """Mattermost client from environment variables, or None when disabled/unconfigured."""
+    cfg = load_config().get('mattermost') or {}
+    if cfg.get('enabled') is False:
+        return None
+    return mattermost.client_from_env()
+
+
+def reminder_service():
+    return reminders.ReminderService(get_db, mattermost_client(), obligation_settings())
+
+
+def _account_keys() -> set[str]:
+    return {a['key'] for a in obligation_settings().get('accounts', [])}
+
+
+def _validate_obligation(data: dict) -> tuple[dict | None, str | None]:
+    name = str(data.get('name') or '').strip()
+    if not name:
+        return None, 'name is required'
+    ownership = data.get('ownership', 'personal')
+    if ownership not in ('personal', 'business'):
+        return None, 'ownership must be personal or business'
+    amount_rule = data.get('amount_rule', 'fixed')
+    if amount_rule not in ob.AMOUNT_RULES:
+        return None, 'amount_rule must be one of: ' + ', '.join(ob.AMOUNT_RULES)
+    frequency = data.get('frequency', 'once')
+    if frequency not in ob.FREQUENCIES:
+        return None, 'frequency must be one of: ' + ', '.join(ob.FREQUENCIES)
+    amount = data.get('amount')
+    if amount in ('', None):
+        amount = None
+    else:
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            return None, 'amount must be a number'
+        if not math.isfinite(amount) or amount < 0:
+            return None, 'amount must be a non-negative number'
+    anchor = data.get('anchor_date') or None
+    if anchor:
+        try:
+            date.fromisoformat(anchor)
+        except (TypeError, ValueError):
+            return None, 'anchor_date must be an ISO date'
+    keys = _account_keys()
+    for field in ('pay_from_account', 'reserve_account'):
+        value = data.get(field) or None
+        if value and keys and value not in keys:
+            return None, f'{field} must be a configured account key'
+    lead_days = data.get('lead_days', [30, 7])
+    if not isinstance(lead_days, list) or not all(isinstance(x, int) and x >= 0 for x in lead_days):
+        return None, 'lead_days must be a list of non-negative whole numbers'
+    status = data.get('status', 'active')
+    if status not in ('active', 'pending_confirmation', 'retired'):
+        return None, 'status must be active, pending_confirmation or retired'
+    due_rule = data.get('due_rule', 'standard')
+    if due_rule not in ('standard', 'none'):
+        return None, 'due_rule must be standard or none'
+    try:
+        extension_days = int(data.get('extension_days') or 0)
+    except (TypeError, ValueError):
+        return None, 'extension_days must be a whole number'
+    return {
+        'name': name, 'ownership': ownership, 'pay_from_account': data.get('pay_from_account') or None,
+        'reserve_account': data.get('reserve_account') or None, 'amount_rule': amount_rule, 'amount': amount,
+        'frequency': frequency, 'anchor_date': anchor, 'due_rule': due_rule, 'extension_days': extension_days,
+        'lead_days': json.dumps(lead_days), 'remind': 1 if data.get('remind', True) else 0, 'status': status,
+        'budget_category': (data.get('budget_category') or '').strip() or None,
+        'source': (data.get('source') or 'typed').strip(), 'notes': (data.get('notes') or '').strip(),
+    }, None
+
+
+@app.route('/api/obligations')
+@login_required
+def api_obligations_list():
+    settings = obligation_settings()
+    reminder_service().regenerate_occurrences()
+    with get_db() as db:
+        rows = [dict(r) for r in db.execute(
+            "SELECT * FROM obligations WHERE status != 'retired' ORDER BY ownership, name")]
+        nxt = {}
+        for r in db.execute(
+            "SELECT obligation_id, id, due_date, standard_date, estimate, state FROM obligation_occurrences "
+            "WHERE state IN ('upcoming','funds_confirmed') ORDER BY due_date"
+        ):
+            nxt.setdefault(r['obligation_id'], dict(r))
+    for row in rows:
+        row['lead_days'] = json.loads(row.get('lead_days') or '[]')
+        row['next_occurrence'] = nxt.get(row['id'])
+    return jsonify({
+        'obligations': rows,
+        'accounts': settings.get('accounts', []),
+        'settings': {k: settings[k] for k in (
+            'payg_instalment_quarterly', 'income_tax_reserve_rate', 'assumed_monthly_retainer',
+            'gst_credit_allowance_monthly', 'sl_trading_trust_bas')},
+    })
+
+
+@app.route('/api/obligations', methods=['POST'])
+@login_required
+def api_obligations_save():
+    data = request.get_json(force=True) or {}
+    fields, error = _validate_obligation(data)
+    if error:
+        return jsonify({'error': error}), 400
+    oid = data.get('id')
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        if oid:
+            if not db.execute('SELECT 1 FROM obligations WHERE id=?', (oid,)).fetchone():
+                return jsonify({'error': 'obligation not found'}), 404
+            db.execute(
+                """UPDATE obligations SET name=?, ownership=?, pay_from_account=?, reserve_account=?, amount_rule=?,
+                   amount=?, frequency=?, anchor_date=?, due_rule=?, extension_days=?, lead_days=?, remind=?, status=?,
+                   budget_category=?, source=?, notes=?, updated_at=? WHERE id=?""",
+                (*fields.values(), now, oid),
+            )
+            db.execute("DELETE FROM obligation_occurrences WHERE obligation_id=? AND state='upcoming'", (oid,))
+        else:
+            cursor = db.execute(
+                """INSERT INTO obligations (name, ownership, pay_from_account, reserve_account, amount_rule, amount,
+                   frequency, anchor_date, due_rule, extension_days, lead_days, remind, status, budget_category,
+                   source, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (*fields.values(), now, now),
+            )
+            oid = cursor.lastrowid
+    reminder_service().regenerate_occurrences()
+    return jsonify({'ok': True, 'id': oid})
+
+
+@app.route('/api/obligations/<int:oid>', methods=['DELETE'])
+@login_required
+def api_obligations_delete(oid):
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        db.execute("UPDATE obligations SET status='retired', updated_at=? WHERE id=?", (now, oid))
+        db.execute("DELETE FROM obligation_occurrences WHERE obligation_id=? AND state='upcoming'", (oid,))
+    return jsonify({'ok': True})
+
+
+def _today_param():
+    raw = (request.args.get('today') or (request.get_json(silent=True) or {}).get('today') or '').strip()
+    if not raw:
+        return None, None
+    try:
+        return date.fromisoformat(raw), None
+    except ValueError:
+        return None, 'today must be an ISO date'
+
+
+@app.route('/api/obligations/position')
+@login_required
+def api_obligations_position():
+    today, error = _today_param()
+    if error:
+        return jsonify({'error': error}), 400
+    return jsonify(reminder_service().position(today))
+
+
+@app.route('/api/obligations/log')
+@login_required
+def api_obligations_log():
+    try:
+        limit = max(1, min(int(request.args.get('limit', 30)), 200))
+    except ValueError:
+        return jsonify({'error': 'limit must be a whole number'}), 400
+    with get_db() as db:
+        rows = [dict(r) for r in db.execute(
+            'SELECT id, kind, dedupe_key, obligation_id, occurrence_id, mattermost_post_id, body, sent_at '
+            'FROM reminder_log ORDER BY sent_at DESC, id DESC LIMIT ?', (limit,))]
+    return jsonify({'log': rows})
+
+
+@app.route('/api/obligations/occurrences/<int:occ_id>/state', methods=['POST'])
+@login_required
+def api_obligations_occurrence_state(occ_id):
+    data = request.get_json(force=True) or {}
+    state = data.get('state')
+    if state not in ob.OCCURRENCE_STATES:
+        return jsonify({'error': 'state must be one of: ' + ', '.join(ob.OCCURRENCE_STATES)}), 400
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        cursor = db.execute(
+            "UPDATE obligation_occurrences SET state=?, state_changed_at=?, state_changed_by='app' WHERE id=?",
+            (state, now, occ_id),
+        )
+        if cursor.rowcount == 0:
+            return jsonify({'error': 'occurrence not found'}), 404
+    return jsonify({'ok': True})
+
+
+@app.route('/api/obligations/receipts', methods=['POST'])
+@login_required
+def api_obligations_receipts():
+    data = request.get_json(force=True) or {}
+    ym = str(data.get('year_month') or '').strip()
+    if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', ym):
+        return jsonify({'error': 'year_month must look like 2026-09'}), 400
+    try:
+        amount = float(data.get('amount'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'amount must be a number'}), 400
+    if not math.isfinite(amount) or amount < 0:
+        return jsonify({'error': 'amount must be a non-negative number'}), 400
+    now = datetime.now().isoformat()[:19]
+    detail = json.dumps([{'source': 'app', 'amount': amount, 'note': (data.get('note') or '').strip()}])
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO receipts_log (year_month, amount_incl_gst, detail, updated_at) VALUES (?,?,?,?) '
+            'ON CONFLICT(year_month) DO UPDATE SET amount_incl_gst=excluded.amount_incl_gst, '
+            'detail=excluded.detail, updated_at=excluded.updated_at',
+            (ym, amount, detail, now),
+        )
+    reminder_service().regenerate_occurrences()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/obligations/balances', methods=['POST'])
+@login_required
+def api_obligations_balances():
+    data = request.get_json(force=True) or {}
+    key = str(data.get('account_key') or '').strip()
+    keys = _account_keys()
+    if not key or (keys and key not in keys):
+        return jsonify({'error': 'account_key must be a configured account'}), 400
+    try:
+        balance = float(data.get('balance'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'balance must be a number'}), 400
+    available = data.get('available')
+    if available not in (None, ''):
+        try:
+            available = float(available)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'available must be a number'}), 400
+    else:
+        available = None
+    as_of = (data.get('as_of') or '').strip() or reminder_service().today().isoformat()
+    try:
+        date.fromisoformat(as_of)
+    except ValueError:
+        return jsonify({'error': 'as_of must be an ISO date'}), 400
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        cursor = db.execute(
+            'INSERT INTO account_balances (account_key, balance, available, as_of, source, raw, created_at) '
+            "VALUES (?,?,?,?,'typed',?,?)",
+            (key, balance, available, as_of, (data.get('note') or '').strip(), now),
+        )
+    return jsonify({'ok': True, 'id': cursor.lastrowid})
+
+
+@app.route('/api/obligations/run', methods=['POST'])
+@login_required
+def api_obligations_run():
+    data = request.get_json(force=True) or {}
+    job = data.get('job')
+    if job not in ('daily', 'weekly'):
+        return jsonify({'error': 'job must be daily or weekly'}), 400
+    today, error = _today_param()
+    if error:
+        return jsonify({'error': error}), 400
+    service = reminder_service()
+    runner = service.run_daily if job == 'daily' else service.run_weekly
+    return jsonify(runner(today, dry_run=bool(data.get('dry_run'))))
+
+
+@app.route('/api/mattermost/status')
+@login_required
+def api_mattermost_status():
+    client = mattermost_client()
+    if client is None:
+        return jsonify({'configured': False, 'can_read': False, 'can_post': False, 'reachable': False})
+    return jsonify({'configured': True, 'can_read': client.can_read, 'can_post': client.can_post,
+                    'reachable': client.ping()})
+
+
+@app.route('/api/mattermost/test', methods=['POST'])
+@login_required
+def api_mattermost_test():
+    client = mattermost_client()
+    if client is None:
+        return jsonify({'error': 'Mattermost is not configured. Set MATTERMOST_URL and a bot token or webhook in Coolify.'}), 503
+    try:
+        post_id = client.post('Family HQ is connected. Money reminders will post here.')
+    except mattermost.MattermostError as exc:
+        return jsonify({'error': str(exc)}), 502
+    return jsonify({'ok': True, 'post_id': post_id})
+
+
+def _start_reminder_scheduler():
+    import threading
+    thread = threading.Thread(
+        target=reminders.run_scheduler_loop, args=(reminder_service,), daemon=True, name='reminders'
+    )
+    thread.start()
+
+
 def _start_daily_screener():
     import threading
     from zoneinfo import ZoneInfo
@@ -3295,6 +3601,7 @@ def _start_daily_screener():
     t.start()
 
 _start_daily_screener()
+_start_reminder_scheduler()
 
 if __name__ == '__main__':
     print(f'Family HQ running on port {PORT}')
