@@ -583,6 +583,9 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     <div class="nav-item" onclick="showPage('finance',this);loadFinance()">
       <span class="nav-icon">💰</span> Finance
     </div>
+    <div class="nav-item" onclick="showPage('obligations',this);loadObligations()">
+      <span class="nav-icon">🧾</span> Obligations
+    </div>
     <div class="nav-item" onclick="showPage('budget',this);loadBudget()">
       <span class="nav-icon">📊</span> Budget
     </div>
@@ -1189,6 +1192,12 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
       <div class="card-header"><div class="card-title">Connected Services</div></div>
       <div id="integrations-list"></div>
     </div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><div class="card-title">Mattermost</div>
+        <button onclick="mmTest()" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Send test message</button>
+      </div>
+      <div id="mm-status" style="padding:0 20px 16px;font-size:13px;color:#374151">Checking…</div>
+    </div>
     <div class="card">
       <div class="card-header"><div class="card-title">Setup Guides</div></div>
       <div style="padding:20px;font-size:13px;color:#374151;line-height:1.8">
@@ -1254,6 +1263,101 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
 </div>
 
 <!-- ── BUDGET PAGE ──────────────────────────────────────────────────────────── -->
+<!-- OBLIGATIONS -->
+<div class="page" id="page-obligations">
+  <div class="topbar">
+    <div class="topbar-title">🧾 Obligations & Reserves</div>
+    <button onclick="oblEdit(null)" style="margin-left:auto;background:#1B4332;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">+ Add</button>
+  </div>
+  <div class="page-body">
+
+    <div class="card" id="obl-targets-card">
+      <div class="card-header">
+        <div class="card-title">Reserve accounts</div>
+        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">What each account should hold today</span>
+        <button onclick="oblAddReceipts()" style="margin-left:auto;background:#fff;color:#1B4332;border:1px solid #1B4332;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Eden receipts</button>
+      </div>
+      <div id="obl-targets" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">What's coming</div>
+        <span style="font-size:11px;color:#9CA3AF;margin-left:8px">Next 90 days</span>
+        <button onclick="oblRunPreview('daily')" style="margin-left:auto;background:#fff;color:#1B4332;border:1px solid #1B4332;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Preview today's message</button>
+      </div>
+      <div id="obl-upcoming" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </div>
+
+    <details class="card">
+      <summary class="bdgt-collapsible-header">
+        <span class="card-title">All obligations</span>
+      </summary>
+      <div id="obl-list" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </details>
+
+    <details class="card">
+      <summary class="bdgt-collapsible-header">
+        <span class="card-title">Conversation</span>
+        <span style="font-size:11px;color:#9CA3AF">Messages Family HQ has sent</span>
+      </summary>
+      <div id="obl-log" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </details>
+
+    <div id="obl-preview" class="card" style="display:none">
+      <div class="card-header"><div class="card-title">Message preview</div>
+        <button onclick="document.getElementById('obl-preview').style.display='none'" style="margin-left:auto;background:none;border:none;font-size:16px;cursor:pointer">✕</button>
+      </div>
+      <pre id="obl-preview-body" style="white-space:pre-wrap;font-family:inherit;font-size:13px;padding:0 20px 20px;margin:0"></pre>
+    </div>
+  </div>
+</div>
+
+<div id="obl-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;padding:24px;width:min(520px,94vw);max-height:92vh;overflow:auto">
+    <h3 id="obl-modal-title" style="margin:0 0 16px;font-size:16px">Add obligation</h3>
+    <input type="hidden" id="obl-id">
+    <label style="font-size:12px;color:#6B7280">Name</label>
+    <input id="obl-name" style="width:100%;padding:8px;margin:4px 0 12px;border:1px solid #E5E7EB;border-radius:6px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div><label style="font-size:12px;color:#6B7280">Personal or business</label>
+        <select id="obl-ownership" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px">
+          <option value="personal">Personal</option><option value="business">Business</option></select></div>
+      <div><label style="font-size:12px;color:#6B7280">How the amount works</label>
+        <select id="obl-rule" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px">
+          <option value="fixed">Fixed amount</option><option value="sinking_hold">Always hold this amount</option>
+          <option value="receipts_share">Share of Eden's receipts</option><option value="bas_formula">BAS formula</option></select></div>
+      <div><label style="font-size:12px;color:#6B7280">Amount ($)</label>
+        <input id="obl-amount" type="number" step="0.01" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px"></div>
+      <div><label style="font-size:12px;color:#6B7280">How often</label>
+        <select id="obl-frequency" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px">
+          <option value="once">Once</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option>
+          <option value="biannual">Every 6 months</option><option value="annual">Annual</option><option value="rolling">Always (no due date)</option></select></div>
+      <div><label style="font-size:12px;color:#6B7280">Next due date</label>
+        <input id="obl-anchor" type="date" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px"></div>
+      <div><label style="font-size:12px;color:#6B7280">Warn this many days before (comma separated)</label>
+        <input id="obl-lead" value="30, 7" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px"></div>
+      <div><label style="font-size:12px;color:#6B7280">Paid from</label>
+        <select id="obl-pay-from" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px"></select></div>
+      <div><label style="font-size:12px;color:#6B7280">Money parked in</label>
+        <select id="obl-reserve" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px"></select></div>
+      <div><label style="font-size:12px;color:#6B7280">Budget item it replaces (optional)</label>
+        <input id="obl-budget-category" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px"></div>
+      <div><label style="font-size:12px;color:#6B7280">Status</label>
+        <select id="obl-status" style="width:100%;padding:8px;margin-top:4px;border:1px solid #E5E7EB;border-radius:6px">
+          <option value="active">Active</option><option value="pending_confirmation">Needs confirming</option></select></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin:12px 0;font-size:13px"><input type="checkbox" id="obl-remind" checked> Send reminders for this</label>
+    <label style="font-size:12px;color:#6B7280">Notes</label>
+    <textarea id="obl-notes" rows="2" style="width:100%;padding:8px;margin:4px 0 12px;border:1px solid #E5E7EB;border-radius:6px"></textarea>
+    <div id="obl-error" style="color:#B91C1C;font-size:12px;min-height:16px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+      <button onclick="document.getElementById('obl-modal').style.display='none'" style="background:#fff;border:1px solid #E5E7EB;padding:8px 16px;border-radius:8px;cursor:pointer">Cancel</button>
+      <button onclick="oblSave()" style="background:#1B4332;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="page" id="page-budget">
   <div class="topbar">
     <div class="topbar-title">📊 Budget & Cash Flow</div>
@@ -1499,8 +1603,8 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     <div class="mnav-item" onclick="showPage('budget',this);loadBudget()" data-page="budget">
       <span class="micon">📊</span><span>Budget</span>
     </div>
-    <div class="mnav-item" onclick="showPage('property',this);loadProperty()" data-page="property">
-      <span class="micon">🏡</span><span>Investments</span>
+    <div class="mnav-item" onclick="showPage('obligations',this);loadObligations()" data-page="obligations">
+      <span class="micon">🧾</span><span>Owed</span>
     </div>
   </div>
 </nav>
@@ -2096,6 +2200,7 @@ document.getElementById('hs-status').textContent = '✅ Online';
 // ── SETTINGS ──────────────────────────────────────────────────────────────────
 
 async function loadSettings() {
+  mmStatus();
   const s = await authFetch('/api/integrations/status').then(r=>r.json()).catch(()=>({}));
   const aiStatus = s.ai_ready ? 'connected' : 'not-connected';
   const aiLabel = s.anthropic ? 'Claude AI (Anthropic)' : s.openrouter ? 'AI via OpenRouter' : 'AI — Not configured';
@@ -3415,6 +3520,214 @@ async function loadBudget() {
   } catch (e) {
     console.error('Budget load error:', e);
   }
+}
+
+// ── OBLIGATIONS ───────────────────────────────────────────────────────────────
+let _oblData = { obligations: [], accounts: [], settings: {} };
+
+async function loadObligations() {
+  try {
+    const [list, position, log] = await Promise.all([
+      authFetch('/api/obligations').then(r => r.json()),
+      authFetch('/api/obligations/position').then(r => r.json()),
+      authFetch('/api/obligations/log?limit=30').then(r => r.json()),
+    ]);
+    _oblData = list;
+    oblRenderTargets(position.targets || []);
+    oblRenderUpcoming(position.upcoming || []);
+    oblRenderList(list.obligations || []);
+    oblRenderLog(log.log || []);
+  } catch (e) {
+    console.error('Obligations load error:', e);
+  }
+}
+
+function oblAccountName(key) {
+  const a = (_oblData.accounts || []).find(x => x.key === key);
+  return a ? a.display : (key || '—');
+}
+
+function oblDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function oblRenderTargets(targets) {
+  const el = document.getElementById('obl-targets');
+  if (!targets.length) { el.innerHTML = '<div class="empty-state">No reserve targets yet.</div>'; return; }
+  el.innerHTML = `<table class="bdgt-table"><thead><tr><th>Account</th><th>Should hold</th><th>Last known</th><th>As at</th><th>Verdict</th><th></th></tr></thead><tbody>` +
+    targets.map(t => {
+      const verdict = t.balance === null ? '<span style="color:#9CA3AF">no balance yet</span>'
+        : (t.shortfall > 0 ? `<span style="color:#B91C1C;font-weight:600">short ${fmt(t.shortfall)}</span>` : '<span style="color:#15803D;font-weight:600">covered</span>');
+      const components = t.components.map(c => `${c.label} ${fmt(c.amount)}`).join(' · ');
+      return `<tr title="${components.replace(/"/g, '&quot;')}">
+        <td><strong>${t.display}</strong></td><td>${fmt(t.target)}</td>
+        <td>${t.balance === null ? '—' : fmt(t.balance)}</td>
+        <td style="${t.stale ? 'color:#B45309' : ''}">${t.as_of ? oblDate(t.as_of) : '—'}${t.stale && t.as_of ? ' ⚠' : ''}</td>
+        <td>${verdict}</td>
+        <td><button onclick="oblAddBalance('${t.account_key}')" style="background:none;border:1px solid #E5E7EB;padding:3px 8px;border-radius:6px;font-size:11px;cursor:pointer">Update balance</button></td>
+      </tr>`;
+    }).join('') + '</tbody></table>';
+}
+
+function oblRenderUpcoming(upcoming) {
+  const el = document.getElementById('obl-upcoming');
+  if (!upcoming.length) { el.innerHTML = '<div class="empty-state">Nothing due in the next 90 days.</div>'; return; }
+  el.innerHTML = `<table class="bdgt-table"><thead><tr><th>Due</th><th>What</th><th>Estimate</th><th>Parked in</th><th>State</th><th></th></tr></thead><tbody>` +
+    upcoming.map(u => `<tr>
+      <td>${oblDate(u.due_date)}<div style="font-size:11px;color:#9CA3AF">${u.days_out === 0 ? 'today' : u.days_out + ' days'}</div></td>
+      <td>${u.name}</td><td>${u.estimate === null ? '<span style="color:#9CA3AF">unknown</span>' : fmt(u.estimate)}</td>
+      <td>${oblAccountName(u.reserve_account)}</td>
+      <td>${u.state.replace('_', ' ')}</td>
+      <td style="white-space:nowrap">
+        <button onclick="oblSetState(${u.occurrence_id}, 'paid')" style="background:#1B4332;color:#fff;border:none;padding:3px 8px;border-radius:6px;font-size:11px;cursor:pointer">Paid</button>
+        <button onclick="oblSetState(${u.occurrence_id}, 'skipped')" style="background:none;border:1px solid #E5E7EB;padding:3px 8px;border-radius:6px;font-size:11px;cursor:pointer">Skip</button>
+      </td></tr>`).join('') + '</tbody></table>';
+}
+
+function oblRenderList(rows) {
+  const el = document.getElementById('obl-list');
+  if (!rows.length) { el.innerHTML = '<div class="empty-state">No obligations yet.</div>'; return; }
+  const ruleLabel = { fixed: 'fixed', sinking_hold: 'always hold', receipts_share: 'share of receipts', bas_formula: 'BAS formula' };
+  el.innerHTML = `<table class="bdgt-table"><thead><tr><th>Name</th><th>Amount</th><th>Cycle</th><th>Next due</th><th>Parked in</th><th></th></tr></thead><tbody>` +
+    rows.map(o => `<tr style="${o.status === 'pending_confirmation' ? 'background:#FFFBEB' : ''}">
+      <td><strong>${o.name}</strong>${o.status === 'pending_confirmation' ? ' <span style="font-size:11px;color:#B45309">needs confirming</span>' : ''}${o.remind ? '' : ' <span style="font-size:11px;color:#9CA3AF">silent</span>'}
+        <div style="font-size:11px;color:#9CA3AF">${o.ownership} · ${ruleLabel[o.amount_rule] || o.amount_rule}</div></td>
+      <td>${o.amount === null ? '—' : fmt(o.amount)}</td><td>${o.frequency}</td>
+      <td>${o.next_occurrence ? oblDate(o.next_occurrence.due_date) : '—'}</td>
+      <td>${oblAccountName(o.reserve_account)}</td>
+      <td style="white-space:nowrap">
+        <button onclick="oblEdit(${o.id})" style="background:none;border:1px solid #E5E7EB;padding:3px 8px;border-radius:6px;font-size:11px;cursor:pointer">Edit</button>
+        <button onclick="oblRetire(${o.id})" style="background:none;border:1px solid #FCA5A5;color:#B91C1C;padding:3px 8px;border-radius:6px;font-size:11px;cursor:pointer">Remove</button>
+      </td></tr>`).join('') + '</tbody></table>';
+}
+
+function oblRenderLog(rows) {
+  const el = document.getElementById('obl-log');
+  if (!rows.length) { el.innerHTML = '<div class="empty-state">Nothing sent yet.</div>'; return; }
+  el.innerHTML = rows.map(r => `<div style="padding:10px 0;border-bottom:1px solid #F3F4F6">
+      <div style="font-size:11px;color:#9CA3AF">${r.sent_at.replace('T', ' ')} · ${r.kind.replace('_', ' ')}${r.mattermost_post_id ? '' : ' · webhook'}</div>
+      <div style="font-size:13px;white-space:pre-wrap">${r.body.replace(/</g, '&lt;')}</div>
+    </div>`).join('');
+}
+
+function oblFillAccountSelects() {
+  const options = ['<option value="">—</option>'].concat((_oblData.accounts || []).map(a => `<option value="${a.key}">${a.display}</option>`)).join('');
+  document.getElementById('obl-pay-from').innerHTML = options;
+  document.getElementById('obl-reserve').innerHTML = options;
+}
+
+function oblEdit(id) {
+  oblFillAccountSelects();
+  const o = id ? (_oblData.obligations || []).find(x => x.id === id) : null;
+  document.getElementById('obl-modal-title').textContent = o ? 'Edit obligation' : 'Add obligation';
+  document.getElementById('obl-id').value = o ? o.id : '';
+  document.getElementById('obl-name').value = o ? o.name : '';
+  document.getElementById('obl-ownership').value = o ? o.ownership : 'personal';
+  document.getElementById('obl-rule').value = o ? o.amount_rule : 'fixed';
+  document.getElementById('obl-amount').value = o && o.amount !== null ? o.amount : '';
+  document.getElementById('obl-frequency').value = o ? o.frequency : 'annual';
+  document.getElementById('obl-anchor').value = o && o.next_occurrence ? o.next_occurrence.standard_date : (o ? (o.anchor_date || '') : '');
+  document.getElementById('obl-lead').value = o ? o.lead_days.join(', ') : '30, 7';
+  document.getElementById('obl-pay-from').value = o ? (o.pay_from_account || '') : '';
+  document.getElementById('obl-reserve').value = o ? (o.reserve_account || '') : '';
+  document.getElementById('obl-budget-category').value = o ? (o.budget_category || '') : '';
+  document.getElementById('obl-status').value = o ? o.status : 'active';
+  document.getElementById('obl-remind').checked = o ? !!o.remind : true;
+  document.getElementById('obl-notes').value = o ? (o.notes || '') : '';
+  document.getElementById('obl-error').textContent = '';
+  document.getElementById('obl-modal').style.display = 'flex';
+}
+
+async function oblSave() {
+  const lead = document.getElementById('obl-lead').value.split(',').map(s => s.trim()).filter(Boolean).map(Number);
+  if (lead.some(n => !Number.isInteger(n) || n < 0)) {
+    document.getElementById('obl-error').textContent = 'Warning days must be whole numbers, e.g. 30, 7';
+    return;
+  }
+  const existing = (_oblData.obligations || []).find(x => String(x.id) === document.getElementById('obl-id').value);
+  const payload = {
+    id: document.getElementById('obl-id').value || undefined,
+    name: document.getElementById('obl-name').value,
+    ownership: document.getElementById('obl-ownership').value,
+    amount_rule: document.getElementById('obl-rule').value,
+    amount: document.getElementById('obl-amount').value,
+    frequency: document.getElementById('obl-frequency').value,
+    anchor_date: document.getElementById('obl-anchor').value || null,
+    lead_days: lead,
+    pay_from_account: document.getElementById('obl-pay-from').value,
+    reserve_account: document.getElementById('obl-reserve').value,
+    budget_category: document.getElementById('obl-budget-category').value,
+    status: document.getElementById('obl-status').value,
+    remind: document.getElementById('obl-remind').checked,
+    notes: document.getElementById('obl-notes').value,
+    extension_days: existing ? existing.extension_days : 0,
+    due_rule: existing ? existing.due_rule : 'standard',
+    source: existing ? existing.source : 'typed',
+  };
+  const r = await authFetch('/api/obligations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const d = await r.json();
+  if (!r.ok) { document.getElementById('obl-error').textContent = d.error || 'Could not save'; return; }
+  document.getElementById('obl-modal').style.display = 'none';
+  loadObligations();
+}
+
+async function oblRetire(id) {
+  const o = (_oblData.obligations || []).find(x => x.id === id);
+  if (!confirm(`Remove "${o ? o.name : 'this obligation'}" from the list? Its history is kept.`)) return;
+  await authFetch(`/api/obligations/${id}`, { method: 'DELETE' });
+  loadObligations();
+}
+
+async function oblSetState(occId, state) {
+  await authFetch(`/api/obligations/occurrences/${occId}/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state }) });
+  loadObligations();
+}
+
+async function oblAddBalance(accountKey) {
+  const value = prompt(`Current balance of ${oblAccountName(accountKey)} (dollars):`);
+  if (value === null || value.trim() === '') return;
+  const r = await authFetch('/api/obligations/balances', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_key: accountKey, balance: value.replace(/[$,\s]/g, '') }) });
+  if (!r.ok) { alert((await r.json()).error || 'Could not save'); return; }
+  loadObligations();
+}
+
+async function oblAddReceipts() {
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const month = prompt('Which month? (YYYY-MM)', ym);
+  if (!month) return;
+  const value = prompt(`Total Eden received in ${month}, GST inclusive (dollars):`);
+  if (value === null || value.trim() === '') return;
+  const r = await authFetch('/api/obligations/receipts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ year_month: month, amount: value.replace(/[$,\s]/g, '') }) });
+  if (!r.ok) { alert((await r.json()).error || 'Could not save'); return; }
+  loadObligations();
+}
+
+async function oblRunPreview(job) {
+  const r = await authFetch('/api/obligations/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ job, dry_run: true }) });
+  const d = await r.json();
+  document.getElementById('obl-preview-body').textContent = d.body || `Nothing to send today (${d.reason || 'nothing new'}).`;
+  document.getElementById('obl-preview').style.display = 'block';
+}
+
+async function mmStatus() {
+  const el = document.getElementById('mm-status');
+  if (!el) return;
+  try {
+    const s = await authFetch('/api/mattermost/status').then(r => r.json());
+    if (!s.configured) { el.innerHTML = 'Not configured. Add <code>MATTERMOST_URL</code> and <code>MATTERMOST_BOT_TOKEN</code> + <code>MATTERMOST_CHANNEL_ID</code> (or <code>MATTERMOST_WEBHOOK_URL</code>) in Coolify.'; return; }
+    el.innerHTML = `${s.reachable ? '🟢 Reachable' : '🔴 Not reachable'} · ${s.can_read ? 'bot account (can read replies)' : 'webhook only (send only)'}`;
+  } catch (e) {
+    el.textContent = 'Could not check Mattermost status.';
+  }
+}
+
+async function mmTest() {
+  const r = await authFetch('/api/mattermost/test', { method: 'POST' });
+  const d = await r.json();
+  alert(r.ok ? 'Test message sent to the Family Finance channel.' : (d.error || 'Could not send'));
 }
 
 function bdgtRenderHeadline(d) {

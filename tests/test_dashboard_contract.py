@@ -569,3 +569,25 @@ class DashboardNewAccountTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ObligationsPageContractTests(unittest.TestCase):
+    def setUp(self):
+        self.html = Path("dashboard.html").read_text()
+
+    def test_obligations_page_and_nav_exist(self):
+        self.assertIn('id="page-obligations"', self.html)
+        self.assertIn("showPage('obligations',this);loadObligations()", self.html)
+        self.assertIn('data-page="obligations"', self.html)
+
+    def test_obligations_page_has_three_cards_and_actions(self):
+        for element_id in ("obl-upcoming", "obl-targets", "obl-log", "obl-modal"):
+            self.assertIn(f'id="{element_id}"', self.html)
+        for fn in ("async function loadObligations", "function oblEdit", "async function oblSave",
+                   "async function oblSetState", "async function oblAddBalance", "async function oblAddReceipts",
+                   "async function oblRunPreview", "async function mmTest", "async function mmStatus"):
+            self.assertIn(fn, self.html)
+
+    def test_settings_has_mattermost_block(self):
+        self.assertIn('id="mm-status"', self.html)
+        self.assertIn("Send test message", self.html)
