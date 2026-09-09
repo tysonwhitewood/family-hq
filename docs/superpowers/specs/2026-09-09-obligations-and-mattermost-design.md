@@ -456,3 +456,27 @@ $1,200 tax slice were moved):
 - The Mattermost server allows bot account creation (System Console → Integrations → Bot
   Accounts) and personal access tokens.
 - `ANTHROPIC_API_KEY` is set in Coolify; this could not be verified from the build machine.
+
+## Step 2 amendments (agreed 10 September 2026)
+
+- **Free-form questions.** Any channel message from an allowed user that is not a command or an
+  image is answered by the LLM using a money context: reserve targets, next 30 days of
+  occurrences, receipts assumptions, monthly budget totals. Answers are short, Australian
+  English, and never invent figures that are not in the context.
+- **Allowed users are Mattermost usernames**: `tawhai` (Tyson) and `mum` (Robyn), configured in
+  `mattermost.allowed_users`. Posts from anyone else, and the bot's own posts, are ignored.
+- **Account aliases** come from config: each account in `obligations.accounts` may list
+  `aliases` (e.g. `["gst", "ecomm"]`) used to recognise typed balances such as `gst 9262`.
+- **Direct debits.** Obligations gain `auto_pay` (0/1). An auto-paid obligation's warning says
+  the amount will be debited on the due date from the paying account and to make sure it holds
+  the money; there is no "reply paid". Its occurrence is marked paid automatically the day after
+  the due date. Council rates and water are auto-paid from 10 September 2026 (set up by Robyn).
+- **Overdue occurrences** (due in the last 30 days, still open) appear in the position and the
+  Obligations page with a negative days-out and an "overdue" flag. Lead warnings do not repeat.
+- **Vision without an Anthropic key.** `llm_chat` accepts images. With `ANTHROPIC_API_KEY` it
+  uses Claude; otherwise OpenRouter with a free vision-capable model. Reading quality on
+  OpenRouter is best-effort; the bot always shows what it read and asks for correction.
+- **Polling watermark** starts at the time of the first poll after deploy, so old channel
+  history is never replayed.
+- **Manual controls**: `POST /api/mattermost/poll` runs one poll now; `POST /api/mattermost/simulate`
+  with `{text}` returns what the bot would reply without posting.
