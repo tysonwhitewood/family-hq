@@ -94,3 +94,232 @@ def generate_occurrences(obligation: dict, start: date, end: date) -> list[dict]
             occurrences.append({'standard_date': standard, 'due_date': _apply_due_rule(standard, due_rule)})
         k += 1
     return occurrences
+
+
+BAS_DUE_MONTH_DAY = ((2, 28), (4, 28), (7, 28), (10, 28))
+
+
+def bas_standard_dates(start: date, end: date) -> list[date]:
+    """ATO quarterly BAS standard due dates (28 Feb, 28 Apr, 28 Jul, 28 Oct) within [start, end]."""
+    dates = []
+    for year in range(start.year, end.year + 1):
+        for month, day in BAS_DUE_MONTH_DAY:
+            candidate = date(year, month, day)
+            if start <= candidate <= end:
+                dates.append(candidate)
+    return dates
+
+
+# Due month -> last month of the quarter it covers. The October-December BAS is due at the
+# end of February (the ATO's summer extension), every other quarter is due the month after.
+BAS_QUARTER_END_MONTH = {10: 9, 2: 12, 4: 3, 7: 6}
+
+
+def bas_quarter_months(standard_due: date) -> list[str]:
+    """The three months a BAS covers, keyed off the ATO due month."""
+    end_month = BAS_QUARTER_END_MONTH.get(standard_due.month, standard_due.month - 1 or 12)
+    end_year = standard_due.year if end_month < standard_due.month else standard_due.year - 1
+    quarter_end = date(end_year, end_month, 1)
+    return [month_key(add_months(quarter_end, -k)) for k in (2, 1, 0)]
+
+
+def _f(settings: dict, key: str) -> float:
+    return float(settings.get(key, DEFAULT_SETTINGS[key]))
+
+
+def receipts_for_month(ym: str, receipts_rows: dict, settings: dict) -> tuple[float, bool]:
+    """Reported receipts for the month, else the assumed retainer. Returns (amount, assumed)."""
+    if ym in receipts_rows and receipts_rows[ym] is not None:
+        return float(receipts_rows[ym]), False
+    return _f(settings, 'assumed_monthly_retainer'), True
+
+
+def monthly_setaside(receipts_incl_gst: float, settings: dict) -> dict:
+    """GST at the configured fraction of receipts, income tax at the reserve rate of ex-GST receipts."""
+    receipts = float(receipts_incl_gst)
+    gst = receipts * _f(settings, 'gst_fraction')
+    income_tax = (receipts - gst) * _f(settings, 'income_tax_reserve_rate')
+    return {
+        'receipts': round(receipts, 2),
+        'gst': round(gst, 2),
+        'income_tax': round(income_tax, 2),
+        'total': round(gst + income_tax, 2),
+    }
+
+
+def bas_estimate(standard_due: date, receipts_rows: dict, settings: dict) -> dict:
+    """GST collected less the credit allowance, plus the PAYG instalment and the trust BAS."""
+    months = bas_quarter_months(standard_due)
+    receipts, assumed_months = {}, []
+    for ym in months:
+        amount, assumed = receipts_for_month(ym, receipts_rows, settings)
+        receipts[ym] = amount
+        if assumed:
+            assumed_months.append(ym)
+    gst_collected = sum(receipts.values()) * _f(settings, 'gst_fraction')
+    credits = len(months) * _f(settings, 'gst_credit_allowance_monthly')
+    gst_net = max(gst_collected - credits, 0.0)
+    payg = _f(settings, 'payg_instalment_quarterly')
+    trust = _f(settings, 'sl_trading_trust_bas')
+    return {
+        'months': months,
+        'receipts': receipts,
+        'assumed_months': assumed_months,
+        'gst_collected': round(gst_collected, 2),
+        'credits': round(credits, 2),
+        'gst_net': round(gst_net, 2),
+        'payg': round(payg, 2),
+        'trust': round(trust, 2),
+        'total': round(gst_net + payg + trust, 2),
+    }
+
+
+def sinking_accrual(amount: float, cycle_months: int, next_due: date, today: date) -> float:
+    """How much of a bill should be saved so far, growing linearly over its cycle."""
+    if today >= next_due:
+        return round(float(amount), 2)
+    previous_due = add_months(next_due, -cycle_months)
+    if today <= previous_due:
+        return 0.0
+    fraction = (today - previous_due).days / (next_due - previous_due).days
+    return round(float(amount) * fraction, 2)
+
+
+def _months_between(start_ym: str, end_ym: str) -> list[str]:
+    cursor, end = parse_month_key(start_ym), parse_month_key(end_ym)
+    months = []
+    while cursor <= end:
+        months.append(month_key(cursor))
+        cursor = add_months(cursor, 1)
+    return months
+
+
+def _counted_months(months: list[str], receipts_rows: dict, today: date) -> list[str]:
+    """Completed months always count; the current month only once receipts are reported."""
+    current = month_key(today)
+    return [ym for ym in months if ym < current or (ym == current and ym in receipts_rows)]
+
+
+def income_tax_pot(receipts_rows: dict, settings: dict, today: date, payg_paid: float) -> float:
+    """Income-tax reserve accrued since `reserve_start_month`, less PAYG instalments paid from it."""
+    start = str(settings.get('reserve_start_month', DEFAULT_SETTINGS['reserve_start_month']))
+    total = 0.0
+    for ym in _counted_months(_months_between(start, month_key(today)), receipts_rows, today):
+        amount, _ = receipts_for_month(ym, receipts_rows, settings)
+        total += monthly_setaside(amount, settings)['income_tax']
+    return round(max(total - float(payg_paid or 0.0), 0.0), 2)
+
+
+def gst_accrued_for_quarter(standard_due: date, receipts_rows: dict, settings: dict, today: date) -> float:
+    """GST that should already be sitting aside for the BAS due on `standard_due`."""
+    total = 0.0
+    for ym in _counted_months(bas_quarter_months(standard_due), receipts_rows, today):
+        amount, _ = receipts_for_month(ym, receipts_rows, settings)
+        total += amount * _f(settings, 'gst_fraction')
+    return round(total, 2)
+
+
+def _next_open_occurrence(obligation_id: int, occurrences: list[dict]) -> dict | None:
+    candidates = [
+        o for o in occurrences
+        if o['obligation_id'] == obligation_id and o.get('state', 'upcoming') in ('upcoming', 'funds_confirmed')
+    ]
+    return min(candidates, key=lambda o: o['due_date']) if candidates else None
+
+
+def _as_date(value) -> date:
+    return value if isinstance(value, date) else date.fromisoformat(str(value))
+
+
+def _is_live(obligation: dict) -> bool:
+    return obligation.get('status', 'active') in ('active', 'pending_confirmation')
+
+
+def household_setaside_lines(obligations: list[dict], occurrences: list[dict], settings: dict) -> list[dict]:
+    """Monthly equivalents for every non-monthly fixed household bill with a known amount."""
+    lines = []
+    for item in obligations:
+        cycle = FREQUENCY_MONTHS.get(item.get('frequency'))
+        if (
+            item.get('amount_rule') != 'fixed' or not cycle or cycle < 3
+            or not item.get('amount') or not _is_live(item)
+            or item.get('reserve_account') == 'ecomm_gst' or item.get('ownership') == 'business'
+        ):
+            continue
+        lines.append({
+            'name': item['name'],
+            'reserve_account': item.get('reserve_account'),
+            'amount': round(float(item['amount']), 2),
+            'cycle_months': cycle,
+            'monthly': round(float(item['amount']) / cycle, 2),
+        })
+    return lines
+
+
+def account_targets(today: date, obligations: list[dict], occurrences: list[dict],
+                    receipts_rows: dict, balances: dict, settings: dict) -> list[dict]:
+    """What each reserve account should hold today, against the last known balance."""
+    components: dict[str, list[dict]] = {}
+
+    def add(account_key, label, amount):
+        if account_key and amount and amount > 0:
+            components.setdefault(account_key, []).append({'label': label, 'amount': round(float(amount), 2)})
+
+    payg_paid = 0.0
+    for occ in occurrences:
+        if occ.get('state') == 'paid' and occ.get('estimate_detail'):
+            try:
+                payg_paid += float(json.loads(occ['estimate_detail']).get('payg', 0) or 0)
+            except (ValueError, TypeError):
+                pass
+
+    for item in obligations:
+        if not _is_live(item):
+            continue
+        rule, frequency, key = item.get('amount_rule'), item.get('frequency'), item.get('reserve_account')
+        cycle = FREQUENCY_MONTHS.get(frequency)
+        if rule == 'sinking_hold' and item.get('amount'):
+            add(key, item['name'], item['amount'])
+        elif rule == 'fixed' and frequency == 'once' and item.get('amount'):
+            already_paid = any(
+                o['obligation_id'] == item['id'] and o.get('state') == 'paid' for o in occurrences
+            )
+            if not already_paid:
+                add(key, item['name'], item['amount'])
+        elif rule == 'fixed' and cycle and cycle >= 3 and item.get('amount'):
+            nxt = _next_open_occurrence(item['id'], occurrences)
+            if nxt is not None:
+                add(key, item['name'], sinking_accrual(item['amount'], cycle, _as_date(nxt['standard_date']), today))
+        elif rule == 'bas_formula':
+            nxt = _next_open_occurrence(item['id'], occurrences)
+            if nxt is not None:
+                standard_due = _as_date(nxt['standard_date'])
+                add(key, 'GST accrued this quarter', gst_accrued_for_quarter(standard_due, receipts_rows, settings, today))
+                if (standard_due - today).days <= int(settings.get('bas_lookahead_days', 30)):
+                    add(key, 'SL Trading Trust BAS', _f(settings, 'sl_trading_trust_bas'))
+            add(key, 'Income-tax pot', income_tax_pot(receipts_rows, settings, today, payg_paid))
+
+    display = {a['key']: a.get('display', a['key']) for a in settings.get('accounts', [])}
+    order = [a['key'] for a in settings.get('accounts', [])]
+    keys = sorted(components, key=lambda k: (order.index(k) if k in order else len(order), k))
+    stale_days = int(settings.get('stale_balance_days', 14))
+    rows = []
+    for key in keys:
+        target = round(sum(c['amount'] for c in components[key]), 2)
+        snapshot = balances.get(key) or {}
+        balance = snapshot.get('balance')
+        as_of = snapshot.get('as_of')
+        age_days = (today - _as_date(as_of)).days if as_of else None
+        rows.append({
+            'account_key': key,
+            'display': display.get(key, key),
+            'target': target,
+            'components': components[key],
+            'balance': None if balance is None else round(float(balance), 2),
+            'available': snapshot.get('available'),
+            'as_of': as_of,
+            'age_days': age_days,
+            'stale': age_days is None or age_days > stale_days,
+            'shortfall': None if balance is None else round(target - float(balance), 2),
+        })
+    return rows
