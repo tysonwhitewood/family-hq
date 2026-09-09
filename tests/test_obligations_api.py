@@ -276,5 +276,69 @@ class ForecastHookTests(ObligationsDbCase):
         hook.assert_called_once_with(date(2026, 9, 9))
 
 
+class LlmImageTests(unittest.TestCase):
+    def test_anthropic_path_sends_image_blocks(self):
+        captured = {}
+
+        class FakeMessages:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+
+                class R:
+                    content = [type("T", (), {"text": "ok"})()]
+                return R()
+
+        class FakeClient:
+            def __init__(self, api_key):
+                self.messages = FakeMessages()
+
+        fake_module = type("M", (), {"Anthropic": FakeClient})
+        with patch.dict("sys.modules", {"anthropic": fake_module}), \
+             patch.object(family_app, "_anthropic_key", return_value="k"):
+            out = family_app.llm_chat([{"role": "user", "content": "read this"}], system="s",
+                                      images=[{"media_type": "image/png", "data": "QUJD"}])
+        self.assertEqual(out, "ok")
+        blocks = captured["messages"][-1]["content"]
+        self.assertEqual(blocks[0]["type"], "image")
+        self.assertEqual(blocks[0]["source"], {"type": "base64", "media_type": "image/png", "data": "QUJD"})
+        self.assertEqual(blocks[-1], {"type": "text", "text": "read this"})
+
+    def test_openrouter_path_uses_vision_models_for_images(self):
+        seen = []
+
+        class FakeResp:
+            def read(self):
+                return json.dumps({"choices": [{"message": {"content": "seen"}}]}).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=30):
+            seen.append(json.loads(req.data))
+            return FakeResp()
+
+        with patch.object(family_app, "_anthropic_key", return_value=""), \
+             patch.object(family_app, "_openrouter_key", return_value="or"), \
+             patch.object(family_app.urllib.request, "urlopen", fake_urlopen):
+            out = family_app.llm_chat([{"role": "user", "content": "read"}],
+                                      images=[{"media_type": "image/jpeg", "data": "QUJD"}])
+        self.assertEqual(out, "seen")
+        self.assertEqual(seen[0]["model"], family_app.OPENROUTER_VISION_MODELS[0])
+        parts = seen[0]["messages"][-1]["content"]
+        self.assertEqual(parts[0]["type"], "image_url")
+        self.assertTrue(parts[0]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+
+    def test_vision_available_tracks_keys(self):
+        with patch.object(family_app, "_anthropic_key", return_value=""), \
+             patch.object(family_app, "_openrouter_key", return_value=""):
+            self.assertFalse(family_app.llm_vision_available())
+        with patch.object(family_app, "_anthropic_key", return_value=""), \
+             patch.object(family_app, "_openrouter_key", return_value="x"):
+            self.assertTrue(family_app.llm_vision_available())
+
+
 if __name__ == "__main__":
     unittest.main()

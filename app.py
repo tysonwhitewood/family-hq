@@ -156,34 +156,71 @@ def require_auth():
 
 # ── LLM helper (Anthropic → OpenRouter fallback) ─────────────────────────────
 
+OPENROUTER_TEXT_MODELS = [
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'google/gemma-3-27b-it:free',
+    'mistralai/mistral-7b-instruct:free',
+]
+OPENROUTER_VISION_MODELS = [
+    'google/gemma-3-27b-it:free',
+    'meta-llama/llama-3.2-11b-vision-instruct:free',
+]
+
+
 def llm_available():
     return bool(_anthropic_key() or _openrouter_key())
 
-def llm_chat(messages: list, system: str = '', max_tokens: int = 1024) -> str:
-    """Call Claude via Anthropic SDK, or fall back to OpenRouter free model."""
+
+def llm_vision_available():
+    """Images can be read: Claude when the Anthropic key exists, else a free vision model on OpenRouter."""
+    return bool(_anthropic_key() or _openrouter_key())
+
+
+def _with_images(messages: list, images: list | None, style: str) -> list:
+    """Attach images to the last user message in Anthropic or OpenAI block style."""
+    if not images:
+        return messages
+    messages = [dict(m) for m in messages]
+    last = messages[-1]
+    text = last['content'] if isinstance(last['content'], str) else ''
+    if style == 'anthropic':
+        blocks = [{'type': 'image', 'source': {'type': 'base64', 'media_type': i['media_type'], 'data': i['data']}}
+                  for i in images]
+    else:
+        blocks = [{'type': 'image_url', 'image_url': {'url': f"data:{i['media_type']};base64,{i['data']}"}}
+                  for i in images]
+    blocks.append({'type': 'text', 'text': text})
+    last['content'] = blocks
+    return messages
+
+
+def llm_chat(messages: list, system: str = '', max_tokens: int = 1024, images: list | None = None) -> str:
+    """Call Claude via the Anthropic SDK, or fall back to OpenRouter free models.
+
+    `images` is a list of {'media_type': 'image/png', 'data': '<base64>'} attached to the last
+    user message. On OpenRouter a vision-capable model is chosen when images are present.
+    """
     anthropic_key = _anthropic_key()
     openrouter_key = _openrouter_key()
 
     if anthropic_key:
         import anthropic
         client = anthropic.Anthropic(api_key=anthropic_key)
-        kwargs = dict(model='claude-sonnet-4-6', max_tokens=max_tokens, messages=messages)
+        kwargs = dict(model='claude-sonnet-4-6', max_tokens=max_tokens,
+                      messages=_with_images(messages, images, 'anthropic'))
         if system:
             kwargs['system'] = system
         response = client.messages.create(**kwargs)
         return response.content[0].text
 
     if openrouter_key:
-        _models = [
-            'meta-llama/llama-3.3-70b-instruct:free',
-            'google/gemma-3-27b-it:free',
-            'mistralai/mistral-7b-instruct:free',
-        ]
+        _models = OPENROUTER_VISION_MODELS if images else OPENROUTER_TEXT_MODELS
         last_err = None
         for model in _models:
             payload = json.dumps({
                 'model': model,
-                'messages': ([{'role': 'system', 'content': system}] if system else []) + messages,
+                'messages': ([{'role': 'system', 'content': system}] if system else [])
+                            + _with_images(messages, images, 'openai'),
                 'max_tokens': max_tokens,
             }).encode()
             req = urllib.request.Request(
@@ -197,12 +234,12 @@ def llm_chat(messages: list, system: str = '', max_tokens: int = 1024) -> str:
                 method='POST',
             )
             try:
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=60) as resp:
                     data = json.loads(resp.read())
                     return data['choices'][0]['message']['content']
             except urllib.error.HTTPError as e:
                 last_err = e
-                if e.code != 429:
+                if e.code not in (429, 404, 400):
                     raise
         raise last_err
 
