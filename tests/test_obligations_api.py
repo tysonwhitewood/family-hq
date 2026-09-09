@@ -395,10 +395,24 @@ class LlmImageTests(unittest.TestCase):
             out = family_app.llm_chat([{"role": "user", "content": "read"}],
                                       images=[{"media_type": "image/jpeg", "data": "QUJD"}])
         self.assertEqual(out, "seen")
-        self.assertEqual(seen[0]["model"], family_app.OPENROUTER_VISION_MODELS[0])
+        self.assertEqual(seen[0]["model"], family_app.openrouter_models("vision")[0])
         parts = seen[0]["messages"][-1]["content"]
         self.assertEqual(parts[0]["type"], "image_url")
         self.assertTrue(parts[0]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+
+    def test_openrouter_models_come_from_config_with_defaults(self):
+        temp = TemporaryDirectory()
+        original = family_app.CONFIG_PATH
+        family_app.CONFIG_PATH = Path(temp.name) / "config.json"
+        try:
+            family_app.CONFIG_PATH.write_text("{}")
+            self.assertEqual(family_app.openrouter_models("text"), family_app.OPENROUTER_TEXT_MODELS)
+            family_app.CONFIG_PATH.write_text(json.dumps({"ai": {"openrouter_text_models": ["x/y:free"], "openrouter_vision_models": []}}))
+            self.assertEqual(family_app.openrouter_models("text"), ["x/y:free"])
+            self.assertEqual(family_app.openrouter_models("vision"), family_app.OPENROUTER_VISION_MODELS)
+        finally:
+            family_app.CONFIG_PATH = original
+            temp.cleanup()
 
     def test_vision_available_tracks_keys(self):
         with patch.object(family_app, "_anthropic_key", return_value=""), \

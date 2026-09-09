@@ -157,15 +157,24 @@ def require_auth():
 
 # ── LLM helper (Anthropic → OpenRouter fallback) ─────────────────────────────
 
+# Defaults only; the live lists come from the `ai` key in data/config.json (see README).
 OPENROUTER_TEXT_MODELS = [
-    'meta-llama/llama-3.3-70b-instruct:free',
-    'google/gemma-3-27b-it:free',
-    'mistralai/mistral-7b-instruct:free',
+    'google/gemma-4-31b-it:free',
+    'google/gemma-4-26b-a4b-it:free',
+    'nvidia/nemotron-3-super-120b-a12b:free',
 ]
 OPENROUTER_VISION_MODELS = [
-    'google/gemma-3-27b-it:free',
-    'meta-llama/llama-3.2-11b-vision-instruct:free',
+    'google/gemma-4-31b-it:free',
+    'google/gemma-4-26b-a4b-it:free',
 ]
+
+
+def openrouter_models(kind: str) -> list[str]:
+    """Model ids to try in order: `ai.openrouter_text_models` / `ai.openrouter_vision_models` from config, else defaults."""
+    configured = (load_config().get('ai') or {}).get(f'openrouter_{kind}_models')
+    if isinstance(configured, list) and configured:
+        return [str(m) for m in configured]
+    return list(OPENROUTER_VISION_MODELS if kind == 'vision' else OPENROUTER_TEXT_MODELS)
 
 
 def llm_available():
@@ -215,7 +224,7 @@ def llm_chat(messages: list, system: str = '', max_tokens: int = 1024, images: l
         return response.content[0].text
 
     if openrouter_key:
-        _models = OPENROUTER_VISION_MODELS if images else OPENROUTER_TEXT_MODELS
+        _models = openrouter_models('vision' if images else 'text')
         last_err = None
         for model in _models:
             payload = json.dumps({

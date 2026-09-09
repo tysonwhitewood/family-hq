@@ -102,6 +102,17 @@ for free text, the answer) without writing anything or posting.
 Other settings under `mattermost`: `allowed_users` (list of Mattermost usernames, default empty,
 meaning nobody's posts are acted on), `enabled` (default `true`).
 
+### AI models (`data/config.json` → `ai`)
+
+| Key | Default | Meaning / when absent |
+|---|---|---|
+| `openrouter_text_models` | three free Gemma/Nemotron ids | Models tried in order for chat, briefings and free-form channel answers when only `OPENROUTER_API_KEY` is set. Absent or empty: the defaults in `app.py`. |
+| `openrouter_vision_models` | two free Gemma ids | Models tried in order for screenshots and bill photos on OpenRouter. Absent or empty: the defaults. |
+
+OpenRouter retires free models without notice. If the bot replies "HTTP Error 404", refresh these
+lists from https://openrouter.ai/api/v1/models (ids ending in `:free`; vision models list
+`image` under input modalities). With `ANTHROPIC_API_KEY` set these lists are not used.
+
 ### Testing a message without waiting for 7am
 
 On the Obligations page, **Preview today's message** shows exactly what would be posted, without
