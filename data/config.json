@@ -67,63 +67,104 @@
         "key": "eden_operating",
         "display": "Eden Commercial",
         "bank": "CBA",
-        "match": "1027 8937"
+        "match": "1027 8937",
+        "aliases": [
+          "eden ops",
+          "eden commercial",
+          "eden operating"
+        ]
       },
       {
         "key": "ecomm_gst",
         "display": "EComm GST",
         "bank": "CBA",
-        "match": "1027 8945"
+        "match": "1027 8945",
+        "aliases": [
+          "gst",
+          "ecomm",
+          "ecomm gst",
+          "tax"
+        ]
       },
       {
         "key": "cba_utilities",
         "display": "Utilities / Vehicles",
         "bank": "CBA",
-        "match": "2645 1922"
+        "match": "2645 1922",
+        "aliases": [
+          "utilities",
+          "vehicles"
+        ]
       },
       {
         "key": "ing_everyday",
         "display": "ING Orange Everyday",
         "bank": "ING",
-        "match": "65683967"
+        "match": "65683967",
+        "aliases": [
+          "everyday",
+          "orange",
+          "ing everyday"
+        ]
       },
       {
         "key": "ing_emergency",
         "display": "ING Emergency",
         "bank": "ING",
-        "match": "46789692"
+        "match": "46789692",
+        "aliases": [
+          "emergency",
+          "food buffer"
+        ]
       },
       {
         "key": "ing_home",
         "display": "ING Home",
         "bank": "ING",
-        "match": "48305167"
+        "match": "48305167",
+        "aliases": [
+          "home",
+          "ing home"
+        ]
       },
       {
         "key": "ing_savings",
         "display": "ING Savings",
         "bank": "ING",
-        "match": "804020739"
+        "match": "804020739",
+        "aliases": [
+          "savings",
+          "ing savings"
+        ]
       },
       {
         "key": "gsb_everyday",
         "display": "GSB Everyday",
         "bank": "GSB",
-        "match": "51978620"
+        "match": "51978620",
+        "aliases": [
+          "gsb",
+          "gsb everyday",
+          "mortgage account"
+        ]
       },
       {
         "key": "gsb_mortgage",
         "display": "GSB Basic Variable Inv P&I",
         "bank": "GSB",
         "match": "51991707",
-        "loan": true
+        "loan": true,
+        "aliases": [
+          "mortgage balance",
+          "loan"
+        ]
       }
     ]
   },
   "mattermost": {
     "enabled": true,
     "allowed_users": [
-      "dad",
+      "tawhai",
       "mum"
     ]
   }
