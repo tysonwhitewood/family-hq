@@ -1,7 +1,7 @@
 # Obligations, Reserves and Mattermost Reminders
 
 **Date:** 2026-09-09
-**Status:** Draft for Tyson's review
+**Status:** Approved by Tyson 2026-09-09
 **Related:** `2026-08-03-family-six-month-cash-flow-forecast-design.md` (forecast this feeds),
 `docs/cash-flow-operations.md` (operator guide, to be extended)
 
@@ -21,8 +21,9 @@ figures do not survive contact with the bank statements:
 - The flat "$1,500 to EComm GST on the 1st" therefore under-reserves in any month a large invoice
   is paid. The reserve must follow receipts.
 
-The $3,188 PAYG figure is 25% of the $12,754 FY26 taxable profit, so it is the **annual** figure
-(~$797 a quarter). This is what to confirm with Zoie Cook at HMGC.
+The $3,188 PAYG figure equals 25% of the $12,754 FY26 taxable profit, which reads as an annual
+figure. **Tyson has directed that it be treated as quarterly** ($3,188 each BAS), which is the
+conservative reading. Zoie Cook at HMGC is to confirm; the setting is one number to change.
 
 ## Goal
 
@@ -176,7 +177,8 @@ The five accounts from the schedule document, plus the GSB accounts, are configu
 | `ing_emergency` | ING Emergency | ING | 46789692 |
 | `ing_home` | ING Home | ING | 48305167 |
 | `ing_savings` | ING Savings | ING | 804020739 |
-| `gsb_transaction` | GSB Transaction | GSB | matched by account name only; the GSB app shows no BSB |
+| `gsb_everyday` | GSB Everyday | GSB (BSB 814 282) | 51978620 |
+| `gsb_mortgage` | GSB Basic Variable Inv P&I (loan) | GSB | 51991707; recorded, never a reserve target |
 
 Matching uses the account name first, then the trailing digits. An unmatched account is reported
 and ignored, never guessed.
@@ -191,10 +193,10 @@ All rates are settings under `obligations` in `data/config.json`:
 | `income_tax_reserve_rate` | `0.15` | share of ex-GST receipts reserved for company income tax |
 | `assumed_monthly_retainer` | `10083.34` | Cheesecake Shop retainer, GST inclusive |
 | `gst_credit_allowance_monthly` | `636` | expected GST credits on ~$7,000 of GST-able expenses |
-| `payg_instalment_quarterly` | `797` | from the $3,188 annual notice |
+| `payg_instalment_quarterly` | `3188` | Tyson's direction: the $3,188 notice is per quarter |
 | `sl_trading_trust_bas` | `545` | |
 | `emergency_floor` | `3000` | ING Emergency target |
-| `mortgage_repayment` | `4810.38` | one repayment held ahead |
+| `mortgage_repayment` | `4810.38` | must sit in GSB Everyday before the 5th |
 | `post_hour_local` | `7` | scheduled posts, Brisbane time |
 | `quiet_hours` | `[21, 7]` | no posts between 9pm and 7am |
 | `timezone` | `Australia/Brisbane` | |
@@ -208,7 +210,7 @@ cushion. Retainer-only month: $917 + $1,375 = **$2,292**.
 
 **BAS estimate for a quarter** = Σ(monthly receipts) × `gst_fraction` − 3 ×
 `gst_credit_allowance_monthly` + `payg_instalment_quarterly` + `sl_trading_trust_bas`. Months
-without a receipts row use the assumed retainer. The estimate is recomputed daily until paid and
+without a receipts row use the assumed retainer. With PAYG at $3,188 the Q1 estimate is about $6,900. The estimate is recomputed daily until paid and
 shown with its components in every warning.
 
 **Account targets today**
@@ -221,7 +223,10 @@ shown with its components in every warning.
   anchor date. Rates $1,614 biannual accrues $269 a month; water $713 quarterly $238; SMS
   Insurance $2,955 annual $246; RACQ roadside $310 annual $26.
 - `ing_emergency` = `emergency_floor`.
-- `gsb_transaction` = `mortgage_repayment` from the 25th of each month until the repayment leaves.
+- `gsb_everyday` = `mortgage_repayment` until the repayment leaves on the 5th. It is funded by the
+  monthly director's drawings, Eden Commercial → ING Everyday → GSB Everyday, so the monthly
+  set-aside message states that the drawings must include the mortgage amount rather than asking
+  for a separate reserve transfer.
 
 **Shortfall** = target − last known balance. Every message states the balance's age.
 
@@ -248,7 +253,7 @@ Every row records its source.
 | Car registration (TMR) | personal | fixed, unknown | unknown | ing_home | pending_confirmation | four TMR payments Apr–Jun 2026: $964.96, $438.74, $502.45, $334.63 |
 | Home & contents (RACQ) | personal | fixed 165.90 | 22nd monthly | ing_everyday | no | ING statement |
 | Electricity (GloBird) | personal | fixed 230 (average of Apr–Jul 2026 bills) | monthly | ing_everyday | no | ING statement |
-| Mortgage one month ahead | personal | sinking_hold 4810.38 | rolling, 25th | gsb_transaction | yes | budget_targets |
+| Mortgage repayment | personal | sinking_hold 4810.38 | 5th monthly, next 2026-10-05 | gsb_everyday | yes, [7] | GSB statement, Tyson 2026-09-09 |
 | Food / tight-month buffer | personal | sinking_hold 3000 | rolling | ing_emergency | no | schedule-doc |
 
 Health insurance: nothing found in any statement; not seeded. The set-up questions ask once.
@@ -422,8 +427,26 @@ Each step is deployable and useful on its own.
 - SMS Insurance $2,955 (5 Mar): what it covers and whether it is personal or business.
 - Council rates: next notice date and amount (half-yearly; April and August payments seen).
 - ASIC fee $1,798 in April: what it is for.
-- Whether the October mortgage money is inside ING Everyday's $7,102.
-- With Zoie: the 15% income-tax reserve rate, and that $3,188 is annual.
+- With Zoie: the 15% income-tax reserve rate, and whether the $3,188 PAYG notice is per quarter
+  (Tyson's reading, used here) or per year.
+
+## Opening balances
+
+Seeded as `account_balances` rows dated 2026-09-09, source `screenshot`, from the screenshots
+Tyson posted during design (after his $7,756 PropVesting ring-fence, $3,000 food buffer and
+$1,200 tax slice were moved):
+
+| Account | Balance | Available |
+|---|---|---|
+| eden_operating | 7,324.64 | 7,295.64 |
+| ecomm_gst | 9,048.03 | 92.03 (7,756 + 1,200 still clearing) |
+| cba_utilities | 81.74 | 81.74 |
+| ing_everyday | 7,779.02 | 7,102.16 |
+| ing_emergency | 3,001.03 | 3,001.03 |
+| ing_home | 0.41 | 0.41 |
+| ing_savings | 3.50 | 3.50 |
+| gsb_everyday | 5,246.45 | 5,246.45 |
+| gsb_mortgage | -756,265.54 | 0 |
 
 ## Assumptions
 
