@@ -19,6 +19,7 @@ REGENERATE_BACK_DAYS = 35
 REGENERATE_FORWARD_DAYS = 400
 UPCOMING_WINDOW_DAYS = 30
 POSITION_WINDOW_DAYS = 90
+BIRTHDAY_WINDOW_DAYS = 14
 
 
 def _rows(cursor) -> list[dict]:
@@ -26,8 +27,9 @@ def _rows(cursor) -> list[dict]:
 
 
 class ReminderService:
-    def __init__(self, get_db, client, settings: dict, now_fn=None):
+    def __init__(self, get_db, client, settings: dict, now_fn=None, birthdays_fn=None):
         self.get_db = get_db
+        self.birthdays_fn = birthdays_fn
         self.client = client
         self.settings = settings
         self.tz = ZoneInfo(settings.get('timezone', ob.DEFAULT_SETTINGS['timezone']))
@@ -250,10 +252,16 @@ class ReminderService:
         self.regenerate_occurrences(today)
         position = self.position(today)
         upcoming = [u for u in position['upcoming'] if u['days_out'] <= UPCOMING_WINDOW_DAYS]
+        birthdays = []
+        if self.birthdays_fn is not None:
+            try:
+                birthdays = list(self.birthdays_fn(BIRTHDAY_WINDOW_DAYS))
+            except Exception as exc:  # noqa: BLE001 — a bad spreadsheet must not stop the money message
+                print(f'[reminders] birthdays unavailable: {exc}', flush=True)
         message = {
             'kind': 'weekly_position', 'dedupe_key': f'weekly_position:{today.isoformat()}',
             'obligation_id': None, 'occurrence_id': None,
-            'body': ob.compose_weekly_position(position['targets'], upcoming, today),
+            'body': ob.compose_weekly_position(position['targets'], upcoming, today, birthdays),
         }
         return self._deliver([message], dry_run)
 

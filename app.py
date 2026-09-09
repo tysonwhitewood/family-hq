@@ -1460,70 +1460,6 @@ def api_document_serve(filename):
     return send_file(str(filepath))
 
 
-# ── Discord Integration ───────────────────────────────────────────────────────
-
-def send_discord_webhook(message: str, username: str = 'Family HQ'):
-    """Send a message to the configured Discord channel via webhook."""
-    cfg = load_config()
-    webhook_url = cfg.get('discord', {}).get('webhook_url')
-    if not webhook_url:
-        return False
-    payload = json.dumps({'content': message, 'username': username}).encode()
-    req = urllib.request.Request(webhook_url, data=payload,
-                                  headers={
-                                      'Content-Type': 'application/json',
-                                      'User-Agent': 'DiscordBot (family-hq, 1.0)',
-                                  }, method='POST')
-    try:
-        urllib.request.urlopen(req, timeout=10)
-        return True
-    except Exception as e:
-        print(f'Discord webhook error: {e}')
-        return False
-
-@app.route('/api/discord/chat', methods=['POST'])
-def discord_chat():
-    """Handle a message from Discord — reply via webhook."""
-    if not llm_available():
-        return jsonify({'error': 'AI not configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in Coolify'}), 503
-    data = request.get_json(force=True)
-    user_msg = (data.get('message') or '').strip()
-    author = data.get('author', 'Family')
-    if not user_msg:
-        return jsonify({'error': 'message required'}), 400
-
-    # Build context-aware chat
-    with get_db() as db:
-        history = [dict(r) for r in db.execute(
-            "SELECT role, content FROM chat_history ORDER BY id DESC LIMIT 10"
-        ).fetchall()]
-        history.reverse()
-
-    messages = [{'role': h['role'], 'content': h['content']} for h in history]
-    messages.append({'role': 'user', 'content': f'[{author}]: {user_msg}'})
-
-    reply = llm_chat(messages, system=build_family_context(), max_tokens=800)
-
-    now = datetime.now().isoformat()[:19]
-    with get_db() as db:
-        db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)',
-                   ('user', f'[{author}]: {user_msg}', now))
-        db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)',
-                   ('assistant', reply, now))
-
-    # Send reply to Discord
-    send_discord_webhook(reply)
-    return jsonify({'reply': reply})
-
-@app.route('/api/discord/webhook-test', methods=['POST'])
-def discord_webhook_test():
-    """Test the Discord webhook."""
-    ok = send_discord_webhook('✅ Family HQ Discord integration is working! You can now chat with me here.')
-    return jsonify({'ok': ok})
-
-
-TOKEN_DIR = DATA_DIR / 'tokens'
-
 # ── Finance CSV + AI Chat ─────────────────────────────────────────────────────
 
 # Check multiple paths — Coolify volume mount takes priority
@@ -3305,7 +3241,8 @@ def mattermost_client():
 
 
 def reminder_service():
-    return reminders.ReminderService(get_db, mattermost_client(), obligation_settings())
+    return reminders.ReminderService(get_db, mattermost_client(), obligation_settings(),
+                                     birthdays_fn=load_birthdays)
 
 
 def _account_keys() -> set[str]:

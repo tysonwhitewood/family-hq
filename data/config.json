@@ -42,10 +42,6 @@
     "xero": false,
     "outlook": true
   },
-  "discord": {
-    "channel_id": "1490644719829516469",
-    "webhook_url": "https://discord.com/api/webhooks/1490644757469335583/Nh3nXnMEOfeUjF0_qrMmX_hrs0_ctKplX2-YNdoI-IBtW3rlKgH1q77HSXpvi9yzCo6q"
-  },
   "obligations": {
     "gst_fraction": 0.0909090909,
     "income_tax_reserve_rate": 0.15,

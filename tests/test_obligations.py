@@ -293,6 +293,17 @@ class MessageTests(unittest.TestCase):
         self.assertIn("28 Oct", text)
         self.assertIn("screenshot", text.lower())
 
+    def test_weekly_position_lists_birthdays_when_given(self):
+        birthdays = [
+            {"name": "Robyn Whitewood", "relationship": "Family", "birthday_this_year": "2026-09-16", "days_until": 3, "age_upcoming": 38},
+            {"name": "Heemi Whitewood", "relationship": "Family", "birthday_this_year": "2026-09-18", "days_until": 5, "age_upcoming": 71},
+        ]
+        text = ob.compose_weekly_position([], [], date(2026, 9, 13), birthdays)
+        self.assertIn("Birthdays in the next two weeks", text)
+        self.assertIn("16 Sep 2026 — Robyn Whitewood (Family), turning 38, in 3 days", text)
+        self.assertIn("Heemi Whitewood", text)
+        self.assertNotIn("Birthdays", ob.compose_weekly_position([], [], date(2026, 9, 13), []))
+
     def test_bundle_joins_with_rule(self):
         self.assertEqual(ob.compose_bundle(["a", "b"]), "a\n\n---\n\nb")
         self.assertEqual(ob.compose_bundle(["only"]), "only")

@@ -415,7 +415,8 @@ def compose_lead_warning(obligation: dict, occurrence: dict, days_out: int,
     return '\n'.join(lines)
 
 
-def compose_weekly_position(targets: list[dict], upcoming: list[dict], today: date) -> str:
+def compose_weekly_position(targets: list[dict], upcoming: list[dict], today: date,
+                            birthdays: list[dict] | None = None) -> str:
     lines = [f'**Position as at {today.strftime("%A")} {_long_date(today)}**', '']
     if not targets:
         lines.append('No reserve targets yet.')
@@ -433,6 +434,13 @@ def compose_weekly_position(targets: list[dict], upcoming: list[dict], today: da
         lines += ['', 'Next 30 days:']
         for item in upcoming:
             lines.append(f'• {_long_date(item["due_date"])} — {item["name"]} {money(item.get("estimate"))}')
+    if birthdays:
+        lines += ['', 'Birthdays in the next two weeks:']
+        for person in birthdays:
+            when = 'today' if person.get('days_until') == 0 else f'in {person["days_until"]} days'
+            age = f', turning {person["age_upcoming"]}' if person.get('age_upcoming') else ''
+            who = f' ({person["relationship"]})' if person.get('relationship') else ''
+            lines.append(f'• {_long_date(person["birthday_this_year"])} — {person["name"]}{who}{age}, {when}')
     if any(row.get('stale') for row in targets):
         lines += ['', 'Some balances are stale or missing. Post screenshots of the CBA and ING apps to refresh.']
     return '\n'.join(lines)

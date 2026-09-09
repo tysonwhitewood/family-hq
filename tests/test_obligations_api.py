@@ -205,7 +205,8 @@ class ObligationRoutesTests(ObligationsDbCase):
         self.assertEqual(bad.status_code, 400)
 
     def test_run_without_dry_run_reports_missing_mattermost(self):
-        with patch.object(family_app, "mattermost_client", return_value=None):
+        with patch.object(family_app, "mattermost_client", return_value=None), \
+             patch.object(family_app.reminders.ReminderService, "in_quiet_hours", return_value=False):
             r = self.client.post("/api/obligations/run", json={"job": "weekly", "today": "2026-09-13"})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.get_json()["reason"], "Mattermost not configured")
@@ -228,6 +229,13 @@ class ObligationRoutesTests(ObligationsDbCase):
             r = self.client.post("/api/mattermost/test")
         self.assertEqual(r.get_json(), {"ok": True, "post_id": "p1"})
         self.assertIn("Family HQ", fake.message)
+
+    def test_reminder_service_uses_the_family_birthday_loader(self):
+        self.assertIs(family_app.reminder_service().birthdays_fn, family_app.load_birthdays)
+
+    def test_discord_routes_are_gone(self):
+        self.assertFalse(hasattr(family_app, "send_discord_webhook"))
+        self.assertEqual(self.client.post("/api/discord/webhook-test").status_code, 404)
 
     def test_routes_require_login(self):
         anonymous = family_app.app.test_client()

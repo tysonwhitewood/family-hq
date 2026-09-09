@@ -185,6 +185,25 @@ class WeeklyRunTests(ReminderCase):
         self.assertIn("ING Emergency", self.client.posts[0])
         self.assertEqual(svc.run_weekly()["sent"], [])
 
+    def test_weekly_position_includes_birthdays_from_the_loader(self):
+        def fake_birthdays(days):
+            self.assertEqual(days, 14)
+            return [{"name": "Robyn Whitewood", "relationship": "Family", "birthday_this_year": "2026-09-16",
+                     "days_until": 3, "age_upcoming": 38}]
+        svc = reminders.ReminderService(family_app.get_db, self.client, self.settings,
+                                        now_fn=lambda: self.at(2026, 9, 13, hour=17), birthdays_fn=fake_birthdays)
+        svc.run_weekly()
+        self.assertIn("Robyn Whitewood", self.client.posts[0])
+
+    def test_weekly_position_still_posts_when_the_birthday_loader_fails(self):
+        def broken(days):
+            raise RuntimeError("spreadsheet missing")
+        svc = reminders.ReminderService(family_app.get_db, self.client, self.settings,
+                                        now_fn=lambda: self.at(2026, 9, 13, hour=17), birthdays_fn=broken)
+        result = svc.run_weekly()
+        self.assertEqual(result["sent"], ["weekly_position:2026-09-13"])
+        self.assertNotIn("Birthdays", self.client.posts[0])
+
     def test_position_exposes_targets_and_upcoming(self):
         svc = self.service(self.at(2026, 9, 9))
         position = svc.position()
