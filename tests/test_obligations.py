@@ -225,5 +225,78 @@ class AccountTargetTests(unittest.TestCase):
         self.assertNotIn("Mortgage repayment", by_name)
 
 
+class MessageTests(unittest.TestCase):
+    def test_money_formats_whole_dollars(self):
+        self.assertEqual(ob.money(2291.67), "$2,292")
+        self.assertEqual(ob.money(-1.03), "-$1")
+        self.assertEqual(ob.money(None), "—")
+
+    def test_monthly_setaside_message_names_both_transfers(self):
+        setaside = ob.monthly_setaside(10083.34, SETTINGS)
+        home_lines = [
+            {"name": "Council rates (Scenic Rim)", "monthly": 269.03, "amount": 1614.19, "cycle_months": 6},
+            {"name": "Water (Urban Utilities)", "monthly": 237.82, "amount": 713.45, "cycle_months": 3},
+        ]
+        text = ob.compose_monthly_setaside("September 2026", setaside, True, home_lines, 4810.38, SETTINGS)
+        self.assertIn("September 2026", text)
+        self.assertIn("$10,083", text)
+        self.assertIn("assumed", text.lower())
+        self.assertIn("**$2,292 to EComm GST**", text)
+        self.assertIn("$917 GST", text)
+        self.assertIn("$1,375 income tax", text)
+        self.assertIn("**$507 to ING Home**", text)
+        self.assertIn("$4,810", text)  # mortgage inside the drawings
+        self.assertIn("Reply *done*", text)
+
+    def test_lead_warning_shows_estimate_extension_and_shortfall(self):
+        obligation = {"name": "Quarterly BAS + PAYG instalment", "amount_rule": "bas_formula",
+                      "extension_days": 28, "reserve_account": "ecomm_gst"}
+        detail = ob.bas_estimate(date(2026, 10, 28), {"2026-07": 40587.0}, SETTINGS)
+        occurrence = {"due_date": "2026-10-28", "standard_date": "2026-10-28",
+                      "estimate": detail["total"], "estimate_detail": _json.dumps(detail)}
+        target = {"display": "EComm GST", "target": 15000.0, "balance": 9048.03, "as_of": "2026-09-09",
+                  "age_days": 19, "stale": True, "shortfall": 5951.97}
+        text = ob.compose_lead_warning(obligation, occurrence, 30, target, date(2026, 9, 28))
+        self.assertIn("due 28 Oct 2026", text)
+        self.assertIn("agent extension to about 25 Nov 2026", text)
+        self.assertIn(ob.money(detail["total"]), text)
+        self.assertIn("GST collected", text)
+        self.assertIn("PAYG instalment $3,188", text)
+        self.assertIn("EComm GST should hold $15,000", text)
+        self.assertIn("$9,048", text)
+        self.assertIn("19 days old", text)
+        self.assertIn("short $5,952", text)
+        self.assertIn("screenshot", text.lower())
+
+    def test_lead_warning_without_balance_asks_for_one(self):
+        obligation = {"name": "Water (Urban Utilities)", "amount_rule": "fixed", "extension_days": 0,
+                      "reserve_account": "ing_home"}
+        occurrence = {"due_date": "2026-11-30", "standard_date": "2026-11-28", "estimate": 713.45, "estimate_detail": None}
+        text = ob.compose_lead_warning(obligation, occurrence, 7, None, date(2026, 11, 23))
+        self.assertIn("Water (Urban Utilities)", text)
+        self.assertIn("$713", text)
+        self.assertNotIn("extension", text)
+        self.assertIn("no balance", text.lower())
+
+    def test_weekly_position_lists_every_account_and_next_bills(self):
+        targets = [
+            {"display": "EComm GST", "target": 15000.0, "balance": 9048.03, "age_days": 3, "stale": False, "shortfall": 5951.97},
+            {"display": "ING Home", "target": 507.0, "balance": None, "age_days": None, "stale": True, "shortfall": None},
+        ]
+        upcoming = [{"name": "Quarterly BAS + PAYG instalment", "due_date": "2026-10-28", "estimate": 6900.0}]
+        text = ob.compose_weekly_position(targets, upcoming, date(2026, 9, 13))
+        self.assertIn("Sunday 13 Sep 2026", text)
+        self.assertIn("EComm GST", text)
+        self.assertIn("short $5,952", text)
+        self.assertIn("ING Home", text)
+        self.assertIn("no balance yet", text.lower())
+        self.assertIn("28 Oct", text)
+        self.assertIn("screenshot", text.lower())
+
+    def test_bundle_joins_with_rule(self):
+        self.assertEqual(ob.compose_bundle(["a", "b"]), "a\n\n---\n\nb")
+        self.assertEqual(ob.compose_bundle(["only"]), "only")
+
+
 if __name__ == "__main__":
     unittest.main()

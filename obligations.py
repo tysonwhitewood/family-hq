@@ -323,3 +323,120 @@ def account_targets(today: date, obligations: list[dict], occurrences: list[dict
             'shortfall': None if balance is None else round(target - float(balance), 2),
         })
     return rows
+
+
+def money(amount) -> str:
+    if amount is None:
+        return '—'
+    value = int(round(float(amount)))
+    sign = '-' if value < 0 else ''
+    return f'{sign}${abs(value):,}'
+
+
+def _long_date(d) -> str:
+    d = _as_date(d)
+    return f'{d.day} {d.strftime("%b %Y")}'
+
+
+def compose_monthly_setaside(period_label: str, setaside: dict, assumed: bool,
+                             home_lines: list[dict], mortgage_amount, settings: dict) -> str:
+    receipts_note = (
+        f'Eden received about {money(setaside["receipts"])} in {period_label} '
+        f'(assumed: the Cheesecake Shop retainer only). Anything else paid in? Reply with the '
+        f'amounts, e.g. *eden 5280*, or post a screenshot of Eden\'s transactions.'
+        if assumed else
+        f'Eden received {money(setaside["receipts"])} in {period_label} (as reported).'
+    )
+    lines = [f'**{period_label} set-aside**', '', receipts_note, '']
+    lines.append(
+        f'On what I know, move **{money(setaside["total"])} to EComm GST** '
+        f'({money(setaside["gst"])} GST + {money(setaside["income_tax"])} income tax).'
+    )
+    home_total = round(sum(line['monthly'] for line in home_lines), 2)
+    if home_lines:
+        parts = ', '.join(f'{money(line["monthly"])} {line["name"]}' for line in home_lines)
+        lines.append(f'Move **{money(home_total)} to ING Home** ({parts}).')
+    if mortgage_amount:
+        lines.append(
+            f'The drawings to ING must include the {money(mortgage_amount)} mortgage repayment, '
+            f'moved on to GSB Everyday before the 5th.'
+        )
+    lines += ['', 'Reply *done* when moved.']
+    return '\n'.join(lines)
+
+
+def compose_lead_warning(obligation: dict, occurrence: dict, days_out: int,
+                         target_row, today: date) -> str:
+    due = _as_date(occurrence['due_date'])
+    when = 'today' if days_out == 0 else ('tomorrow' if days_out == 1 else f'in {days_out} days')
+    lines = [f'**{obligation["name"]}** is due {_long_date(due)} ({when}).']
+    extension_days = int(obligation.get('extension_days') or 0)
+    if extension_days:
+        extension = _as_date(occurrence['standard_date']) + timedelta(days=extension_days)
+        lines[0] += f' Budget to that date; the agent extension to about {_long_date(extension)} is breathing room only.'
+    estimate = occurrence.get('estimate')
+    detail = None
+    if occurrence.get('estimate_detail'):
+        try:
+            detail = json.loads(occurrence['estimate_detail'])
+        except (TypeError, ValueError):
+            detail = None
+    if detail and obligation.get('amount_rule') == 'bas_formula':
+        assumed = detail.get('assumed_months') or []
+        assumed_note = f' (retainer assumed for {", ".join(assumed)})' if assumed else ''
+        lines.append(
+            f'Estimate {money(estimate)}: GST collected {money(detail["gst_collected"])} less credits '
+            f'{money(detail["credits"])}, PAYG instalment {money(detail["payg"])}, '
+            f'SL Trading Trust {money(detail["trust"])}{assumed_note}.'
+        )
+    elif estimate is not None:
+        lines.append(f'Amount {money(estimate)}.')
+    else:
+        lines.append('Amount not yet known. Reply with it, e.g. *rego 965*.')
+    if target_row and target_row.get('balance') is not None:
+        age = target_row.get('age_days')
+        age_text = 'from today' if age == 0 else f'{age} days old'
+        shortfall = target_row.get('shortfall') or 0.0
+        verdict = f'short {money(shortfall)}' if shortfall > 0 else 'covered'
+        lines.append(
+            f'{target_row["display"]} should hold {money(target_row["target"])}. Last known balance '
+            f'{money(target_row["balance"])} ({age_text}), so it is {verdict}.'
+        )
+        if target_row.get('stale'):
+            lines.append('Post a fresh screenshot to update the balance.')
+    elif target_row:
+        lines.append(
+            f'{target_row["display"]} should hold {money(target_row["target"])}, but I have no balance '
+            f'for it yet. Post a screenshot or reply with the amount.'
+        )
+    else:
+        lines.append('I have no balance for the paying account yet. Post a screenshot or reply with the amount.')
+    lines.append('Reply *paid* once it is paid.')
+    return '\n'.join(lines)
+
+
+def compose_weekly_position(targets: list[dict], upcoming: list[dict], today: date) -> str:
+    lines = [f'**Position as at {today.strftime("%A")} {_long_date(today)}**', '']
+    if not targets:
+        lines.append('No reserve targets yet.')
+    for row in targets:
+        if row.get('balance') is None:
+            status = 'no balance yet'
+        else:
+            shortfall = row.get('shortfall') or 0.0
+            age = row.get('age_days')
+            age_text = 'today' if age == 0 else f'{age}d old'
+            status = (f'holds {money(row["balance"])} ({age_text}), '
+                      + (f'short {money(shortfall)}' if shortfall > 0 else 'covered'))
+        lines.append(f'• {row["display"]}: should hold {money(row["target"])}; {status}.')
+    if upcoming:
+        lines += ['', 'Next 30 days:']
+        for item in upcoming:
+            lines.append(f'• {_long_date(item["due_date"])} — {item["name"]} {money(item.get("estimate"))}')
+    if any(row.get('stale') for row in targets):
+        lines += ['', 'Some balances are stale or missing. Post screenshots of the CBA and ING apps to refresh.']
+    return '\n'.join(lines)
+
+
+def compose_bundle(parts: list[str]) -> str:
+    return '\n\n---\n\n'.join(part for part in parts if part)
