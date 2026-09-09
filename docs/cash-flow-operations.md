@@ -104,6 +104,28 @@ Update the forecast once a week:
 
 Overlapping snapshots selected against the same registered account are deduplicated, so the account's latest balance is counted once. Identical transactions in different accounts remain separate.
 
+## Obligations and reserve accounts
+
+The **Obligations** page lists every bill that is not a simple monthly direct debit, plus the
+holds (PropVesting money, the mortgage repayment, the food buffer). Each row says which account
+pays it and which account the money is parked in beforehand.
+
+**Reserve accounts** shows what each parking account should hold today. EComm GST is the
+PropVesting hold plus the GST accrued so far this quarter plus the income-tax pot. ING Home is a
+sinking fund: each half-yearly, quarterly or annual bill contributes its share of the time
+elapsed since it was last due. Use **Update balance** to type a balance when you check the bank;
+the age of the balance is shown and flagged when it is older than two weeks.
+
+**Eden receipts** records what Eden actually received in a month, GST inclusive. Until a month is
+recorded the engine assumes the Cheesecake Shop retainer only, and says so in its messages.
+
+**What's coming** lists the next 90 days. Mark an item **Paid** when the money has gone; it
+stops the warnings for that occurrence. **Skip** drops one occurrence without changing the
+schedule.
+
+Obligation payments appear in the six-month forecast as confirmed events. If an obligation names
+a **budget item it replaces**, that budget line is suppressed so the bill is not counted twice.
+
 ## Backup and restore
 
 The live SQLite database is `/app/data/family.db`. The container's daily job creates SQLite backups in `/app/backups` and retains fourteen days.
