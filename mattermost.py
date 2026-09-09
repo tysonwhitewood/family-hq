@@ -10,6 +10,10 @@ import os
 import requests
 
 
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+IMAGE_MIME_TYPES = {'image/png', 'image/jpeg', 'image/webp', 'image/gif'}
+
+
 class MattermostError(Exception):
     """Raised when Mattermost rejects a request or is unreachable."""
 
@@ -22,6 +26,7 @@ class MattermostClient:
         self.channel_id = channel_id or None
         self.webhook_url = webhook_url or None
         self.timeout = timeout
+        self._me = None
 
     @property
     def can_read(self) -> bool:
@@ -62,6 +67,52 @@ class MattermostClient:
             self._request('POST', self.webhook_url, json={'text': message})
             return None
         raise MattermostError('No Mattermost bot token or webhook configured')
+
+
+    # ── reading (bot token only) ──────────────────────────────────────────
+    def _require_bot(self):
+        if not self.can_read:
+            raise MattermostError('This call needs a bot token and channel id')
+
+    def me(self) -> dict:
+        if self._me is None:
+            self._require_bot()
+            self._me = self._request('GET', f'{self.base_url}/api/v4/users/me', headers=self._headers()).json()
+        return self._me
+
+    def posts_since(self, since_ms: int) -> list[dict]:
+        """Posts in the channel created or edited after `since_ms`, oldest first."""
+        self._require_bot()
+        data = self._request('GET', f'{self.base_url}/api/v4/channels/{self.channel_id}/posts',
+                             headers=self._headers(), params={'since': int(since_ms)}).json()
+        posts = [data['posts'][pid] for pid in data.get('order', []) if pid in data.get('posts', {})]
+        keep = ('id', 'user_id', 'message', 'create_at', 'file_ids', 'root_id', 'type')
+        return sorted(({k: p.get(k) for k in keep} for p in posts), key=lambda p: p['create_at'] or 0)
+
+    def download_file(self, file_id: str) -> tuple[bytes, str, str]:
+        """Download an image attachment. Returns (content, mime_type, name)."""
+        self._require_bot()
+        info = self._request('GET', f'{self.base_url}/api/v4/files/{file_id}/info', headers=self._headers()).json()
+        mime = (info.get('mime_type') or '').lower()
+        if mime not in IMAGE_MIME_TYPES:
+            raise MattermostError(f'Not an image: {mime or "unknown type"}')
+        if int(info.get('size') or 0) > MAX_IMAGE_BYTES:
+            raise MattermostError('Image larger than 10 MB')
+        content = self._request('GET', f'{self.base_url}/api/v4/files/{file_id}', headers=self._headers()).content
+        return content, mime, info.get('name') or file_id
+
+    def add_reaction(self, post_id: str, emoji_name: str = 'white_check_mark') -> None:
+        self._require_bot()
+        self._request('POST', f'{self.base_url}/api/v4/reactions', headers=self._headers(),
+                      json={'user_id': self.me()['id'], 'post_id': post_id, 'emoji_name': emoji_name})
+
+    def users_by_ids(self, ids) -> dict[str, str]:
+        self._require_bot()
+        ids = list(ids)
+        if not ids:
+            return {}
+        rows = self._request('POST', f'{self.base_url}/api/v4/users/ids', headers=self._headers(), json=ids).json()
+        return {u['id']: u['username'] for u in rows}
 
 
 def client_from_env(environ=os.environ) -> MattermostClient | None:
