@@ -230,5 +230,38 @@ class ObligationRoutesTests(ObligationsDbCase):
         self.assertIn(anonymous.post("/api/obligations/run", json={"job": "daily"}).status_code, (302, 401))
 
 
+class ForecastHookTests(ObligationsDbCase):
+    def test_obligation_events_include_dated_bills_but_not_monthly_or_transfers(self):
+        family_app.reminder_service().regenerate_occurrences(date(2026, 9, 9))
+        events = family_app._obligation_events(date(2026, 9, 9))
+        names = [e["description"] for e in events]
+        self.assertIn("Quarterly BAS + PAYG instalment", names)
+        self.assertIn("Water (Urban Utilities)", names)
+        self.assertNotIn("Monthly tax reserve transfer", names)
+        self.assertNotIn("Home & contents (RACQ)", names)
+        self.assertNotIn("Car registration (TMR)", names)  # no amount yet
+        bas = next(e for e in events if e["description"] == "Quarterly BAS + PAYG instalment")
+        self.assertEqual((bas["ownership"], bas["direction"], bas["source"], bas["category"]),
+                         ("business", "outflow", "obligation", "Tax/ATO"))
+        self.assertGreater(bas["amount"], 3733)
+        self.assertEqual(bas["due_date"], "2026-10-28")
+
+    def test_obligation_category_suppresses_the_matching_budget_target(self):
+        with family_app.get_db() as db:
+            db.execute("DELETE FROM budget_targets")
+            db.execute("INSERT INTO budget_targets (category, monthly_target, type, frequency, direction, created_at, updated_at) "
+                       "VALUES ('Water (Qld Urban Util)', 200, 'personal', 'monthly', 'outflow', 'x', 'x')")
+        family_app.reminder_service().regenerate_occurrences(date(2026, 9, 9))
+        events = family_app._obligation_events(date(2026, 9, 9))
+        budgeted = family_app._budget_target_events(events, date(2026, 9, 9))
+        self.assertEqual([b for b in budgeted if b["category"] == "Water (Qld Urban Util)"], [])
+
+    def test_cash_flow_includes_obligation_events(self):
+        family_app.reminder_service().regenerate_occurrences(date(2026, 9, 9))
+        with patch.object(family_app, "_obligation_events", wraps=family_app._obligation_events) as hook:
+            family_app._budget_cash_flow([], [], forecast_date=date(2026, 9, 9), safety_buffer=0)
+        hook.assert_called_once_with(date(2026, 9, 9))
+
+
 if __name__ == "__main__":
     unittest.main()

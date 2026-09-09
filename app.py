@@ -2665,6 +2665,44 @@ def _budget_target_events(scheduled_events, start_date):
     return events
 
 
+def _obligation_events(start_date):
+    """Dated obligation payments as confirmed forecast events.
+
+    Monthly direct debits are already budget items, and the tax-reserve transfer is a move
+    between Eden's own accounts, so only non-monthly fixed bills and the BAS are included.
+    An obligation without an amount yet contributes nothing.
+    """
+    month_starts = _forecast_month_starts(start_date)
+    horizon_end = ob.add_months(month_starts[-1], 1) - timedelta(days=1)
+    with get_db() as db:
+        rows = db.execute(
+            '''SELECT o.due_date, o.estimate, b.name, b.amount, b.ownership, b.budget_category
+               FROM obligation_occurrences o JOIN obligations b ON b.id = o.obligation_id
+               WHERE b.status != 'retired' AND b.amount_rule IN ('fixed', 'bas_formula')
+                 AND b.frequency != 'monthly' AND o.state IN ('upcoming', 'funds_confirmed')
+                 AND o.due_date >= ? AND o.due_date <= ?
+               ORDER BY o.due_date''',
+            (start_date.isoformat(), horizon_end.isoformat()),
+        ).fetchall()
+    events = []
+    for row in rows:
+        amount = row['estimate'] if row['estimate'] is not None else row['amount']
+        if not amount or float(amount) <= 0:
+            continue
+        events.append({
+            'description': row['name'],
+            'amount': float(amount),
+            'due_date': row['due_date'],
+            'recurring': '',
+            'category': row['budget_category'] or '',
+            'ownership': row['ownership'],
+            'direction': 'outflow',
+            'source': 'obligation',
+            'confidence': 'confirmed',
+        })
+    return events
+
+
 def _budget_cash_flow(
     transactions,
     upcoming,
@@ -2738,6 +2776,7 @@ def _budget_cash_flow(
         if re.sub(r'\s+', ' ', event['description'].strip().lower())
         not in manual_descriptions
     )
+    scheduled_events.extend(_obligation_events(start_date))
     scheduled_events.extend(
         _budget_target_events(scheduled_events, start_date)
     )
