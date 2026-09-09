@@ -369,7 +369,11 @@ def compose_lead_warning(obligation: dict, occurrence: dict, days_out: int,
                          target_row, today: date) -> str:
     due = _as_date(occurrence['due_date'])
     when = 'today' if days_out == 0 else ('tomorrow' if days_out == 1 else f'in {days_out} days')
-    lines = [f'**{obligation["name"]}** is due {_long_date(due)} ({when}).']
+    auto_pay = bool(obligation.get('auto_pay'))
+    if auto_pay:
+        lines = [f'**{obligation["name"]}** will be taken by direct debit on {_long_date(due)} ({when}).']
+    else:
+        lines = [f'**{obligation["name"]}** is due {_long_date(due)} ({when}).']
     extension_days = int(obligation.get('extension_days') or 0)
     if extension_days:
         extension = _as_date(occurrence['standard_date']) + timedelta(days=extension_days)
@@ -411,8 +415,38 @@ def compose_lead_warning(obligation: dict, occurrence: dict, days_out: int,
         )
     else:
         lines.append('I have no balance for the paying account yet. Post a screenshot or reply with the amount.')
-    lines.append('Reply *paid* once it is paid.')
+    if auto_pay:
+        lines.append('Make sure the money is there before the debit; nothing to reply.')
+    else:
+        lines.append('Reply *paid* once it is paid.')
     return '\n'.join(lines)
+
+
+def compose_propvesting_check() -> str:
+    return ('**PropVesting check.** Has PropVesting been re-registered with ASIC yet? Reply *yes* when it has and '
+            'I will switch the $7,756 hold to a pay-now reminder.')
+
+
+def compose_setup_question(obligation: dict) -> str:
+    name = obligation['name']
+    amount = obligation.get('amount')
+    anchor = obligation.get('anchor_date')
+    missing = []
+    if amount is None:
+        missing.append('the amount')
+    if not anchor:
+        missing.append('the next due date')
+    if not obligation.get('pay_from_account'):
+        missing.append('which account pays it')
+    asks = ' and '.join(missing) if missing else 'that the details are right'
+    known = []
+    if amount is not None:
+        known.append(money(amount))
+    if anchor:
+        known.append(f'due {_long_date(anchor)}')
+    known_text = f' I have {", ".join(known)}.' if known else ''
+    return (f'**Set-up question.** {name}: I need {asks}.{known_text} Reply like '
+            f'*{name.split(" (")[0].split(":")[0].lower()} due 15 Apr 2027 965*, or post a photo of the notice.')
 
 
 def compose_weekly_position(targets: list[dict], upcoming: list[dict], today: date,

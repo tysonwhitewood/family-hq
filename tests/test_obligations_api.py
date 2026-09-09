@@ -230,6 +230,41 @@ class ObligationRoutesTests(ObligationsDbCase):
         self.assertEqual(r.get_json(), {"ok": True, "post_id": "p1"})
         self.assertIn("Family HQ", fake.message)
 
+    def test_auto_pay_column_is_added_to_an_old_database(self):
+        import sqlite3
+        family_app.DB_PATH.unlink()
+        old = sqlite3.connect(family_app.DB_PATH)
+        old.execute("""CREATE TABLE obligations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            ownership TEXT NOT NULL, pay_from_account TEXT, reserve_account TEXT, amount_rule TEXT NOT NULL, amount REAL,
+            frequency TEXT NOT NULL, anchor_date TEXT, due_rule TEXT NOT NULL DEFAULT 'standard', extension_days INTEGER NOT NULL DEFAULT 0,
+            lead_days TEXT NOT NULL DEFAULT '[30, 7]', remind INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'active',
+            budget_category TEXT, source TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+        old.commit(); old.close()
+        family_app.init_db()
+        with family_app.get_db() as db:
+            cols = {r["name"] for r in db.execute("PRAGMA table_info(obligations)")}
+            auto = db.execute("SELECT auto_pay FROM obligations LIMIT 1").fetchone()
+        self.assertIn("auto_pay", cols)
+        self.assertEqual(auto["auto_pay"], 0)
+
+    def test_save_accepts_auto_pay(self):
+        r = self.client.post("/api/obligations", json={
+            "name": "Water (Urban Utilities)", "ownership": "personal", "amount_rule": "fixed", "amount": 454.26,
+            "frequency": "quarterly", "anchor_date": "2026-09-25", "pay_from_account": "ing_home",
+            "reserve_account": "ing_home", "lead_days": [7], "remind": True, "status": "active", "auto_pay": True})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        listing = self.client.get("/api/obligations").get_json()["obligations"]
+        self.assertEqual(next(o for o in listing if o["id"] == r.get_json()["id"])["auto_pay"], 1)
+
+    def test_reminder_service_carries_allowed_users_and_llm(self):
+        cfg = json.loads(family_app.CONFIG_PATH.read_text())
+        cfg["mattermost"] = {"allowed_users": ["tawhai", "mum"]}
+        family_app.CONFIG_PATH.write_text(json.dumps(cfg))
+        with patch.object(family_app, "llm_available", return_value=True):
+            svc = family_app.reminder_service()
+        self.assertEqual(svc.settings["allowed_users"], ["tawhai", "mum"])
+        self.assertIs(svc.llm, family_app.llm_chat)
+
     def test_reminder_service_uses_the_family_birthday_loader(self):
         self.assertIs(family_app.reminder_service().birthdays_fn, family_app.load_birthdays)
 

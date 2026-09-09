@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import conversation
 import obligations as ob
 from mattermost import MattermostError
 
@@ -20,6 +21,10 @@ REGENERATE_FORWARD_DAYS = 400
 UPCOMING_WINDOW_DAYS = 30
 POSITION_WINDOW_DAYS = 90
 BIRTHDAY_WINDOW_DAYS = 14
+OVERDUE_WINDOW_DAYS = 30
+SETUP_QUESTION_DAYS = 14
+POLL_BACKOFF_AFTER = 3
+POLL_BACKOFF_EVERY = 5
 
 
 def _rows(cursor) -> list[dict]:
@@ -27,9 +32,10 @@ def _rows(cursor) -> list[dict]:
 
 
 class ReminderService:
-    def __init__(self, get_db, client, settings: dict, now_fn=None, birthdays_fn=None):
+    def __init__(self, get_db, client, settings: dict, now_fn=None, birthdays_fn=None, llm=None):
         self.get_db = get_db
         self.birthdays_fn = birthdays_fn
+        self.llm = llm
         self.client = client
         self.settings = settings
         self.tz = ZoneInfo(settings.get('timezone', ob.DEFAULT_SETTINGS['timezone']))
@@ -114,6 +120,14 @@ class ReminderService:
                         (item['id'], pair['standard_date'].isoformat(), pair['due_date'].isoformat()),
                     )
                     created += cursor.rowcount
+            # direct debits settle themselves the day after they fall due
+            for item in data['obligations']:
+                if item.get('auto_pay'):
+                    db.execute(
+                        "UPDATE obligation_occurrences SET state='paid', state_changed_at=?, state_changed_by='auto_pay' "
+                        "WHERE obligation_id=? AND state IN ('upcoming','funds_confirmed') AND due_date < ?",
+                        (self.now().isoformat()[:19], item['id'], today.isoformat()),
+                    )
             # refresh estimates on everything not yet paid or skipped
             for item in data['obligations']:
                 open_rows = db.execute(
@@ -147,7 +161,8 @@ class ReminderService:
         for occ in data['occurrences']:
             item = by_id.get(occ['obligation_id'])
             due = date.fromisoformat(occ['due_date'])
-            if not item or occ['state'] in ('paid', 'skipped') or due < today or (due - today).days > POSITION_WINDOW_DAYS:
+            days_out = (due - today).days
+            if not item or occ['state'] in ('paid', 'skipped') or days_out < -OVERDUE_WINDOW_DAYS or days_out > POSITION_WINDOW_DAYS:
                 continue
             if item['amount_rule'] in ('receipts_share',) or not item.get('remind'):
                 continue
@@ -155,7 +170,7 @@ class ReminderService:
                 'occurrence_id': occ['id'], 'obligation_id': item['id'], 'name': item['name'],
                 'due_date': occ['due_date'], 'standard_date': occ['standard_date'], 'estimate': occ['estimate'],
                 'state': occ['state'], 'reserve_account': item.get('reserve_account'),
-                'days_out': (due - today).days,
+                'days_out': days_out, 'overdue': days_out < 0, 'auto_pay': bool(item.get('auto_pay')),
             })
         return {'today': today.isoformat(), 'targets': targets, 'upcoming': upcoming}
 
@@ -177,10 +192,29 @@ class ReminderService:
                 'body': ob.compose_monthly_setaside(previous.strftime('%B %Y'), setaside, assumed,
                                                     home_lines, mortgage, self.settings),
             })
+        sent = self._sent_keys()
+        if today.weekday() == 0:
+            propvesting = [o for o in data['obligations'] if 'propvesting' in o['name'].lower()
+                           and o['status'] != 'retired' and not o.get('anchor_date')]
+            if propvesting:
+                messages.append({
+                    'kind': 'propvesting_check', 'dedupe_key': f'propvesting_check:{today.isoformat()}',
+                    'obligation_id': propvesting[0]['id'], 'occurrence_id': None,
+                    'body': ob.compose_propvesting_check(),
+                })
+        for item in sorted((o for o in data['obligations'] if o['status'] == 'pending_confirmation'), key=lambda o: o['id']):
+            created = date.fromisoformat(str(item.get('created_at') or today.isoformat())[:10])
+            if (today - created).days > SETUP_QUESTION_DAYS:
+                continue
+            key = f'setup_question:{item["id"]}'
+            if key in sent or any(m['dedupe_key'].startswith('setup_question:') for m in messages):
+                continue
+            messages.append({'kind': 'setup_question', 'dedupe_key': key, 'obligation_id': item['id'],
+                             'occurrence_id': None, 'body': ob.compose_setup_question(item)})
+            break
         targets = {t['account_key']: t for t in ob.account_targets(
             today, data['obligations'], data['occurrences'], data['receipts_rows'], data['balances'], self.settings)}
         by_id = {o['id']: o for o in data['obligations']}
-        sent = self._sent_keys()
         for occ in data['occurrences']:
             item = by_id.get(occ['obligation_id'])
             if not item or not item.get('remind') or item['amount_rule'] == 'receipts_share':
@@ -265,6 +299,100 @@ class ReminderService:
         }
         return self._deliver([message], dry_run)
 
+    # ── reading the channel ──────────────────────────────────────────────────
+    def allowed_user_ids(self, ids) -> set[str]:
+        """Ids among `ids` whose Mattermost username is in `allowed_users`; usernames cached in state."""
+        allowed_names = {str(u).lower() for u in (self.settings.get('allowed_users') or [])}
+        try:
+            cache = json.loads(self.get_state('mm_user_cache') or '{}')
+        except ValueError:
+            cache = {}
+        missing = [i for i in ids if i not in cache]
+        if missing:
+            try:
+                cache.update(self.client.users_by_ids(missing))
+            except MattermostError:
+                pass
+            self.set_state('mm_user_cache', json.dumps(cache))
+        return {i for i in ids if str(cache.get(i, '')).lower() in allowed_names}
+
+    def _download_images(self, post: dict) -> list[tuple[bytes, str, str]]:
+        images = []
+        for file_id in post.get('file_ids') or []:
+            try:
+                images.append(self.client.download_file(file_id))
+            except MattermostError as exc:
+                print(f'[reminders] skipped attachment {file_id}: {exc}', flush=True)
+        return images
+
+    def _bump_failures(self) -> int:
+        failures = int(self.get_state('mm_poll_failures') or 0) + 1
+        self.set_state('mm_poll_failures', str(failures))
+        return failures
+
+    def poll_once(self, today: date | None = None) -> dict:
+        """Read new channel posts once, act on those from allowed users, reply, and advance the watermark."""
+        today = today or self.today()
+        result = {'processed': 0, 'replied': 0, 'skipped': 0, 'reason': None}
+        if self.client is None or not getattr(self.client, 'can_read', False):
+            result['reason'] = 'bot token not configured'
+            return result
+        now_ms = int(self.now().timestamp() * 1000)
+        watermark = self.get_state('mm_last_post_create_at')
+        if watermark is None:
+            self.set_state('mm_last_post_create_at', str(now_ms))
+            self.set_state('mm_last_poll_at', self.now().isoformat()[:19])
+            result['reason'] = 'watermark initialised'
+            return result
+        try:
+            posts = self.client.posts_since(int(watermark))
+            bot_id = self.client.me()['id']
+        except MattermostError as exc:
+            self._bump_failures()
+            result['reason'] = f'Mattermost error: {exc}'
+            return result
+        self.set_state('mm_poll_failures', '0')
+        allowed = self.allowed_user_ids({p['user_id'] for p in posts})
+        sent = self._sent_keys()
+        newest = int(watermark)
+        for post in posts:
+            newest = max(newest, int(post.get('create_at') or 0))
+            key = f"reply:{post['id']}"
+            if post['user_id'] == bot_id or post.get('type') or key in sent or post['user_id'] not in allowed:
+                result['skipped'] += 1
+                continue
+            images = self._download_images(post)
+            try:
+                outcome = conversation.handle_post(self, post, self.settings, llm=self.llm, images=images, today=today)
+            except Exception as exc:  # noqa: BLE001 — one bad post must not stop the poll
+                outcome = {'reply': f'Sorry, something went wrong handling that: {str(exc)[:120]}', 'acted': False}
+            result['processed'] += 1
+            reply = outcome.get('reply')
+            if not reply:
+                continue
+            try:
+                post_id = self.client.post(reply)
+                if outcome.get('acted'):
+                    try:
+                        self.client.add_reaction(post['id'])
+                    except MattermostError:
+                        pass
+            except MattermostError as exc:
+                self._bump_failures()
+                result['reason'] = f'Mattermost error: {exc}'
+                break
+            with self._db() as db:
+                db.execute(
+                    'INSERT OR IGNORE INTO reminder_log (kind, dedupe_key, obligation_id, occurrence_id, mattermost_post_id, body, sent_at) '
+                    'VALUES (?,?,?,?,?,?,?)',
+                    ('reply', key, None, None, post_id,
+                     f"> {str(post.get('message') or '').strip() or '(image)'}\n\n{reply}", self.now().isoformat()[:19]),
+                )
+            result['replied'] += 1
+        self.set_state('mm_last_post_create_at', str(newest))
+        self.set_state('mm_last_poll_at', self.now().isoformat()[:19])
+        return result
+
 
 def scheduler_tick(service: ReminderService, now: datetime) -> list[str]:
     """Run whichever jobs are due at `now`; each job runs at most once per local day."""
@@ -282,6 +410,14 @@ def scheduler_tick(service: ReminderService, now: datetime) -> list[str]:
         service.run_weekly(now.date())
         service.set_state('last_weekly_run', today)
         ran.append('weekly')
+    if service.client is not None and getattr(service.client, 'can_read', False):
+        tick = int(service.get_state('mm_poll_tick') or 0) + 1
+        service.set_state('mm_poll_tick', str(tick))
+        failures = int(service.get_state('mm_poll_failures') or 0)
+        if failures < POLL_BACKOFF_AFTER or tick % POLL_BACKOFF_EVERY == 0:
+            outcome = service.poll_once(now.date())
+            if outcome.get('processed') or outcome.get('reason') not in (None, 'watermark initialised'):
+                ran.append('poll')
     return ran
 
 

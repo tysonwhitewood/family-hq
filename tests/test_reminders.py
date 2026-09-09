@@ -19,10 +19,16 @@ BRISBANE = ZoneInfo("Australia/Brisbane")
 
 
 class FakeClient:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, can_read=False):
         self.posts = []
         self.fail = fail
         self.can_post = True
+        self.can_read = can_read
+        self.incoming = []
+        self.usernames = {"u1": "tawhai", "u2": "mum", "u9": "stranger"}
+        self.reactions = []
+        self.files = {}
+        self.read_fail = False
 
     def post(self, message):
         if self.fail:
@@ -30,6 +36,24 @@ class FakeClient:
             raise mattermost.MattermostError("down")
         self.posts.append(message)
         return f"post{len(self.posts)}"
+
+    def me(self):
+        return {"id": "botid", "username": "familyhq"}
+
+    def posts_since(self, since_ms):
+        if self.read_fail:
+            import mattermost
+            raise mattermost.MattermostError("read failed")
+        return sorted([p for p in self.incoming if p["create_at"] > since_ms], key=lambda p: p["create_at"])
+
+    def users_by_ids(self, ids):
+        return {i: self.usernames[i] for i in ids if i in self.usernames}
+
+    def add_reaction(self, post_id, emoji_name="white_check_mark"):
+        self.reactions.append((post_id, emoji_name))
+
+    def download_file(self, file_id):
+        return self.files[file_id]
 
 
 class ReminderCase(unittest.TestCase):
@@ -41,8 +65,8 @@ class ReminderCase(unittest.TestCase):
         family_app.CONFIG_PATH = Path(self.temp_dir.name) / "config.json"
         family_app.CONFIG_PATH.write_text(json.dumps({"obligations": {"accounts": [
             {"key": "eden_operating", "display": "Eden Commercial"},
-            {"key": "ecomm_gst", "display": "EComm GST"},
-            {"key": "ing_home", "display": "ING Home"},
+            {"key": "ecomm_gst", "display": "EComm GST", "aliases": ["gst"]},
+            {"key": "ing_home", "display": "ING Home", "aliases": ["home"]},
             {"key": "ing_emergency", "display": "ING Emergency"},
             {"key": "gsb_everyday", "display": "GSB Everyday"},
         ]}}))
@@ -210,6 +234,144 @@ class WeeklyRunTests(ReminderCase):
         keys = {t["account_key"] for t in position["targets"]}
         self.assertTrue({"ecomm_gst", "ing_home", "ing_emergency", "gsb_everyday"} <= keys)
         self.assertTrue(all("name" in u and "due_date" in u for u in position["upcoming"]))
+
+
+def _post(pid, user, message, create_at, file_ids=None):
+    return {"id": pid, "user_id": user, "message": message, "create_at": create_at, "file_ids": file_ids or [], "root_id": "", "type": ""}
+
+
+class PollTests(ReminderCase):
+    def setUp(self):
+        super().setUp()
+        self.client.can_read = True
+        self.settings["allowed_users"] = ["tawhai", "mum"]
+
+    def test_first_poll_initialises_watermark_and_replays_nothing(self):
+        svc = self.service(self.at(2026, 9, 10, hour=9))
+        self.client.incoming = [_post("old", "u1", "gst 1", 1)]
+        result = svc.poll_once()
+        self.assertEqual(result["reason"], "watermark initialised")
+        self.assertEqual(self.client.posts, [])
+        self.assertEqual(int(svc.get_state("mm_last_post_create_at")), int(svc.now().timestamp() * 1000))
+
+    def test_poll_handles_allowed_user_commands_and_logs_reply(self):
+        svc = self.service(self.at(2026, 9, 10, hour=9))
+        svc.set_state("mm_last_post_create_at", "1000")
+        self.client.incoming = [_post("p1", "u1", "gst 9262", 2000)]
+        result = svc.poll_once()
+        self.assertEqual((result["processed"], result["replied"]), (1, 1))
+        self.assertIn("Got it: EComm GST $9,262", self.client.posts[0])
+        self.assertEqual(self.client.reactions, [("p1", "white_check_mark")])
+        with family_app.get_db() as db:
+            log = db.execute("SELECT kind, dedupe_key, body FROM reminder_log WHERE dedupe_key='reply:p1'").fetchone()
+            balance = db.execute("SELECT balance FROM account_balances WHERE mattermost_post_id='p1'").fetchone()
+        self.assertEqual(log["kind"], "reply")
+        self.assertTrue(log["body"].startswith("> gst 9262"))
+        self.assertEqual(balance["balance"], 9262.0)
+        self.assertEqual(svc.get_state("mm_last_post_create_at"), "2000")
+
+    def test_poll_ignores_bot_unknown_users_and_system_posts(self):
+        svc = self.service(self.at(2026, 9, 10, hour=9))
+        svc.set_state("mm_last_post_create_at", "1000")
+        self.client.incoming = [
+            _post("b1", "botid", "status", 2000),
+            _post("s1", "u9", "status", 2100),
+            {**_post("sys", "u1", "familyhq added to the channel", 2200), "type": "system_add_to_channel"},
+        ]
+        result = svc.poll_once()
+        self.assertEqual((result["processed"], result["skipped"]), (0, 3))
+        self.assertEqual(self.client.posts, [])
+        self.assertEqual(svc.get_state("mm_last_post_create_at"), "2200")
+
+    def test_poll_never_handles_the_same_post_twice(self):
+        svc = self.service(self.at(2026, 9, 10, hour=9))
+        svc.set_state("mm_last_post_create_at", "1000")
+        self.client.incoming = [_post("p1", "u1", "gst 9262", 2000)]
+        svc.poll_once()
+        svc.set_state("mm_last_post_create_at", "1000")  # pretend the watermark was lost
+        result = svc.poll_once()
+        self.assertEqual((result["processed"], result["skipped"]), (0, 1))
+        self.assertEqual(len(self.client.posts), 1)
+
+    def test_poll_downloads_images_and_passes_them_to_the_handler(self):
+        seen = {}
+
+        def fake_llm(messages, system="", images=None):
+            seen["images"] = images
+            return json.dumps({"kind": "balances", "balances": [
+                {"account_key": "ing_home", "name_seen": "Home", "balance": 2142.41, "available": None, "as_of": None}]})
+        svc = reminders.ReminderService(family_app.get_db, self.client, self.settings,
+                                        now_fn=lambda: self.at(2026, 9, 10, hour=9), llm=fake_llm)
+        svc.set_state("mm_last_post_create_at", "1000")
+        self.client.files["f1"] = (b"PNG!", "image/png", "ing.png")
+        self.client.incoming = [_post("p2", "u2", "", 2000, file_ids=["f1"])]
+        result = svc.poll_once()
+        self.assertEqual(result["replied"], 1)
+        self.assertEqual(seen["images"][0]["media_type"], "image/png")
+        self.assertIn("Got it: ING Home $2,142", self.client.posts[0])
+
+    def test_poll_failure_counts_and_tick_backs_off(self):
+        svc = self.service(self.at(2026, 9, 10, hour=9))
+        svc.set_state("mm_last_post_create_at", "1000")
+        svc.set_state("last_daily_run", "2026-09-10")
+        self.client.read_fail = True
+        for _ in range(3):
+            svc.poll_once()
+        self.assertEqual(svc.get_state("mm_poll_failures"), "3")
+        polled_ticks = 0
+        for _ in range(10):
+            before = int(svc.get_state("mm_poll_failures"))
+            reminders.scheduler_tick(svc, svc.now())
+            polled_ticks += int(svc.get_state("mm_poll_failures")) - before
+        self.assertEqual(polled_ticks, 2)  # only every fifth tick while failing
+
+    def test_tick_polls_when_bot_can_read(self):
+        svc = self.service(self.at(2026, 9, 10, hour=9))
+        svc.set_state("last_daily_run", "2026-09-10")
+        svc.set_state("mm_last_post_create_at", "1000")
+        self.client.incoming = [_post("p1", "u1", "help", 2000)]
+        self.assertEqual(reminders.scheduler_tick(svc, svc.now()), ["poll"])
+        self.assertIn("*status*", self.client.posts[0])
+
+
+class SetupAndOverdueTests(ReminderCase):
+    def test_monday_propvesting_check_until_anchor_set(self):
+        svc = self.service(self.at(2026, 9, 14))  # Monday
+        result = svc.run_daily()
+        self.assertIn("propvesting_check:2026-09-14", result["sent"])
+        self.assertIn("PropVesting check", self.client.posts[-1])
+        with family_app.get_db() as db:
+            db.execute("UPDATE obligations SET anchor_date='2026-09-20' WHERE name LIKE 'PropVesting%'")
+        svc = self.service(self.at(2026, 9, 21))  # next Monday
+        self.assertEqual([k for k in svc.run_daily()["sent"] if "propvesting" in k], [])
+
+    def test_one_setup_question_per_day_for_pending_items(self):
+        svc = self.service(self.at(2026, 9, 10))
+        first = svc.run_daily()
+        setup_keys = [k for k in first["sent"] if k.startswith("setup_question:")]
+        self.assertEqual(len(setup_keys), 1)
+        self.assertIn("Set-up question", self.client.posts[-1])
+        svc = self.service(self.at(2026, 9, 11))
+        second = [k for k in svc.run_daily()["sent"] if k.startswith("setup_question:")]
+        self.assertEqual(len(second), 1)
+        self.assertNotEqual(second, setup_keys)
+
+    def test_overdue_open_occurrence_appears_with_negative_days(self):
+        svc = self.service(self.at(2026, 10, 10))
+        position = svc.position()
+        mortgage = next(u for u in position["upcoming"] if u["name"] == "Mortgage repayment" and u["due_date"] == "2026-10-05")
+        self.assertEqual((mortgage["days_out"], mortgage["overdue"]), (-5, True))
+
+    def test_auto_pay_occurrence_marked_paid_after_due(self):
+        with family_app.get_db() as db:
+            db.execute("UPDATE obligations SET auto_pay=1 WHERE name='Mortgage repayment'")
+        svc = self.service(self.at(2026, 10, 6))
+        svc.regenerate_occurrences()
+        with family_app.get_db() as db:
+            row = db.execute("SELECT state, state_changed_by FROM obligation_occurrences o JOIN obligations b ON b.id=o.obligation_id "
+                             "WHERE b.name='Mortgage repayment' AND o.due_date='2026-10-05'").fetchone()
+        self.assertEqual((row["state"], row["state_changed_by"]), ("paid", "auto_pay"))
+        self.assertNotIn("2026-10-05", [u["due_date"] for u in svc.position()["upcoming"] if u["name"] == "Mortgage repayment"])
 
 
 class SchedulerTickTests(ReminderCase):

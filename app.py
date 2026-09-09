@@ -485,6 +485,7 @@ def init_db():
                 budget_category TEXT,
                 source TEXT,
                 notes TEXT,
+                auto_pay INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -751,6 +752,9 @@ def init_db():
                     'INSERT INTO upcoming_expenses (description, amount, due_date, recurring, category, status, created_at) VALUES (?,?,?,?,?,?,?)',
                     (desc, amt, due, recurring, cat, 'pending', now)
                 )
+        obligation_columns = {r['name'] for r in db.execute('PRAGMA table_info(obligations)')}
+        if 'auto_pay' not in obligation_columns:
+            db.execute('ALTER TABLE obligations ADD COLUMN auto_pay INTEGER NOT NULL DEFAULT 0')
         _seed_obligations(db, datetime.now().isoformat()[:19])
 
 
@@ -3278,8 +3282,10 @@ def mattermost_client():
 
 
 def reminder_service():
-    return reminders.ReminderService(get_db, mattermost_client(), obligation_settings(),
-                                     birthdays_fn=load_birthdays)
+    settings = obligation_settings()
+    settings['allowed_users'] = list((load_config().get('mattermost') or {}).get('allowed_users') or [])
+    return reminders.ReminderService(get_db, mattermost_client(), settings, birthdays_fn=load_birthdays,
+                                     llm=llm_chat if llm_available() else None)
 
 
 def _account_keys() -> set[str]:
@@ -3340,6 +3346,7 @@ def _validate_obligation(data: dict) -> tuple[dict | None, str | None]:
         'lead_days': json.dumps(lead_days), 'remind': 1 if data.get('remind', True) else 0, 'status': status,
         'budget_category': (data.get('budget_category') or '').strip() or None,
         'source': (data.get('source') or 'typed').strip(), 'notes': (data.get('notes') or '').strip(),
+        'auto_pay': 1 if data.get('auto_pay') else 0,
     }, None
 
 
@@ -3385,7 +3392,7 @@ def api_obligations_save():
             db.execute(
                 """UPDATE obligations SET name=?, ownership=?, pay_from_account=?, reserve_account=?, amount_rule=?,
                    amount=?, frequency=?, anchor_date=?, due_rule=?, extension_days=?, lead_days=?, remind=?, status=?,
-                   budget_category=?, source=?, notes=?, updated_at=? WHERE id=?""",
+                   budget_category=?, source=?, notes=?, auto_pay=?, updated_at=? WHERE id=?""",
                 (*fields.values(), now, oid),
             )
             db.execute("DELETE FROM obligation_occurrences WHERE obligation_id=? AND state='upcoming'", (oid,))
@@ -3393,7 +3400,7 @@ def api_obligations_save():
             cursor = db.execute(
                 """INSERT INTO obligations (name, ownership, pay_from_account, reserve_account, amount_rule, amount,
                    frequency, anchor_date, due_rule, extension_days, lead_days, remind, status, budget_category,
-                   source, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   source, notes, auto_pay, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (*fields.values(), now, now),
             )
             oid = cursor.lastrowid

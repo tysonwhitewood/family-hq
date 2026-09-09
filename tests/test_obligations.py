@@ -278,6 +278,24 @@ class MessageTests(unittest.TestCase):
         self.assertNotIn("extension", text)
         self.assertIn("no balance", text.lower())
 
+    def test_auto_pay_warning_talks_about_the_debit_not_paying(self):
+        obligation = {"name": "Water (Urban Utilities)", "amount_rule": "fixed", "extension_days": 0,
+                      "reserve_account": "ing_home", "auto_pay": 1}
+        occurrence = {"due_date": "2026-09-25", "standard_date": "2026-09-25", "estimate": 454.26, "estimate_detail": None}
+        target = {"display": "ING Home", "target": 700.0, "balance": 2142.41, "as_of": "2026-09-10", "age_days": 8, "stale": False, "shortfall": -1442.41}
+        text = ob.compose_lead_warning(obligation, occurrence, 7, target, date(2026, 9, 18))
+        self.assertIn("direct debit", text)
+        self.assertIn("ING Home should hold $700", text)
+        self.assertNotIn("Reply *paid*", text)
+
+    def test_setup_question_names_what_is_missing(self):
+        text = ob.compose_setup_question({"name": "ASIC annual review fee (Eden Commercial)", "amount": 321.0,
+                                          "anchor_date": None, "pay_from_account": "eden_operating"})
+        self.assertIn("Set-up question", text)
+        self.assertIn("the next due date", text)
+        self.assertIn("$321", text)
+        self.assertNotIn("the amount", text.split("I have")[0].replace("the next due date", ""))
+
     def test_weekly_position_lists_every_account_and_next_bills(self):
         targets = [
             {"display": "EComm GST", "target": 15000.0, "balance": 9048.03, "age_days": 3, "stale": False, "shortfall": 5951.97},
