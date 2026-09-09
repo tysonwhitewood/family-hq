@@ -159,13 +159,15 @@ def require_auth():
 
 # Defaults only; the live lists come from the `ai` key in data/config.json (see README).
 OPENROUTER_TEXT_MODELS = [
+    'nvidia/nemotron-3-super-120b-a12b:free',
     'google/gemma-4-31b-it:free',
     'google/gemma-4-26b-a4b-it:free',
-    'nvidia/nemotron-3-super-120b-a12b:free',
 ]
 OPENROUTER_VISION_MODELS = [
     'google/gemma-4-31b-it:free',
     'google/gemma-4-26b-a4b-it:free',
+    'nex-agi/nex-n2.5-pro:free',
+    'dots-studio/dots-3-note-preview:free',
 ]
 
 
@@ -246,12 +248,17 @@ def llm_chat(messages: list, system: str = '', max_tokens: int = 1024, images: l
             try:
                 with urllib.request.urlopen(req, timeout=60) as resp:
                     data = json.loads(resp.read())
-                    return data['choices'][0]['message']['content']
+                    content = data['choices'][0]['message']['content']
+                    if not str(content or '').strip():
+                        raise ValueError(f'{model} returned an empty answer')
+                    return content
             except urllib.error.HTTPError as e:
                 last_err = e
-                if e.code not in (429, 404, 400):
+                if e.code not in (400, 402, 403, 404, 408, 429) and e.code < 500:
                     raise
-        raise last_err
+            except (KeyError, IndexError, TypeError, ValueError, OSError) as e:
+                last_err = e
+        raise last_err if last_err else ValueError('No OpenRouter model answered')
 
     raise ValueError('No LLM configured — set ANTHROPIC_API_KEY or OPENROUTER_API_KEY')
 
