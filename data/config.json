@@ -123,8 +123,8 @@
   "mattermost": {
     "enabled": true,
     "allowed_users": [
-      "tyson",
-      "robyn"
+      "dad",
+      "mum"
     ]
   }
 }
