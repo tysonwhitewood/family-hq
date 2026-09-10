@@ -265,16 +265,28 @@ class ReminderService:
             result['reason'] = f'Mattermost error: {exc}'
             return result
         now = self.now().isoformat()[:19]
-        with self._db() as db:
-            for m in fresh:
-                db.execute(
-                    'INSERT OR IGNORE INTO reminder_log (kind, dedupe_key, obligation_id, occurrence_id, '
-                    'mattermost_post_id, body, sent_at) VALUES (?,?,?,?,?,?,?)',
-                    (m['kind'], m['dedupe_key'], m['obligation_id'], m['occurrence_id'], post_id, m['body'], now),
-                )
+        self._log_sent(fresh, post_id, now)
         result['sent'] = [m['dedupe_key'] for m in fresh]
         result['post_id'] = post_id
         return result
+
+    def _log_sent(self, messages: list[dict], post_id, now: str) -> bool:
+        """Record delivered messages. The message is already in the channel, so a logging failure
+        must never bubble up and cause a resend; it is retried once, then reported."""
+        for attempt in (1, 2):
+            try:
+                with self._db() as db:
+                    for m in messages:
+                        db.execute(
+                            'INSERT OR IGNORE INTO reminder_log (kind, dedupe_key, obligation_id, occurrence_id, '
+                            'mattermost_post_id, body, sent_at) VALUES (?,?,?,?,?,?,?)',
+                            (m['kind'], m['dedupe_key'], m.get('obligation_id'), m.get('occurrence_id'), post_id, m['body'], now),
+                        )
+                return True
+            except Exception as exc:  # noqa: BLE001 — sqlite lock or disk problem
+                print(f'[reminders] could not record sent messages (attempt {attempt}): {exc}', flush=True)
+                time.sleep(0.5)
+        return False
 
     def run_daily(self, today: date | None = None, dry_run: bool = False) -> dict:
         today = today or self.today()
@@ -383,17 +395,25 @@ class ReminderService:
                 result['reason'] = f'Mattermost error: {exc}'
                 newest = max(int(watermark), int(post.get('create_at') or 0) - 1)
                 break
-            with self._db() as db:
-                db.execute(
-                    'INSERT OR IGNORE INTO reminder_log (kind, dedupe_key, obligation_id, occurrence_id, mattermost_post_id, body, sent_at) '
-                    'VALUES (?,?,?,?,?,?,?)',
-                    ('reply', key, None, None, post_id,
-                     f"> {str(post.get('message') or '').strip() or '(image)'}\n\n{reply}", self.now().isoformat()[:19]),
-                )
+            self._log_sent([{'kind': 'reply', 'dedupe_key': key,
+                             'body': f"> {str(post.get('message') or '').strip() or '(image)'}\n\n{reply}"}],
+                           post_id, self.now().isoformat()[:19])
             result['replied'] += 1
+            self.set_state('mm_last_post_create_at', str(newest))
         self.set_state('mm_last_post_create_at', str(newest))
         self.set_state('mm_last_poll_at', self.now().isoformat()[:19])
         return result
+
+
+RETRY_REASONS = ('Mattermost not configured', 'quiet hours')
+
+
+def _delivered(outcome: dict) -> bool:
+    """True when a run sent its messages or had nothing to send; False when sending failed and should be retried."""
+    reason = str(outcome.get('reason') or '')
+    if outcome.get('sent'):
+        return True
+    return not (reason in RETRY_REASONS or reason.startswith('Mattermost error'))
 
 
 def scheduler_tick(service: ReminderService, now: datetime) -> list[str]:
@@ -405,12 +425,18 @@ def scheduler_tick(service: ReminderService, now: datetime) -> list[str]:
     weekly_day = int(settings.get('weekly_day', ob.DEFAULT_SETTINGS['weekly_day']))
     weekly_hour = int(settings.get('weekly_hour_local', ob.DEFAULT_SETTINGS['weekly_hour_local']))
     if now.hour >= post_hour and service.get_state('last_daily_run') != today:
-        service.run_daily(now.date())
-        service.set_state('last_daily_run', today)
+        outcome = service.run_daily(now.date())
+        if _delivered(outcome):
+            service.set_state('last_daily_run', today)
+        else:
+            print(f'[reminders] daily run not marked done, will retry: {outcome.get("reason")}', flush=True)
         ran.append('daily')
     if now.weekday() == weekly_day and now.hour >= weekly_hour and service.get_state('last_weekly_run') != today:
-        service.run_weekly(now.date())
-        service.set_state('last_weekly_run', today)
+        outcome = service.run_weekly(now.date())
+        if _delivered(outcome):
+            service.set_state('last_weekly_run', today)
+        else:
+            print(f'[reminders] weekly run not marked done, will retry: {outcome.get("reason")}', flush=True)
         ran.append('weekly')
     if service.client is not None and getattr(service.client, 'can_read', False):
         tick = int(service.get_state('mm_poll_tick') or 0) + 1

@@ -269,7 +269,8 @@ def llm_chat(messages: list, system: str = '', max_tokens: int = 1024, images: l
 # ── Database ──────────────────────────────────────────────────────────────────
 
 def get_db():
-    db = sqlite3.connect(DB_PATH)
+    # 30s busy timeout: the reminders thread and web requests share this file.
+    db = sqlite3.connect(DB_PATH, timeout=30)
     db.row_factory = sqlite3.Row
     return db
 
@@ -286,6 +287,7 @@ def init_db():
         if default_xl.exists():
             _shutil.copy(default_xl, BIRTHDAYS_PATH)
     with get_db() as db:
+        db.execute('PRAGMA journal_mode=WAL')  # readers never block the writer thread
         db.executescript('''
             CREATE TABLE IF NOT EXISTS goals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -347,6 +347,56 @@ class PollTests(ReminderCase):
         self.assertEqual(result["replied"], 1)
 
 
+    def test_log_failure_does_not_cause_a_resend(self):
+        svc = self.service(self.at(2026, 10, 1))
+        real_db = svc._db
+        state = {"fail": True}
+
+        class Proxy:
+            def __init__(self, conn): self.conn = conn
+            def execute(self, sql, *args):
+                if state["fail"] and "INSERT OR IGNORE INTO reminder_log" in sql:
+                    import sqlite3
+                    raise sqlite3.OperationalError("database is locked")
+                return self.conn.execute(sql, *args)
+            def __getattr__(self, name): return getattr(self.conn, name)
+
+        from contextlib import contextmanager
+
+        @contextmanager
+        def flaky_db():
+            with real_db() as conn:
+                yield Proxy(conn)
+        svc._db = flaky_db
+        with patch.object(reminders.time, "sleep", lambda s: None):
+            result = svc.run_daily()
+        self.assertEqual(len(self.client.posts), 1)          # sent once
+        self.assertIn("monthly_setaside:2026-09", result["sent"])
+        state["fail"] = False
+        svc._db = real_db
+        again = svc.run_daily()                               # log was lost, so this resends once more at most
+        self.assertLessEqual(len(self.client.posts), 2)
+
+    def test_poll_saves_the_watermark_after_each_post(self):
+        svc = self.service(self.at(2026, 9, 10, hour=9))
+        svc.set_state("mm_last_post_create_at", "1000")
+        self.client.can_read = True
+        self.settings["allowed_users"] = ["tawhai"]
+        calls = {"n": 0}
+        original_post = self.client.post
+
+        def post_then_fail(message):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                import mattermost
+                raise mattermost.MattermostError("down")
+            return original_post(message)
+        self.client.post = post_then_fail
+        self.client.incoming = [_post("p1", "u1", "help", 2000), _post("p2", "u1", "help", 3000)]
+        svc.poll_once()
+        self.assertEqual(svc.get_state("mm_last_post_create_at"), "2999")
+
+
 class SetupAndOverdueTests(ReminderCase):
     def test_monday_propvesting_check_until_anchor_set(self):
         svc = self.service(self.at(2026, 9, 14))  # Monday
@@ -388,6 +438,22 @@ class SetupAndOverdueTests(ReminderCase):
 
 
 class SchedulerTickTests(ReminderCase):
+    def test_tick_retries_a_run_whose_send_failed(self):
+        self.client.fail = True
+        svc = self.service(self.at(2026, 10, 1, hour=7))
+        self.assertEqual(reminders.scheduler_tick(svc, svc.now()), ["daily"])
+        self.assertIsNone(svc.get_state("last_daily_run"))
+        self.client.fail = False
+        self.assertEqual(reminders.scheduler_tick(svc, svc.now()), ["daily"])
+        self.assertEqual(svc.get_state("last_daily_run"), "2026-10-01")
+        self.assertIn("September 2026 set-aside", self.client.posts[0])
+        self.assertEqual(reminders.scheduler_tick(svc, svc.now()), [])
+
+    def test_tick_marks_done_when_there_was_nothing_to_send(self):
+        svc = self.service(self.at(2026, 9, 10, hour=7))
+        self.assertEqual(reminders.scheduler_tick(svc, svc.now()), ["daily"])
+        self.assertEqual(svc.get_state("last_daily_run"), "2026-09-10")
+
     def test_tick_runs_daily_once_after_post_hour_and_weekly_on_sunday(self):
         svc = self.service(self.at(2026, 9, 13, hour=6))
         self.assertEqual(reminders.scheduler_tick(svc, svc.now()), [])
