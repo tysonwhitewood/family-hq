@@ -120,4 +120,19 @@ sending. **Settings → Mattermost → Send test message** posts a one-line conn
 
 ## Install on your phone or computer
 
-Coming in a later release (step 3 of the obligations work).
+Family HQ is a Progressive Web App: it installs from the browser, opens full-screen with its own
+icon, and the Obligations page is the landing page. Reminders run on the server, so the app does
+not need to be open for Mattermost messages to arrive.
+
+- **iPhone or iPad:** open https://family.edencommercial.au in Safari, log in, tap the Share
+  button, then **Add to Home Screen**, then **Add**.
+- **Android:** open the address in Chrome, log in, tap the three-dot menu, then **Install app**
+  (or **Add to Home screen**).
+- **Mac:** open it in Chrome and click the install icon at the right of the address bar, or in
+  Safari use **File → Add to Dock**.
+- **Windows:** open it in Edge or Chrome and click the install icon in the address bar.
+
+The login is remembered for six months on that device. When there is no connection the app shows
+an offline screen instead of a browser error; the service worker (`/sw.js`) caches only the page
+shell and icons, never bank data or API responses. To force a fresh copy after an update, close
+and reopen the app twice.

@@ -33,6 +33,8 @@ PORT = int(os.environ.get('PORT', 3000))
 USERNAME = os.environ.get('FAMILY_HQ_USER', 'family')
 PASSWORD = os.environ.get('FAMILY_HQ_PASS', 'Whitewood2026!')
 app.secret_key = os.environ.get('SECRET_KEY', f'family-hq-{USERNAME}-dev-key')
+# Home-screen launches should not ask for the password again for six months.
+app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=180)
 
 def _anthropic_key(): return os.environ.get('ANTHROPIC_API_KEY', '')
 def _openrouter_key(): return os.environ.get('OPENROUTER_API_KEY', '')
@@ -144,7 +146,8 @@ def logout():
 
 @app.before_request
 def require_auth():
-    public = {'/health', '/login', '/logout', '/manifest.json', '/icon-192.png', '/icon-512.png'}
+    public = {'/health', '/login', '/logout', '/manifest.json', '/icon-192.png', '/icon-512.png',
+              '/apple-touch-icon.png', '/icon-180.png', '/sw.js', '/offline.html'}
     if request.path in public:
         return
     if request.path.startswith('/static/'):
@@ -1055,16 +1058,33 @@ def manifest():
 
 @app.route('/icon-192.png')
 @app.route('/icon-512.png')
+@app.route('/apple-touch-icon.png')
+@app.route('/icon-180.png')
 def icon():
-    # Return a simple green SVG-based icon as PNG placeholder
-    # In production, replace with actual PNG icons
-    from flask import Response as R
-    size = 192 if '192' in request.path else 512
-    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 100 100">
-      <rect width="100" height="100" rx="20" fill="#1B4332"/>
-      <text x="50" y="65" font-size="55" text-anchor="middle" fill="#D4A017">🏡</text>
-    </svg>'''
-    return R(svg, mimetype='image/svg+xml')
+    name = {'/icon-192.png': 'icon-192.png', '/icon-512.png': 'icon-512.png'}.get(request.path, 'apple-touch-icon.png')
+    response = send_file(ROOT / 'icons' / name, mimetype='image/png')
+    response.headers['Cache-Control'] = 'public, max-age=86400'
+    return response
+
+
+@app.route('/sw.js')
+def service_worker():
+    response = send_file(ROOT / 'sw.js', mimetype='application/javascript')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['Service-Worker-Allowed'] = '/'
+    return response
+
+
+_OFFLINE_HTML = """<!doctype html><html lang="en-AU"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Family HQ — offline</title><style>body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:#1B4332;color:#fff;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center}
+main{padding:32px}h1{font-size:22px;margin:0 0 8px}p{color:#D4A017;margin:0 0 20px}button{background:#D4A017;color:#1B4332;border:0;padding:12px 22px;border-radius:10px;font-weight:700;font-size:15px}</style></head>
+<body><main><h1>Family HQ is offline</h1><p>No connection right now. Your reminders still run on the server.</p><button onclick="location.reload()">Try again</button></main></body></html>"""
+
+
+@app.route('/offline.html')
+def offline_page():
+    return Response(_OFFLINE_HTML, mimetype='text/html')
+
 
 @app.route('/api/summary')
 def api_summary():

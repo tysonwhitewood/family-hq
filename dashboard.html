@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Family HQ">
 <meta name="theme-color" content="#1B4332">
 <link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <title>Family HQ — Whitewood</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2714,6 +2715,14 @@ async function uploadInsuranceDoc(id, input) {
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 loadHome();
+// Obligations is the landing page: it is what the family opens the app for.
+(function openLanding() {
+  const nav = document.querySelector(".nav-item[onclick*=\"'obligations'\"]");
+  if (nav && document.getElementById('page-obligations')) { showPage('obligations', nav); loadObligations(); }
+})();
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(e => console.warn('Service worker not registered:', e)); });
+}
 loadInsurances();
 loadWarranties();
 

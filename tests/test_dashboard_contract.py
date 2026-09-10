@@ -597,3 +597,8 @@ class ObligationsPageContractTests(unittest.TestCase):
         self.assertIn("auto_pay: document.getElementById('obl-auto-pay').checked", self.html)
         self.assertIn("screenshots read by", self.html)
         self.assertIn("reply to you", self.html)
+
+    def test_phone_install_wiring(self):
+        self.assertIn('rel="apple-touch-icon" href="/apple-touch-icon.png"', self.html)
+        self.assertIn("navigator.serviceWorker.register('/sw.js')", self.html)
+        self.assertIn("showPage('obligations', nav); loadObligations();", self.html)

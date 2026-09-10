@@ -306,6 +306,25 @@ class ObligationRoutesTests(ObligationsDbCase):
         with family_app.get_db() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM account_balances WHERE account_key='ing_home' AND balance=2142").fetchone()[0], 0)
 
+    def test_phone_install_routes_are_public_and_real(self):
+        anonymous = family_app.app.test_client()
+        for path in ("/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"):
+            r = anonymous.get(path)
+            self.assertEqual(r.status_code, 200, path)
+            self.assertEqual(r.mimetype, "image/png")
+            self.assertTrue(r.data.startswith(b"\x89PNG"), path)
+        sw = anonymous.get("/sw.js")
+        self.assertEqual((sw.status_code, sw.mimetype), (200, "application/javascript"))
+        self.assertIn("family-hq-shell", sw.get_data(as_text=True))
+        self.assertEqual(sw.headers.get("Cache-Control"), "no-cache")
+        offline = anonymous.get("/offline.html")
+        self.assertEqual(offline.status_code, 200)
+        self.assertIn("offline", offline.get_data(as_text=True).lower())
+        manifest = anonymous.get("/manifest.json").get_json()
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual({i["sizes"] for i in manifest["icons"]}, {"192x192", "512x512"})
+        self.assertEqual(family_app.app.config["REMEMBER_COOKIE_DURATION"].days, 180)
+
     def test_routes_require_login(self):
         anonymous = family_app.app.test_client()
         self.assertIn(anonymous.get("/api/obligations").status_code, (302, 401))
