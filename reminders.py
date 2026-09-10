@@ -378,8 +378,10 @@ class ReminderService:
                     except MattermostError:
                         pass
             except MattermostError as exc:
+                # Leave the watermark just before this post so it is retried next poll.
                 self._bump_failures()
                 result['reason'] = f'Mattermost error: {exc}'
+                newest = max(int(watermark), int(post.get('create_at') or 0) - 1)
                 break
             with self._db() as db:
                 db.execute(

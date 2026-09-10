@@ -334,6 +334,19 @@ class PollTests(ReminderCase):
         self.assertIn("*status*", self.client.posts[0])
 
 
+    def test_reply_failure_keeps_the_post_for_the_next_poll(self):
+        svc = self.service(self.at(2026, 9, 10, hour=9))
+        svc.set_state("mm_last_post_create_at", "1000")
+        self.client.incoming = [_post("p1", "u1", "help", 2000)]
+        self.client.fail = True
+        result = svc.poll_once()
+        self.assertIn("Mattermost error", result["reason"])
+        self.assertEqual(svc.get_state("mm_last_post_create_at"), "1999")
+        self.client.fail = False
+        result = svc.poll_once()
+        self.assertEqual(result["replied"], 1)
+
+
 class SetupAndOverdueTests(ReminderCase):
     def test_monday_propvesting_check_until_anchor_set(self):
         svc = self.service(self.at(2026, 9, 14))  # Monday
