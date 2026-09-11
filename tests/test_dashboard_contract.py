@@ -607,3 +607,9 @@ class ObligationsPageContractTests(unittest.TestCase):
         self.assertIn('id="obl-holdings"', self.html)
         for fn in ("async function oblLoadHoldings", "async function oblRefreshPrices", "async function oblSetTicker"):
             self.assertIn(fn, self.html)
+
+    def test_birthday_search_box(self):
+        self.assertIn('id="bday-search"', self.html)
+        self.assertIn('oninput="bdaySearch()"', self.html)
+        self.assertIn("async function bdaySearch", self.html)
+        self.assertIn("/api/birthdays?days=366", self.html)

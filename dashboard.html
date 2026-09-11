@@ -769,11 +769,13 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
 <div class="page" id="page-birthdays">
   <div class="topbar"><div class="topbar-title">🎂 Birthdays</div></div>
   <div class="page-body">
-    <div style="display:flex;gap:8px;margin-bottom:20px">
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
       <button class="filter-btn active" onclick="setBdayFilter(30,this)">Next 30 days</button>
       <button class="filter-btn" onclick="setBdayFilter(60,this)">Next 60 days</button>
       <button class="filter-btn" onclick="setBdayFilter(90,this)">Next 90 days</button>
       <button class="filter-btn" onclick="setBdayFilter(365,this)">All year</button>
+      <input type="search" id="bday-search" placeholder="Search a name…" oninput="bdaySearch()" autocomplete="off"
+        style="margin-left:auto;min-width:200px;padding:8px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px">
     </div>
     <div class="card" id="birthday-list"><div class="empty-state">Loading…</div></div>
   </div>
@@ -1822,8 +1824,12 @@ function bdayRow(b) {
   </div>`;
 }
 
+let _bdayYear = null;
+
 async function loadBirthdays() {
   const el = document.getElementById('birthday-list');
+  const query = (document.getElementById('bday-search') || {}).value || '';
+  if (query.trim()) { bdaySearch(); return; }
   el.innerHTML = '<div class="empty-state">Loading…</div>';
   const data = await authFetch(`/api/birthdays?days=${bdayDays}`).then(r => r.json()).catch(() => []);
   if (!data.length) {
@@ -1831,6 +1837,22 @@ async function loadBirthdays() {
     return;
   }
   el.innerHTML = data.map(bdayRow).join('');
+}
+
+// Search the whole year by name or relationship, ignoring the day filter while there is text.
+async function bdaySearch() {
+  const el = document.getElementById('birthday-list');
+  const query = (document.getElementById('bday-search').value || '').trim().toLowerCase();
+  if (!query) { loadBirthdays(); return; }
+  if (!_bdayYear) {
+    _bdayYear = await authFetch('/api/birthdays?days=366').then(r => r.json()).catch(() => []);
+  }
+  const words = query.split(/\s+/);
+  const hits = _bdayYear.filter(b => {
+    const hay = `${b.name} ${b.relationship || ''}`.toLowerCase();
+    return words.every(w => hay.includes(w));
+  });
+  el.innerHTML = hits.length ? hits.map(bdayRow).join('') : `<div class="empty-state">No one matching “${query.replace(/</g, '&lt;')}”</div>`;
 }
 
 // ── GOALS ─────────────────────────────────────────────────────────────────────
