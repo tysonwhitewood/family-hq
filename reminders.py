@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import conversation
+import holdings as hold
 import obligations as ob
 from mattermost import MattermostError
 
@@ -32,10 +33,13 @@ def _rows(cursor) -> list[dict]:
 
 
 class ReminderService:
-    def __init__(self, get_db, client, settings: dict, now_fn=None, birthdays_fn=None, llm=None):
+    def __init__(self, get_db, client, settings: dict, now_fn=None, birthdays_fn=None, llm=None,
+                 price_fn=None, account_adder=None):
         self.get_db = get_db
         self.birthdays_fn = birthdays_fn
         self.llm = llm
+        self.price_fn = price_fn
+        self.account_adder = account_adder
         self.client = client
         self.settings = settings
         self.tz = ZoneInfo(settings.get('timezone', ob.DEFAULT_SETTINGS['timezone']))
@@ -316,12 +320,34 @@ class ReminderService:
                 birthdays = list(self.birthdays_fn(BIRTHDAY_WINDOW_DAYS))
             except Exception as exc:  # noqa: BLE001 — a bad spreadsheet must not stop the money message
                 print(f'[reminders] birthdays unavailable: {exc}', flush=True)
+        body = ob.compose_weekly_position(position['targets'], upcoming, today, birthdays)
+        super_lines = self.investment_lines()
+        if super_lines:
+            body += '\n\n' + '\n'.join(super_lines)
         message = {
             'kind': 'weekly_position', 'dedupe_key': f'weekly_position:{today.isoformat()}',
-            'obligation_id': None, 'occurrence_id': None,
-            'body': ob.compose_weekly_position(position['targets'], upcoming, today, birthdays),
+            'obligation_id': None, 'occurrence_id': None, 'body': body,
         }
         return self._deliver([message], dry_run)
+
+    def investment_lines(self) -> list[str]:
+        """One line per investment account with holdings, prices refreshed first when a price feed exists."""
+        lines = []
+        accounts = [a for a in self.settings.get('accounts', []) if a.get('investment')]
+        if not accounts:
+            return lines
+        now = self.now().isoformat()[:19]
+        with self._db() as db:
+            if self.price_fn is not None:
+                hold.refresh_prices(db, self.price_fn, now)
+            for account in accounts:
+                last = db.execute('SELECT balance, as_of FROM account_balances WHERE account_key=? ORDER BY as_of DESC, id DESC LIMIT 1',
+                                  (account['key'],)).fetchone()
+                line = hold.compose_super_line(account.get('display', account['key']),
+                                               hold.summary(db, account['key'], dict(last) if last else None))
+                if line:
+                    lines.append(line)
+        return lines
 
     # ── reading the channel ──────────────────────────────────────────────────
     def allowed_user_ids(self, ids) -> set[str]:

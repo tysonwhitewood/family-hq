@@ -194,6 +194,38 @@ class HandleCase(unittest.TestCase):
         self.assertIn("Next 30 days", seen["system"])
         self.assertEqual(seen["question"], "can we afford $600 on the driveway this month?")
 
+    def test_add_account_and_accounts_list(self):
+        added = []
+        self.svc.account_adder = lambda entry: added.append(entry) or entry
+        out = self.handle("add account CBA savings 2645 1922")
+        self.assertTrue(out["acted"])
+        self.assertIn("Added Cba Savings", out["reply"])
+        self.assertEqual((added[0]["key"], added[0]["bank"], added[0]["match"], added[0]["investment"]), ("cba_savings", "CBA", "26451922", False))
+        out = self.handle("add account super 095236")
+        self.assertTrue(added[1]["investment"])
+        self.assertIn("Superannuation", self.handle("accounts")["reply"]) if any(a.get("key") == "super_ing" for a in self.settings["accounts"]) else None
+        self.assertIn("Cba Savings", self.handle("accounts")["reply"])
+
+    def test_add_account_without_adder_explains(self):
+        self.svc.account_adder = None
+        self.assertIn("not switched on", self.handle("add account x 1234")["reply"])
+
+    def test_holdings_screenshot_updates_holdings_and_balance(self):
+        self.settings["accounts"].append({"key": "super_ing", "display": "Superannuation (ING)", "investment": True})
+
+        def fake_llm(messages, system="", images=None):
+            return json.dumps({"kind": "holdings", "holdings": {"account_key": None, "total": 104712.20, "as_of": "2026-09-11", "items": [
+                {"name": "Cash Hub", "ticker": None, "units": None, "price": None, "value": 8809.28},
+                {"name": "Goodman Group", "ticker": "GMG.AX", "units": 295, "price": 26.67, "value": 7867.65}]}})
+        out = self.handle("", llm=fake_llm, images=[(b"x", "image/png", "super.png")])
+        self.assertTrue(out["acted"])
+        self.assertIn("Superannuation (ING) $104,712 across 2 holdings", out["reply"])
+        with family_app.get_db() as db:
+            names = {r["name"] for r in db.execute("SELECT name FROM holdings WHERE account_key='super_ing'")}
+            bal = db.execute("SELECT balance, source FROM account_balances WHERE account_key='super_ing' ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertTrue({"Cash Hub", "Goodman Group"} <= names)
+        self.assertEqual((bal["balance"], bal["source"]), (104712.2, "screenshot"))
+
     def test_free_text_without_llm(self):
         self.assertIn("commands", self.handle("what now?")["reply"])
 

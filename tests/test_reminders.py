@@ -228,6 +228,17 @@ class WeeklyRunTests(ReminderCase):
         self.assertEqual(result["sent"], ["weekly_position:2026-09-13"])
         self.assertNotIn("Birthdays", self.client.posts[0])
 
+    def test_weekly_position_includes_super_holdings_line(self):
+        self.settings["accounts"].append({"key": "super_ing", "display": "Superannuation (ING)", "investment": True})
+        with family_app.get_db() as db:
+            db.execute("INSERT INTO account_balances (account_key, balance, available, as_of, source, raw, created_at) "
+                       "VALUES ('super_ing', 107723.84, NULL, '2026-09-09', 'screenshot', '', 'x')")
+        svc = reminders.ReminderService(family_app.get_db, self.client, self.settings,
+                                        now_fn=lambda: self.at(2026, 9, 13, hour=17), price_fn=lambda t: 100.0)
+        svc.run_weekly()
+        self.assertIn("Superannuation (ING): holdings worth", self.client.posts[0])
+        self.assertIn("since the 9 Sep 2026 statement", self.client.posts[0])
+
     def test_position_exposes_targets_and_upcoming(self):
         svc = self.service(self.at(2026, 9, 9))
         position = svc.position()

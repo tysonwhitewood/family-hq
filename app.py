@@ -11,6 +11,7 @@ from flask_limiter.util import get_remote_address
 import openpyxl
 
 import conversation
+import holdings as hold
 import mattermost
 import obligations as ob
 import reminders
@@ -500,6 +501,20 @@ def init_db():
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS holdings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_key TEXT NOT NULL,
+                name TEXT NOT NULL,
+                ticker TEXT,
+                units REAL,
+                price REAL,
+                value REAL,
+                price_at TEXT,
+                source TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (account_key, name COLLATE NOCASE)
+            );
 
         ''')
         for column, definition in [
@@ -722,6 +737,7 @@ def init_db():
         if 'auto_pay' not in obligation_columns:
             db.execute('ALTER TABLE obligations ADD COLUMN auto_pay INTEGER NOT NULL DEFAULT 0')
         _seed_obligations(db, datetime.now().isoformat()[:19])
+        _seed_holdings(db, datetime.now().isoformat()[:19])
 
 
 OBLIGATION_SEED = [
@@ -810,6 +826,29 @@ def _seed_obligations(db, now):
     db.execute(
         "INSERT INTO reminder_state (key, value, updated_at) VALUES ('seeded_v1', '1', ?)", (now,)
     )
+
+
+HOLDINGS_SEED = [
+    # account_key, name, ticker, units, price, value — ING super valuation 11 Sep 2026
+    ('super_ing', 'Cash Hub', None, None, None, 8809.28),
+    ('super_ing', 'Charter Hall Retail REIT', 'CQR.AX', 5266.0, 3.695, 19457.87),
+    ('super_ing', 'DEXUS Property Group', 'DXS.AX', 3050.0, 5.52, 16836.00),
+    ('super_ing', 'Goodman Group', 'GMG.AX', 295.0, 26.67, 7867.65),
+    ('super_ing', 'Vanguard Australian Shares Index ETF', 'VAS.AX', 389.0, 109.02, 42408.78),
+    ('super_ing', 'Vanguard MSCI Index International Shares ETF', 'VGS.AX', 59.0, 158.18, 9332.62),
+]
+
+
+def _seed_holdings(db, now):
+    if db.execute("SELECT value FROM reminder_state WHERE key='seeded_holdings_v1'").fetchone():
+        return
+    for account_key, name, ticker, units, price, value in HOLDINGS_SEED:
+        db.execute(
+            'INSERT OR IGNORE INTO holdings (account_key, name, ticker, units, price, value, price_at, source, created_at, updated_at) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (account_key, name, ticker, units, price, value, '2026-09-11', 'ING super valuation screenshot 11 Sep 2026', now, now),
+        )
+    db.execute("INSERT INTO reminder_state (key, value, updated_at) VALUES ('seeded_holdings_v1', '1', ?)", (now,))
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -3220,11 +3259,36 @@ def mattermost_client():
     return mattermost.client_from_env()
 
 
+def fetch_share_price(ticker: str):
+    """Last traded price for a ticker via yfinance (ASX tickers end in .AX). None when unavailable."""
+    import yfinance as yf
+    info = yf.Ticker(ticker).fast_info
+    price = getattr(info, 'last_price', None)
+    if price is None:
+        try:
+            price = info['last_price']
+        except (KeyError, TypeError):
+            price = None
+    return float(price) if price else None
+
+
+def add_account_from_chat(entry: dict) -> dict:
+    """Append an account to `obligations.accounts` in config.json; returns the saved entry."""
+    cfg = load_config()
+    accounts = cfg.setdefault('obligations', {}).setdefault('accounts', [])
+    if any(a.get('key') == entry['key'] for a in accounts):
+        raise ValueError(f'account {entry["key"]} already exists')
+    accounts.append(entry)
+    save_config(cfg)
+    return entry
+
+
 def reminder_service():
     settings = obligation_settings()
     settings['allowed_users'] = list((load_config().get('mattermost') or {}).get('allowed_users') or [])
     return reminders.ReminderService(get_db, mattermost_client(), settings, birthdays_fn=load_birthdays,
-                                     llm=llm_chat if llm_available() else None)
+                                     llm=llm_chat if llm_available() else None,
+                                     price_fn=fetch_share_price, account_adder=add_account_from_chat)
 
 
 def _account_keys() -> set[str]:
@@ -3486,6 +3550,62 @@ def api_obligations_run():
 
 def _vision_label():
     return f'Claude ({anthropic_model()})' if _anthropic_key() else 'none'
+
+
+@app.route('/api/holdings')
+@login_required
+def api_holdings_list():
+    settings = obligation_settings()
+    refresh = request.args.get('refresh') == '1'
+    now = datetime.now().isoformat()[:19]
+    result = {'updated': [], 'failed': []}
+    with get_db() as db:
+        if refresh:
+            result = hold.refresh_prices(db, fetch_share_price, now)
+        investment_keys = [a['key'] for a in settings.get('accounts', []) if a.get('investment')]
+        keys = investment_keys or sorted({h['account_key'] for h in hold.list_holdings(db)})
+        summaries = []
+        for key in keys:
+            last = db.execute('SELECT balance, as_of FROM account_balances WHERE account_key=? ORDER BY as_of DESC, id DESC LIMIT 1',
+                              (key,)).fetchone()
+            summ = hold.summary(db, key, dict(last) if last else None)
+            summ['display'] = next((a.get('display', key) for a in settings.get('accounts', []) if a['key'] == key), key)
+            summaries.append(summ)
+    return jsonify({'accounts': summaries, 'refresh': result})
+
+
+@app.route('/api/holdings', methods=['POST'])
+@login_required
+def api_holdings_save():
+    data = request.get_json(force=True) or {}
+    account_key = str(data.get('account_key') or '').strip()
+    name = str(data.get('name') or '').strip()
+    if not account_key or not name:
+        return jsonify({'error': 'account_key and name are required'}), 400
+    keys = _account_keys()
+    if keys and account_key not in keys:
+        return jsonify({'error': 'account_key must be a configured account'}), 400
+    item = {'name': name, 'ticker': (data.get('ticker') or '').strip().upper() or None}
+    for field in ('units', 'price', 'value'):
+        raw = data.get(field)
+        if raw in (None, ''):
+            continue
+        try:
+            item[field] = float(raw)
+        except (TypeError, ValueError):
+            return jsonify({'error': f'{field} must be a number'}), 400
+    now = datetime.now().isoformat()[:19]
+    with get_db() as db:
+        hold.upsert_holdings(db, account_key, [item], 'app', now)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/holdings/<int:hid>', methods=['DELETE'])
+@login_required
+def api_holdings_delete(hid):
+    with get_db() as db:
+        db.execute('DELETE FROM holdings WHERE id=?', (hid,))
+    return jsonify({'ok': True})
 
 
 @app.route('/api/mattermost/status')

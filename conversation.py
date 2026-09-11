@@ -11,6 +11,7 @@ import json
 import re
 from datetime import date, timedelta
 
+import holdings as hold
 import obligations as ob
 
 KEYWORDS = {
@@ -25,13 +26,15 @@ ISO_DATE_RE = re.compile(r'\b(\d{4}-\d{2}-\d{2})\b')
 DAY_FIRST_RE = re.compile(r'\b(\d{1,2})[ /-]([A-Za-z]{3,9}|\d{1,2})(?:[ /-](\d{2,4}))?\b')
 
 IMAGE_PROMPT = """You are reading a photo or screenshot for a family finance app. Reply with JSON only, no prose.
-Schema: {{"kind": "balances"|"bill"|"receipts"|"other",
+Schema: {{"kind": "balances"|"bill"|"receipts"|"holdings"|"other",
  "balances": [{{"account_key": string|null, "name_seen": string, "balance": number, "available": number|null, "as_of": "YYYY-MM-DD"|null}}],
  "bill": {{"payee": string, "amount": number|null, "due_date": "YYYY-MM-DD"|null, "description": string}}|null,
  "receipts": [{{"date": "YYYY-MM-DD"|null, "amount": number, "description": string}}],
+ "holdings": {{"account_key": string|null, "total": number|null, "as_of": "YYYY-MM-DD"|null,
+              "items": [{{"name": string, "ticker": string|null, "units": number|null, "price": number|null, "value": number}}]}}|null,
  "note": string}}
 Known accounts (match by name or by the digits shown; use the key, otherwise null): {accounts}
-Rules: "balance" is the Current/Balance column and "available" the Available column when shown; money owed is negative; dates in ISO form; today is {today}. A bank app account list is "balances"; an invoice, rates or utility notice is "bill"; a list of payments received by the business is "receipts"."""
+Rules: "balance" is the Current/Balance column and "available" the Available column when shown; money owed is negative; dates in ISO form; today is {today}. A bank app account list is "balances"; an invoice, rates or utility notice is "bill"; a list of payments received by the business is "receipts"; a superannuation or brokerage valuation listing investments with units and prices is "holdings" (use ASX tickers with .AX when you know them, e.g. VAS.AX, otherwise null)."""
 
 ANSWER_SYSTEM = """You are Family HQ's money assistant for Tyson and Robyn Whitewood. Answer in Australian English, in under 120 words, using only the figures in the context below. If the context does not contain what is needed, say what to post instead (a screenshot or a figure). Never invent numbers, never give investment advice, and do not restate the whole context.
 
@@ -106,6 +109,11 @@ def parse_command(text: str, settings: dict, today: date | None = None) -> dict 
         return None
     if low in KEYWORDS:
         return {'kind': KEYWORDS[low]}
+    if low in ('accounts', 'list accounts'):
+        return {'kind': 'accounts'}
+    match = re.fullmatch(r'add account\s+(.+?)\s+(\d[\d ]{2,})', low)
+    if match:
+        return {'kind': 'add_account', 'name': match.group(1).strip(), 'digits': match.group(2).replace(' ', '')}
     match = re.fullmatch(r'eden total\s+(.+)', low)
     if match and parse_money(match.group(1)) is not None:
         return {'kind': 'receipt_total', 'amount': parse_money(match.group(1))}
@@ -131,7 +139,7 @@ def parse_command(text: str, settings: dict, today: date | None = None) -> dict 
 
 
 def compose_help() -> str:
-    return ('I understand: *status* (the position now), *done* (set-aside moved), *paid* or *skip* '
+    return ('I understand: *status* (the position now), *accounts* (the account list), *add account <name> <digits>*, *done* (set-aside moved), *paid* or *skip* '
             '(the nearest bill), *yes* (PropVesting registered), an account and a balance like *gst 9262* or '
             '*ing home 2142*, *eden 5280* to add a receipt, *eden total 24500* to set the month, '
             '*rates due 27 Feb 2027 1614* to set a bill, *<bill> paid*, or a screenshot of a bank app or a '
@@ -140,7 +148,7 @@ def compose_help() -> str:
 
 def parse_image_result(text: str) -> dict:
     """Tolerant JSON extraction for the image prompt's reply."""
-    empty = {'kind': 'other', 'balances': [], 'bill': None, 'receipts': [], 'note': ''}
+    empty = {'kind': 'other', 'balances': [], 'bill': None, 'receipts': [], 'holdings': None, 'note': ''}
     raw = str(text or '')
     start, end = raw.find('{'), raw.rfind('}')
     if start < 0 or end <= start:
@@ -152,13 +160,22 @@ def parse_image_result(text: str) -> dict:
     if not isinstance(data, dict):
         return empty
     out = dict(empty)
-    out['kind'] = data.get('kind') if data.get('kind') in ('balances', 'bill', 'receipts', 'other') else 'other'
+    out['kind'] = data.get('kind') if data.get('kind') in ('balances', 'bill', 'receipts', 'holdings', 'other') else 'other'
     out['balances'] = [b for b in (data.get('balances') or []) if isinstance(b, dict) and b.get('balance') is not None]
     out['bill'] = data.get('bill') if isinstance(data.get('bill'), dict) else None
     out['receipts'] = [r for r in (data.get('receipts') or []) if isinstance(r, dict) and r.get('amount') is not None]
+    holdings_raw = data.get('holdings') if isinstance(data.get('holdings'), dict) else None
+    out['holdings'] = None
+    if holdings_raw:
+        items = [i for i in (holdings_raw.get('items') or []) if isinstance(i, dict) and i.get('name') and i.get('value') is not None]
+        if items:
+            out['holdings'] = {'account_key': holdings_raw.get('account_key'), 'total': holdings_raw.get('total'),
+                               'as_of': holdings_raw.get('as_of'), 'items': items}
     out['note'] = str(data.get('note') or '')
     if out['kind'] == 'balances' and not out['balances']:
-        out['kind'] = 'bill' if out['bill'] else ('receipts' if out['receipts'] else 'other')
+        out['kind'] = 'bill' if out['bill'] else ('receipts' if out['receipts'] else ('holdings' if out['holdings'] else 'other'))
+    if out['kind'] == 'holdings' and not out['holdings']:
+        out['kind'] = 'other'
     return out
 
 
@@ -325,6 +342,24 @@ def _handle_images(service, post, settings, llm, images, today) -> tuple[str, bo
             replies.append(_upsert_bill(service, today, bill.get('payee') or bill.get('description') or 'Bill',
                                         bill.get('amount'), bill.get('due_date'), f'photo in Mattermost post {post.get("id")}'))
             acted = True
+        elif result['kind'] == 'holdings' and result['holdings']:
+            data = result['holdings']
+            investment_keys = [a['key'] for a in settings.get('accounts', []) if a.get('investment')]
+            key = data.get('account_key') if data.get('account_key') in keys else (investment_keys[0] if investment_keys else None)
+            if not key:
+                replies.append('I read a holdings list but there is no investment account to attach it to. '
+                               'Add one with *add account super 095236*.')
+                continue
+            now = service.now().isoformat()[:19]
+            with service._db() as db:
+                touched = hold.upsert_holdings(db, key, data['items'], f'screenshot post {post.get("id")}', now)
+            total = data.get('total')
+            if total is None:
+                total = sum(float(i['value']) for i in data['items'])
+            _store_balance(service, key, total, None, data.get('as_of') or today.isoformat(), 'screenshot', post.get('id'), json.dumps(data))
+            display = next((a.get('display', key) for a in settings.get('accounts', []) if a['key'] == key), key)
+            replies.append(f'Got it: {display} {ob.money(total)} across {len(touched)} holdings ({", ".join(touched)}).')
+            acted = True
         elif result['kind'] == 'receipts' and result['receipts']:
             total = sum(float(r['amount']) for r in result['receipts'])
             month_total = _add_receipt(service, today, total, f'screenshot post {post.get("id")}')
@@ -353,6 +388,25 @@ def handle_post(service, post: dict, settings: dict, llm=None, images=None, toda
     kind = cmd['kind']
     if kind == 'help':
         return {'reply': compose_help(), 'acted': False}
+    if kind == 'accounts':
+        names = [f'{a.get("display", a["key"])} ({a.get("match", "")})' for a in settings.get('accounts', [])]
+        return {'reply': 'Accounts I know: ' + ('; '.join(names) if names else 'none yet') + '.', 'acted': False}
+    if kind == 'add_account':
+        adder = getattr(service, 'account_adder', None)
+        if adder is None:
+            return {'reply': 'Adding accounts from here is not switched on.', 'acted': False}
+        name = cmd['name']
+        words = name.lower().split()
+        bank = next((w.upper() for w in words if w in ('cba', 'ing', 'gsb', 'nab', 'anz', 'westpac', 'macquarie')), 'other')
+        entry = {'key': hold.slugify(name), 'display': name.title(), 'bank': bank, 'match': cmd['digits'],
+                 'aliases': [name.lower()], 'investment': any(w in ('super', 'superannuation', 'shares', 'brokerage') for w in words)}
+        try:
+            adder(entry)
+        except ValueError as exc:
+            return {'reply': f'Could not add that account: {exc}', 'acted': False}
+        settings.setdefault('accounts', []).append(entry)
+        return {'reply': f'Added {entry["display"]} (digits {entry["match"]}, {bank}). Screenshots showing those digits will now match it, '
+                         f'and *{name.lower()} 1234* records a balance.', 'acted': True}
     if kind == 'status':
         position = service.position(today)
         upcoming = [u for u in position['upcoming'] if u['days_out'] <= 30]

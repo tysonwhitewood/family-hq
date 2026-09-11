@@ -112,6 +112,20 @@ Every AI call goes through Claude with `ANTHROPIC_API_KEY`. Without the key the 
 reminders, balances and typed commands all work; chat, briefings, screenshot reading and free-form
 channel answers reply that AI is not configured.
 
+### Super holdings and adding accounts from the channel
+
+Accounts with `"investment": true` in `obligations.accounts` (the ING super fund) have a
+**Super holdings** card on the Obligations page: each holding's units, live price, value and
+weight, and the movement since the last statement screenshot. Prices come from Yahoo Finance
+via `yfinance` (ASX tickers end in `.AX`); set a holding's ticker by clicking its ticker cell,
+or leave it blank for cash lines. Posting a super valuation screenshot in Family Finance updates
+units and the fund total. The Sunday position message adds one line per investment account.
+Family HQ shows facts about the holdings; it does not recommend what to buy or sell.
+
+From the channel, `add account <name> <last digits>` appends an account to the config (the bank
+is taken from the name when it contains CBA, ING, GSB and so on; names containing "super" or
+"shares" are marked as investments), and `accounts` lists them.
+
 ### Testing a message without waiting for 7am
 
 On the Obligations page, **Preview today's message** shows exactly what would be posted, without

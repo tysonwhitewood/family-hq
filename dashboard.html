@@ -1290,6 +1290,15 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
       <div id="obl-upcoming" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
     </div>
 
+    <details class="card" open>
+      <summary class="bdgt-collapsible-header">
+        <span class="card-title">Super holdings</span>
+        <span style="font-size:11px;color:#9CA3AF" id="obl-holdings-note"></span>
+        <button onclick="event.preventDefault();event.stopPropagation();oblRefreshPrices()" style="margin-left:auto;background:#fff;color:#1B4332;border:1px solid #1B4332;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Refresh prices</button>
+      </summary>
+      <div id="obl-holdings" style="padding:0 16px 16px"><div class="empty-state">Loading…</div></div>
+    </details>
+
     <details class="card">
       <summary class="bdgt-collapsible-header">
         <span class="card-title">All obligations</span>
@@ -3543,6 +3552,7 @@ async function loadObligations() {
       authFetch('/api/obligations/log?limit=30').then(r => r.json()),
     ]);
     _oblData = list;
+    oblLoadHoldings(false);
     oblRenderTargets(position.targets || []);
     oblRenderUpcoming(position.upcoming || []);
     oblRenderList(list.obligations || []);
@@ -3623,6 +3633,49 @@ function oblRenderLog(rows) {
       <div style="font-size:13px;white-space:pre-wrap">${r.body.replace(/</g, '&lt;')}</div>
     </div>`;
   }).join('');
+}
+
+async function oblLoadHoldings(refresh) {
+  const el = document.getElementById('obl-holdings');
+  const note = document.getElementById('obl-holdings-note');
+  if (!el) return;
+  try {
+    const d = await authFetch('/api/holdings' + (refresh ? '?refresh=1' : '')).then(r => r.json());
+    const accounts = d.accounts || [];
+    if (!accounts.length || !accounts.some(a => a.holdings.length)) { el.innerHTML = '<div class="empty-state">No holdings yet. Post a super valuation screenshot in Family Finance.</div>'; return; }
+    el.innerHTML = accounts.map(a => {
+      const change = a.change_since_screenshot === null ? '' :
+        `<span style="color:${a.change_since_screenshot >= 0 ? '#15803D' : '#B91C1C'};font-weight:600">${a.change_since_screenshot >= 0 ? '+' : '-'}${fmt(Math.abs(a.change_since_screenshot))}</span> since the ${a.screenshot_as_of ? oblDate(a.screenshot_as_of) : 'last'} statement (${fmt(a.screenshot_total)})`;
+      return `<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:8px 0 4px"><strong>${a.display}</strong><span>${fmt(a.total)}${a.price_at ? ' at ' + oblDate(a.price_at) + ' prices' : ''}</span><span style="font-size:12px">${change}</span></div>` +
+        `<table class="bdgt-table"><thead><tr><th>Holding</th><th>Ticker</th><th>Units</th><th>Price</th><th>Value</th><th>Weight</th><th></th></tr></thead><tbody>` +
+        a.holdings.map(h => `<tr>
+          <td>${h.name}</td>
+          <td><button onclick="oblSetTicker(${h.id}, '${a.account_key}', '${h.name.replace(/'/g, "\\'")}', '${h.ticker || ''}')" style="background:none;border:1px dashed #E5E7EB;padding:2px 6px;border-radius:6px;font-size:11px;cursor:pointer">${h.ticker || 'set'}</button></td>
+          <td>${h.units === null ? '—' : h.units.toLocaleString('en-AU')}</td>
+          <td>${h.price === null ? '—' : '$' + h.price.toFixed(2)}</td>
+          <td>${fmt(h.value)}</td><td>${h.weight}%</td>
+          <td><button onclick="oblDeleteHolding(${h.id})" style="background:none;border:1px solid #FCA5A5;color:#B91C1C;padding:2px 6px;border-radius:6px;font-size:11px;cursor:pointer">✕</button></td>
+        </tr>`).join('') + '</tbody></table>';
+    }).join('');
+    if (note && refresh && d.refresh) note.textContent = d.refresh.failed.length ? `no price for ${d.refresh.failed.join(', ')}` : 'prices refreshed';
+  } catch (e) {
+    el.innerHTML = '<div class="empty-state">Could not load holdings.</div>';
+  }
+}
+
+async function oblRefreshPrices() { await oblLoadHoldings(true); }
+
+async function oblSetTicker(id, accountKey, name, current) {
+  const ticker = prompt(`Ticker for ${name} (ASX tickers end in .AX, e.g. VAS.AX). Leave blank for a cash line.`, current);
+  if (ticker === null) return;
+  await authFetch('/api/holdings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_key: accountKey, name, ticker }) });
+  oblLoadHoldings(true);
+}
+
+async function oblDeleteHolding(id) {
+  if (!confirm('Remove this holding from the list?')) return;
+  await authFetch(`/api/holdings/${id}`, { method: 'DELETE' });
+  oblLoadHoldings(false);
 }
 
 function oblFillAccountSelects() {

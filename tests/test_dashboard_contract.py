@@ -602,3 +602,8 @@ class ObligationsPageContractTests(unittest.TestCase):
         self.assertIn('rel="apple-touch-icon" href="/apple-touch-icon.png"', self.html)
         self.assertIn("navigator.serviceWorker.register('/sw.js')", self.html)
         self.assertIn("showPage('obligations', nav); loadObligations();", self.html)
+
+    def test_super_holdings_card(self):
+        self.assertIn('id="obl-holdings"', self.html)
+        for fn in ("async function oblLoadHoldings", "async function oblRefreshPrices", "async function oblSetTicker"):
+            self.assertIn(fn, self.html)
