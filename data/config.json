@@ -158,6 +158,18 @@
           "mortgage balance",
           "loan"
         ]
+      },
+      {
+        "key": "super_ing",
+        "display": "Superannuation (ING)",
+        "bank": "ING",
+        "match": "095236",
+        "aliases": [
+          "super",
+          "superannuation",
+          "ing super"
+        ],
+        "investment": true
       }
     ]
   },
