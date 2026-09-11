@@ -17,7 +17,7 @@ Coolify at family.edencommercial.au.
 |---|---|---|
 | `FAMILY_HQ_USER`, `FAMILY_HQ_PASS` | yes | Login |
 | `SECRET_KEY` | yes | Session signing |
-| `ANTHROPIC_API_KEY` | for AI features | Chat, briefing, and (step 2) reading screenshots posted to Mattermost |
+| `ANTHROPIC_API_KEY` | for AI features | Chat, briefing, savings tips, screenshot reading and free-form channel answers (model: `ai.anthropic_model`) |
 | `MATTERMOST_URL` | for reminders | e.g. `https://chat.leaseintel.ai` |
 | `MATTERMOST_BOT_TOKEN` | for reminders | Personal access token of the Family HQ bot account |
 | `MATTERMOST_CHANNEL_ID` | for reminders | The Family Finance channel id (Channel → View Info) |
@@ -86,10 +86,8 @@ on anyone else's. Every reply is logged on the Obligations page under Conversati
 | a photo of a bill or notice | Reads payee, amount and due date into a bill |
 | anything else | Answered as a question from the current position and upcoming bills |
 
-Screenshots are read by Claude when `ANTHROPIC_API_KEY` is set, otherwise by a free
-vision-capable model on OpenRouter (`OPENROUTER_API_KEY`), which is less reliable. Set the
-Anthropic key for dependable screenshot reading. The bot always says what it read so you can
-correct it with a typed figure.
+Screenshots are read by Claude (`ANTHROPIC_API_KEY`). The bot always says what it read so you
+can correct it with a typed figure.
 
 Direct debits: tick **Paid by direct debit** on an obligation and its warnings say when the debit
 will be taken and what the account must hold; the occurrence is marked paid automatically the day
@@ -102,16 +100,15 @@ for free text, the answer) without writing anything or posting.
 Other settings under `mattermost`: `allowed_users` (list of Mattermost usernames, default empty,
 meaning nobody's posts are acted on), `enabled` (default `true`).
 
-### AI models (`data/config.json` → `ai`)
+### AI model (`data/config.json` → `ai`)
 
-| Key | Default | Meaning / when absent |
-|---|---|---|
-| `openrouter_text_models` | three free Gemma/Nemotron ids | Models tried in order for chat, briefings and free-form channel answers when only `OPENROUTER_API_KEY` is set. Absent or empty: the defaults in `app.py`. |
-| `openrouter_vision_models` | two free Gemma ids | Models tried in order for screenshots and bill photos on OpenRouter. Absent or empty: the defaults. |
+| Key | Default | Valid values | Meaning / when absent |
+|---|---|---|---|
+| `anthropic_model` | `claude-sonnet-5` | any current Claude model id, e.g. `claude-opus-5` | Model used for chat, briefings, savings tips, screenshot reading and channel answers. Absent: the default. |
 
-OpenRouter retires free models without notice. If the bot replies "HTTP Error 404", refresh these
-lists from https://openrouter.ai/api/v1/models (ids ending in `:free`; vision models list
-`image` under input modalities). With `ANTHROPIC_API_KEY` set these lists are not used.
+Every AI call goes through Claude with `ANTHROPIC_API_KEY`. Without the key the app still runs:
+reminders, balances and typed commands all work; chat, briefings, screenshot reading and free-form
+channel answers reply that AI is not configured.
 
 ### Testing a message without waiting for 7am
 

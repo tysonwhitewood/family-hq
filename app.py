@@ -37,7 +37,6 @@ app.secret_key = os.environ.get('SECRET_KEY', f'family-hq-{USERNAME}-dev-key')
 app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=180)
 
 def _anthropic_key(): return os.environ.get('ANTHROPIC_API_KEY', '')
-def _openrouter_key(): return os.environ.get('OPENROUTER_API_KEY', '')
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 
@@ -158,112 +157,57 @@ def require_auth():
         return redirect(url_for('login', next=request.path))
 
 
-# ── LLM helper (Anthropic → OpenRouter fallback) ─────────────────────────────
+# ── LLM helper (Claude via the Anthropic SDK) ────────────────────────────────
 
-# Defaults only; the live lists come from the `ai` key in data/config.json (see README).
-OPENROUTER_TEXT_MODELS = [
-    'nvidia/nemotron-3-super-120b-a12b:free',
-    'google/gemma-4-31b-it:free',
-    'google/gemma-4-26b-a4b-it:free',
-]
-OPENROUTER_VISION_MODELS = [
-    'google/gemma-4-31b-it:free',
-    'google/gemma-4-26b-a4b-it:free',
-    'nex-agi/nex-n2.5-pro:free',
-    'dots-studio/dots-3-note-preview:free',
-]
+DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5'
 
 
-def openrouter_models(kind: str) -> list[str]:
-    """Model ids to try in order: `ai.openrouter_text_models` / `ai.openrouter_vision_models` from config, else defaults."""
-    configured = (load_config().get('ai') or {}).get(f'openrouter_{kind}_models')
-    if isinstance(configured, list) and configured:
-        return [str(m) for m in configured]
-    return list(OPENROUTER_VISION_MODELS if kind == 'vision' else OPENROUTER_TEXT_MODELS)
+def anthropic_model() -> str:
+    """Model id for every Claude call: `ai.anthropic_model` in data/config.json, else the default."""
+    configured = (load_config().get('ai') or {}).get('anthropic_model')
+    return str(configured).strip() if configured else DEFAULT_ANTHROPIC_MODEL
 
 
 def llm_available():
-    return bool(_anthropic_key() or _openrouter_key())
+    return bool(_anthropic_key())
 
 
 def llm_vision_available():
-    """Images can be read: Claude when the Anthropic key exists, else a free vision model on OpenRouter."""
-    return bool(_anthropic_key() or _openrouter_key())
+    """Screenshots and bill photos are read by Claude, so vision is available whenever the key is."""
+    return bool(_anthropic_key())
 
 
-def _with_images(messages: list, images: list | None, style: str) -> list:
-    """Attach images to the last user message in Anthropic or OpenAI block style."""
+def _with_images(messages: list, images: list | None) -> list:
+    """Attach base64 images to the last user message as Anthropic image blocks."""
     if not images:
         return messages
     messages = [dict(m) for m in messages]
     last = messages[-1]
     text = last['content'] if isinstance(last['content'], str) else ''
-    if style == 'anthropic':
-        blocks = [{'type': 'image', 'source': {'type': 'base64', 'media_type': i['media_type'], 'data': i['data']}}
-                  for i in images]
-    else:
-        blocks = [{'type': 'image_url', 'image_url': {'url': f"data:{i['media_type']};base64,{i['data']}"}}
-                  for i in images]
+    blocks = [{'type': 'image', 'source': {'type': 'base64', 'media_type': i['media_type'], 'data': i['data']}}
+              for i in images]
     blocks.append({'type': 'text', 'text': text})
     last['content'] = blocks
     return messages
 
 
 def llm_chat(messages: list, system: str = '', max_tokens: int = 1024, images: list | None = None) -> str:
-    """Call Claude via the Anthropic SDK, or fall back to OpenRouter free models.
+    """Call Claude and return its text.
 
     `images` is a list of {'media_type': 'image/png', 'data': '<base64>'} attached to the last
-    user message. On OpenRouter a vision-capable model is chosen when images are present.
+    user message. Thinking blocks are skipped; only text blocks are returned.
     """
-    anthropic_key = _anthropic_key()
-    openrouter_key = _openrouter_key()
-
-    if anthropic_key:
-        import anthropic
-        client = anthropic.Anthropic(api_key=anthropic_key)
-        kwargs = dict(model='claude-sonnet-4-6', max_tokens=max_tokens,
-                      messages=_with_images(messages, images, 'anthropic'))
-        if system:
-            kwargs['system'] = system
-        response = client.messages.create(**kwargs)
-        return response.content[0].text
-
-    if openrouter_key:
-        _models = openrouter_models('vision' if images else 'text')
-        last_err = None
-        for model in _models:
-            payload = json.dumps({
-                'model': model,
-                'messages': ([{'role': 'system', 'content': system}] if system else [])
-                            + _with_images(messages, images, 'openai'),
-                'max_tokens': max_tokens,
-            }).encode()
-            req = urllib.request.Request(
-                'https://openrouter.ai/api/v1/chat/completions',
-                data=payload,
-                headers={
-                    'Authorization': f'Bearer {openrouter_key}',
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': 'https://family.edencommercial.au',
-                },
-                method='POST',
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    data = json.loads(resp.read())
-                    content = data['choices'][0]['message']['content']
-                    if not str(content or '').strip():
-                        raise ValueError(f'{model} returned an empty answer')
-                    return content
-            except urllib.error.HTTPError as e:
-                last_err = e
-                if e.code not in (400, 402, 403, 404, 408, 429) and e.code < 500:
-                    raise
-            except (KeyError, IndexError, TypeError, ValueError, OSError) as e:
-                last_err = e
-        raise last_err if last_err else ValueError('No OpenRouter model answered')
-
-    raise ValueError('No LLM configured — set ANTHROPIC_API_KEY or OPENROUTER_API_KEY')
+    if not _anthropic_key():
+        raise ValueError('No AI configured — set ANTHROPIC_API_KEY in Coolify')
+    import anthropic
+    client = anthropic.Anthropic(api_key=_anthropic_key())
+    kwargs = dict(model=anthropic_model(), max_tokens=max_tokens, messages=_with_images(messages, images))
+    if system:
+        kwargs['system'] = system
+    response = client.messages.create(**kwargs)
+    if getattr(response, 'stop_reason', None) == 'refusal':
+        return 'I cannot help with that one.'
+    return '\n'.join(block.text for block in response.content if getattr(block, 'type', '') == 'text').strip()
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -1165,7 +1109,7 @@ def api_goal(gid):
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
     if not llm_available():
-        return jsonify({'error': 'No AI configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in settings'}), 503
+        return jsonify({'error': 'No AI configured — add ANTHROPIC_API_KEY in Coolify'}), 503
     data = request.get_json(force=True)
     user_msg = (data.get('message') or '').strip()
     if not user_msg:
@@ -1187,7 +1131,7 @@ def api_chat():
         db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('user', user_msg, now))
         db.execute('INSERT INTO chat_history (role, content, created_at) VALUES (?,?,?)', ('assistant', reply, now))
 
-    model = 'claude-sonnet-4-6' if _anthropic_key() else 'llama-3.3-70b (openrouter)'
+    model = anthropic_model()
     return jsonify({'reply': reply, 'model': model})
 
 @app.route('/api/chat/history')
@@ -1237,14 +1181,13 @@ def api_integrations():
     return jsonify({
         'google_calendar': (token_dir / 'google_token.json').exists(),
         'anthropic': bool(_anthropic_key()),
-        'openrouter': bool(_openrouter_key()),
         'ai_ready': llm_available(),
         'outlook': True,
     })
 
 @app.route('/api/briefing')
 def api_briefing():
-    """Generate a morning briefing using Claude or OpenRouter. Cached per day."""
+    """Generate a morning briefing using Claude. Cached per day."""
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo('Australia/Brisbane')).date()
     today_str = today.isoformat()
@@ -1258,7 +1201,7 @@ def api_briefing():
         return jsonify({'briefing': cached['briefing'], 'date': today_str, 'cached': True})
 
     if not llm_available():
-        return jsonify({'error': 'AI not configured — add ANTHROPIC_API_KEY or OPENROUTER_API_KEY in Coolify'}), 503
+        return jsonify({'error': 'AI not configured — add ANTHROPIC_API_KEY in Coolify'}), 503
 
     birthdays = load_birthdays(7)
     prop = get_property_snapshot()
@@ -2467,54 +2410,11 @@ Return ONLY valid JSON array, nothing else. Example:
 
     messages = [{'role': 'user', 'content': prompt}]
     reply = None
-
-    if _anthropic_key():
+    if llm_available():
         try:
-            body = json.dumps({
-                'model': 'claude-sonnet-4-6',
-                'max_tokens': 1500,
-                'messages': messages,
-            }).encode()
-            req = urllib.request.Request(
-                'https://api.anthropic.com/v1/messages',
-                data=body,
-                headers={
-                    'x-api-key': _anthropic_key(),
-                    'anthropic-version': '2023-06-01',
-                    'content-type': 'application/json',
-                },
-                method='POST',
-            )
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-            reply = resp['content'][0]['text']
-        except Exception:
-            pass
-
-    if not reply and _openrouter_key():
-        for model in ['deepseek/deepseek-r1:free', 'meta-llama/llama-3.3-70b-instruct:free']:
-            try:
-                body = json.dumps({
-                    'model': model,
-                    'messages': messages,
-                    'max_tokens': 1500,
-                }).encode()
-                req = urllib.request.Request(
-                    'https://openrouter.ai/api/v1/chat/completions',
-                    data=body,
-                    headers={
-                        'Authorization': f'Bearer {_openrouter_key()}',
-                        'Content-Type': 'application/json',
-                        'HTTP-Referer': 'https://family.edencommercial.au',
-                    },
-                    method='POST',
-                )
-                with urllib.request.urlopen(req, timeout=45) as r:
-                    resp = json.loads(r.read())
-                reply = resp['choices'][0]['message']['content']
-                break
-            except Exception:
-                continue
+            reply = llm_chat(messages, max_tokens=1500)
+        except Exception as exc:  # noqa: BLE001
+            print(f'[savings-tips] AI call failed: {exc}', flush=True)
 
     if not reply:
         return jsonify({'error': 'No AI available'}), 503
@@ -3585,11 +3485,7 @@ def api_obligations_run():
 
 
 def _vision_label():
-    if _anthropic_key():
-        return 'Claude'
-    if _openrouter_key():
-        return 'OpenRouter (free vision model)'
-    return 'none'
+    return f'Claude ({anthropic_model()})' if _anthropic_key() else 'none'
 
 
 @app.route('/api/mattermost/status')

@@ -299,7 +299,7 @@ class ObligationRoutesTests(ObligationsDbCase):
             status = self.client.get("/api/mattermost/status").get_json()
             self.assertTrue(status["can_read"])
             self.assertIsNotNone(status["last_poll_at"])
-            self.assertIn(status["vision"], ("Claude", "OpenRouter (free vision model)", "none"))
+            self.assertTrue(status["vision"] == "none" or status["vision"].startswith("Claude ("))
             sim = self.client.post("/api/mattermost/simulate", json={"text": "ing home 2142"}).get_json()
             self.assertEqual(sim["command"]["kind"], "balance")
             self.assertEqual(self.client.post("/api/mattermost/simulate", json={"text": ""}).status_code, 400)
@@ -373,7 +373,8 @@ class LlmImageTests(unittest.TestCase):
                 captured.update(kwargs)
 
                 class R:
-                    content = [type("T", (), {"text": "ok"})()]
+                    stop_reason = "end_turn"
+                    content = [type("T", (), {"type": "text", "text": "ok"})()]
                 return R()
 
         class FakeClient:
@@ -391,54 +392,46 @@ class LlmImageTests(unittest.TestCase):
         self.assertEqual(blocks[0]["source"], {"type": "base64", "media_type": "image/png", "data": "QUJD"})
         self.assertEqual(blocks[-1], {"type": "text", "text": "read this"})
 
-    def test_openrouter_path_uses_vision_models_for_images(self):
-        seen = []
+    def test_text_is_taken_from_text_blocks_after_thinking(self):
+        class FakeMessages:
+            def create(self, **kwargs):
+                class R:
+                    stop_reason = "end_turn"
+                    content = [type("Th", (), {"type": "thinking", "thinking": "..."})(),
+                               type("T", (), {"type": "text", "text": "the answer"})()]
+                return R()
 
-        class FakeResp:
-            def read(self):
-                return json.dumps({"choices": [{"message": {"content": "seen"}}]}).encode()
+        class FakeClient:
+            def __init__(self, api_key):
+                self.messages = FakeMessages()
 
-            def __enter__(self):
-                return self
+        fake_module = type("M", (), {"Anthropic": FakeClient})
+        with patch.dict("sys.modules", {"anthropic": fake_module}), \
+             patch.object(family_app, "_anthropic_key", return_value="k"):
+            self.assertEqual(family_app.llm_chat([{"role": "user", "content": "hi"}]), "the answer")
 
-            def __exit__(self, *a):
-                return False
-
-        def fake_urlopen(req, timeout=30):
-            seen.append(json.loads(req.data))
-            return FakeResp()
-
-        with patch.object(family_app, "_anthropic_key", return_value=""), \
-             patch.object(family_app, "_openrouter_key", return_value="or"), \
-             patch.object(family_app.urllib.request, "urlopen", fake_urlopen):
-            out = family_app.llm_chat([{"role": "user", "content": "read"}],
-                                      images=[{"media_type": "image/jpeg", "data": "QUJD"}])
-        self.assertEqual(out, "seen")
-        self.assertEqual(seen[0]["model"], family_app.openrouter_models("vision")[0])
-        parts = seen[0]["messages"][-1]["content"]
-        self.assertEqual(parts[0]["type"], "image_url")
-        self.assertTrue(parts[0]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
-
-    def test_openrouter_models_come_from_config_with_defaults(self):
+    def test_model_comes_from_config_with_default(self):
         temp = TemporaryDirectory()
         original = family_app.CONFIG_PATH
         family_app.CONFIG_PATH = Path(temp.name) / "config.json"
         try:
             family_app.CONFIG_PATH.write_text("{}")
-            self.assertEqual(family_app.openrouter_models("text"), family_app.OPENROUTER_TEXT_MODELS)
-            family_app.CONFIG_PATH.write_text(json.dumps({"ai": {"openrouter_text_models": ["x/y:free"], "openrouter_vision_models": []}}))
-            self.assertEqual(family_app.openrouter_models("text"), ["x/y:free"])
-            self.assertEqual(family_app.openrouter_models("vision"), family_app.OPENROUTER_VISION_MODELS)
+            self.assertEqual(family_app.anthropic_model(), "claude-sonnet-5")
+            family_app.CONFIG_PATH.write_text(json.dumps({"ai": {"anthropic_model": "claude-opus-5"}}))
+            self.assertEqual(family_app.anthropic_model(), "claude-opus-5")
         finally:
             family_app.CONFIG_PATH = original
             temp.cleanup()
 
-    def test_vision_available_tracks_keys(self):
-        with patch.object(family_app, "_anthropic_key", return_value=""), \
-             patch.object(family_app, "_openrouter_key", return_value=""):
+    def test_no_key_means_no_ai(self):
+        with patch.object(family_app, "_anthropic_key", return_value=""):
+            self.assertFalse(family_app.llm_available())
             self.assertFalse(family_app.llm_vision_available())
-        with patch.object(family_app, "_anthropic_key", return_value=""), \
-             patch.object(family_app, "_openrouter_key", return_value="x"):
+            with self.assertRaises(ValueError):
+                family_app.llm_chat([{"role": "user", "content": "hi"}])
+
+    def test_vision_available_tracks_the_key(self):
+        with patch.object(family_app, "_anthropic_key", return_value="x"):
             self.assertTrue(family_app.llm_vision_available())
 
 

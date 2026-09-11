@@ -169,16 +169,6 @@
     ]
   },
   "ai": {
-    "openrouter_text_models": [
-      "nvidia/nemotron-3-super-120b-a12b:free",
-      "google/gemma-4-31b-it:free",
-      "google/gemma-4-26b-a4b-it:free"
-    ],
-    "openrouter_vision_models": [
-      "google/gemma-4-31b-it:free",
-      "google/gemma-4-26b-a4b-it:free",
-      "nex-agi/nex-n2.5-pro:free",
-      "dots-studio/dots-3-note-preview:free"
-    ]
+    "anthropic_model": "claude-sonnet-5"
   }
 }
