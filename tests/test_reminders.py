@@ -64,11 +64,11 @@ class ReminderCase(unittest.TestCase):
         family_app.DB_PATH = Path(self.temp_dir.name) / "family.db"
         family_app.CONFIG_PATH = Path(self.temp_dir.name) / "config.json"
         family_app.CONFIG_PATH.write_text(json.dumps({"obligations": {"accounts": [
-            {"key": "eden_operating", "display": "Eden Commercial"},
-            {"key": "ecomm_gst", "display": "EComm GST", "aliases": ["gst"]},
-            {"key": "ing_home", "display": "ING Home", "aliases": ["home"]},
-            {"key": "ing_emergency", "display": "ING Emergency"},
-            {"key": "gsb_everyday", "display": "GSB Everyday"},
+            {"key": "eden_operating", "display": "Eden Commercial", "bank": "CBA"},
+            {"key": "ecomm_gst", "display": "EComm GST", "bank": "CBA", "aliases": ["gst"]},
+            {"key": "ing_home", "display": "ING Home", "bank": "ING", "aliases": ["home"]},
+            {"key": "ing_emergency", "display": "ING Emergency", "bank": "ING"},
+            {"key": "gsb_everyday", "display": "GSB Everyday", "bank": "GSB"},
         ]}}))
         family_app.init_db()
         self.client = FakeClient()
@@ -435,6 +435,27 @@ class SetupAndOverdueTests(ReminderCase):
                              "WHERE b.name='Mortgage repayment' AND o.due_date='2026-10-05'").fetchone()
         self.assertEqual((row["state"], row["state_changed_by"]), ("paid", "auto_pay"))
         self.assertNotIn("2026-10-05", [u["due_date"] for u in svc.position()["upcoming"] if u["name"] == "Mortgage repayment"])
+
+
+class StatementReminderTests(ReminderCase):
+    def test_fortnightly_export_reminder_on_anchor_and_every_14_days(self):
+        self.settings["statement_reminder_anchor"] = "2026-09-25"
+        for day, expected in ((25, True), (26, False)):
+            self.client.posts = []
+            svc = self.service(self.at(2026, 9, day))
+            result = svc.run_daily()
+            self.assertEqual(f"statement_reminder:2026-09-{day}" in result["sent"], expected, day)
+        svc = self.service(self.at(2026, 10, 9))
+        self.assertIn("statement_reminder:2026-10-09", svc.run_daily()["sent"])
+        self.assertIn("bank exports", self.client.posts[-1])
+        self.assertIn("ING: ", self.client.posts[-1])
+        self.assertIn("Upload CSV", self.client.posts[-1])
+
+    def test_export_reminder_can_be_disabled(self):
+        self.settings["statement_reminder_anchor"] = "2026-09-25"
+        self.settings["statement_reminder_enabled"] = False
+        svc = self.service(self.at(2026, 9, 25))
+        self.assertNotIn("statement_reminder:2026-09-25", svc.run_daily()["sent"])
 
 
 class SchedulerTickTests(ReminderCase):

@@ -26,6 +26,8 @@ DEFAULT_SETTINGS = {
     'timezone': 'Australia/Brisbane',
     'stale_balance_days': 14,
     'bas_lookahead_days': 30,
+    'statement_reminder_anchor': '2026-09-25',   # a reminder day; repeats every 14 days
+    'statement_reminder_enabled': True,
     'accounts': [],
 }
 
@@ -482,3 +484,18 @@ def compose_weekly_position(targets: list[dict], upcoming: list[dict], today: da
 
 def compose_bundle(parts: list[str]) -> str:
     return '\n\n---\n\n'.join(part for part in parts if part)
+
+
+def compose_statement_reminder(accounts: list[dict]) -> str:
+    banks = []
+    for bank in ('CBA', 'ING', 'GSB'):
+        names = [a.get('display', a['key']) for a in accounts if a.get('bank') == bank and not a.get('investment') and not a.get('loan')]
+        if names:
+            banks.append(f'{bank}: ' + ', '.join(names))
+    lines = ['**Fortnight done: time for the bank exports.**', '',
+             'Export the last two weeks from each bank and upload them in Family HQ, Finance, Upload CSV. '
+             'Name each file with the account and date (e.g. *ING Everyday 25.09.26.csv*) so it lands on the right account.']
+    if banks:
+        lines += [''] + [f'• {b}' for b in banks]
+    lines += ['', 'That keeps the six-month forecast and the categorised spending honest. Reply *done* when uploaded.']
+    return '\n'.join(lines)

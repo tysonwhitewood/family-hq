@@ -60,6 +60,8 @@ Messages are bundled into one post a day, never repeated, and never sent between
 | `timezone` | `"Australia/Brisbane"` | IANA zone | All scheduling |
 | `stale_balance_days` | `14` | days | A balance older than this is flagged and a screenshot requested |
 | `bas_lookahead_days` | `30` | days | The trust BAS joins the EComm GST target this many days before a BAS |
+| `statement_reminder_anchor` | `"2026-09-25"` | `YYYY-MM-DD` | A day the fortnightly "upload your bank exports" message posts; it repeats every 14 days from there at the daily hour. Absent: the default. |
+| `statement_reminder_enabled` | `true` | `true`/`false` | Turns the fortnightly export reminder off without removing the anchor. |
 | `accounts` | `[]` | list of `{key, display, bank, match, loan?}` | Reserve accounts; `match` is the digits used to recognise screenshots (step 2). An empty list disables account validation on the API. |
 
 Any key left out falls back to the default shown. `mattermost.enabled` (default `true`) set to

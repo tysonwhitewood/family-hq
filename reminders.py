@@ -193,6 +193,18 @@ class ReminderService:
                                                     home_lines, mortgage, self.settings),
             })
         sent = self._sent_keys()
+        anchor_raw = self.settings.get('statement_reminder_anchor', ob.DEFAULT_SETTINGS['statement_reminder_anchor'])
+        if self.settings.get('statement_reminder_enabled', True) and anchor_raw:
+            try:
+                anchor = date.fromisoformat(str(anchor_raw))
+            except ValueError:
+                anchor = None
+            if anchor and today >= anchor and (today - anchor).days % 14 == 0:
+                messages.append({
+                    'kind': 'statement_reminder', 'dedupe_key': f'statement_reminder:{today.isoformat()}',
+                    'obligation_id': None, 'occurrence_id': None,
+                    'body': ob.compose_statement_reminder(self.settings.get('accounts', [])),
+                })
         if today.weekday() == 0:
             propvesting = [o for o in data['obligations'] if 'propvesting' in o['name'].lower()
                            and o['status'] != 'retired' and not o.get('anchor_date')]

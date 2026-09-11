@@ -171,7 +171,9 @@
         ],
         "investment": true
       }
-    ]
+    ],
+    "statement_reminder_anchor": "2026-09-25",
+    "statement_reminder_enabled": true
   },
   "mattermost": {
     "enabled": true,
