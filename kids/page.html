@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Kids HQ">
+<meta name="theme-color" content="#1B4332">
+<link rel="manifest" href="/kids/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<title>Kids HQ</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F3F7F2; color: #14301f; min-height: 100vh; }
+header { background: #1B4332; color: #fff; padding: 16px 20px 18px; display: flex; align-items: center; gap: 12px; }
+header h1 { font-size: 22px; }
+header .who { margin-left: auto; font-weight: 600; color: #D4A017; }
+header a { color: rgba(255,255,255,.7); font-size: 13px; text-decoration: none; }
+.tabs { display: flex; background: #fff; border-bottom: 1px solid #e5e7eb; position: sticky; top: 0; z-index: 5; }
+.tabs button { flex: 1; padding: 14px 8px; border: none; background: none; font-size: 14px; font-weight: 600; color: #6b7280; }
+.tabs button.on { color: #1B4332; box-shadow: inset 0 -3px 0 #D4A017; }
+main { padding: 18px 16px 40px; max-width: 820px; margin: 0 auto; }
+.jars { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.jar { background: #fff; border-radius: 18px; padding: 16px; box-shadow: 0 4px 16px rgba(27,67,50,.08); }
+.jar .label { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: #6b7280; font-weight: 700; }
+.jar .amt { font-size: 26px; font-weight: 800; margin-top: 6px; }
+.jar.smile, .jar.grow { background: linear-gradient(180deg, #fff 60%, #e8f5e4); }
+.plant { height: 10px; border-radius: 8px; background: #d1fae5; margin-top: 10px; overflow: hidden; }
+.plant > span { display: block; height: 100%; background: #2d6a4f; }
+.card { background: #fff; border-radius: 18px; padding: 18px; margin-top: 16px; box-shadow: 0 4px 16px rgba(27,67,50,.08); }
+.card h2 { font-size: 18px; margin-bottom: 8px; }
+.muted { color: #6b7280; font-size: 14px; line-height: 1.45; }
+button.primary, .btn { display: inline-block; background: #1B4332; color: #fff; border: none; border-radius: 12px; padding: 12px 16px; font-weight: 700; font-size: 15px; margin-top: 10px; cursor: pointer; }
+button.ghost { background: #e8f0ea; color: #1B4332; }
+.opt { display: block; width: 100%; text-align: left; background: #f3f7f2; border: 2px solid transparent; border-radius: 12px; padding: 12px 14px; margin-top: 8px; font-size: 15px; cursor: pointer; }
+.opt:hover, .opt.pick { border-color: #D4A017; background: #fff8e6; }
+.msg { margin-top: 12px; padding: 12px; border-radius: 12px; font-weight: 600; }
+.msg.ok { background: #d1fae5; }
+.msg.no { background: #fee2e2; }
+input, textarea { width: 100%; padding: 12px; border: 1.5px solid #d1d5db; border-radius: 10px; font-size: 16px; margin-top: 8px; }
+.hidden { display: none; }
+.want { padding: 10px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Kids HQ</h1>
+    <div style="font-size:12px;opacity:.7">Splurge · Smile · Give</div>
+  </div>
+  <div class="who" id="who"></div>
+  <a href="/logout">Sign out</a>
+</header>
+<div class="tabs">
+  <button class="on" data-tab="jars" onclick="tab('jars',this)">Jars</button>
+  <button data-tab="learn" onclick="tab('learn',this)">Learn</button>
+  <button data-tab="goal" onclick="tab('goal',this)">Smile</button>
+  <button data-tab="sleep" onclick="tab('sleep',this)">Sleep on it</button>
+</div>
+<main>
+  <section id="tab-jars">
+    <div class="jars" id="jars"></div>
+    <div class="card">
+      <h2>This week</h2>
+      <p class="muted" id="week-note">Family jobs are free because you live here. Extra jobs in Kit earn extra money. Paid at Sunday Money Meal.</p>
+      <p class="muted" id="bonus-note"></p>
+    </div>
+  </section>
+  <section id="tab-learn" class="hidden">
+    <div class="card" id="learn-card"></div>
+  </section>
+  <section id="tab-goal" class="hidden">
+    <div class="card">
+      <h2>Smile goal</h2>
+      <p class="muted" id="goal-line"></p>
+      <div class="plant"><span id="goal-bar" style="width:0%"></span></div>
+      <p style="margin-top:16px;font-weight:700">New goal (Mum or Dad must approve the thing)</p>
+      <input id="goal-title" placeholder="What are you saving for?">
+      <input id="goal-amt" type="number" min="1" step="0.01" placeholder="Price in dollars">
+      <button class="primary" onclick="saveGoal()">Set Smile goal</button>
+      <div id="goal-msg"></div>
+    </div>
+  </section>
+  <section id="tab-sleep" class="hidden">
+    <div class="card">
+      <h2>Sleep on it</h2>
+      <p class="muted">Want something? Write it down. We decide at the next Sunday Money Meal. Nagging does not turn a no into a yes.</p>
+      <textarea id="want" rows="3" placeholder="I want…"></textarea>
+      <button class="primary" onclick="saveWant()">Sleep on it until Sunday</button>
+      <div id="want-msg"></div>
+      <div id="wants"></div>
+    </div>
+  </section>
+</main>
+<script>
+let me = null;
+function tab(name, el) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('on'));
+  el.classList.add('on');
+  document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+  document.getElementById('tab-'+name).classList.remove('hidden');
+}
+function dollars(n) { return '$' + Number(n||0).toFixed(2); }
+async function load() {
+  const r = await fetch('/api/kids/me');
+  if (r.status === 401) { location.href = '/kids/login'; return; }
+  me = await r.json();
+  if (me.children && !me.child) { location.href = '/kids/login'; return; }
+  document.getElementById('who').textContent = me.child.name;
+  renderJars();
+  renderLearn();
+  renderGoal();
+  renderWants();
+}
+function renderJars() {
+  const hold = document.getElementById('jars');
+  hold.innerHTML = '';
+  const emoji = {splurge:'🍦', smile:'🌱', give:'💛', grow:'🌳'};
+  (me.child.jars||[]).forEach(j => {
+    const v = me.jars[j]||0;
+    const d = document.createElement('div');
+    d.className = 'jar '+j;
+    d.innerHTML = `<div class="label">${emoji[j]||''} ${j}</div><div class="amt">${dollars(v)}</div>
+      ${j==='smile'||j==='grow' ? `<div class="plant"><span style="width:${Math.min(100, v)}%"></span></div>`:''}`;
+    hold.appendChild(d);
+  });
+  document.getElementById('bonus-note').textContent = me.bonus_if_sunday
+    ? 'If you leave Smile (and Grow) until Sunday, family bonus would be about ' + dollars(me.bonus_if_sunday) + '.'
+    : 'Leave money in Smile to earn family bonus on Sunday.';
+}
+function renderLearn() {
+  const box = document.getElementById('learn-card');
+  const p = me.next_principle;
+  if (!p) {
+    box.innerHTML = '<h2>You finished this term’s list</h2><p class="muted">Play them again for fun — no extra pay.</p>' + replayList();
+    return;
+  }
+  box.innerHTML = `<h2>${p.title}</h2><p class="muted">${p.lesson}</p>
+    <p style="margin-top:14px;font-weight:700">${p.question||'What do you reckon?'}</p>
+    <div id="opts"></div><div id="learn-msg"></div>`;
+  (p.options||[]).forEach((opt,i) => {
+    const b = document.createElement('button');
+    b.className = 'opt';
+    b.textContent = opt;
+    b.onclick = () => answer(p.id, i, b);
+    document.getElementById('opts').appendChild(b);
+  });
+}
+function replayList() {
+  return (me.principles||[]).map(p => `<p class="muted" style="margin-top:8px">${p.done?'✓':'·'} ${p.title}</p>`).join('');
+}
+async function answer(id, i, el) {
+  document.querySelectorAll('#opts .opt').forEach(b => b.classList.remove('pick'));
+  el.classList.add('pick');
+  const r = await fetch('/api/kids/principles/'+id+'/complete', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({answer: i})
+  });
+  const data = await r.json();
+  const msg = document.getElementById('learn-msg');
+  msg.className = 'msg ' + (data.correct ? 'ok' : 'no');
+  msg.textContent = data.message || (data.correct ? 'Yes.' : 'Not yet.');
+  if (data.correct) setTimeout(load, 900);
+}
+function renderGoal() {
+  const g = me.goal;
+  const smile = me.jars.smile||0;
+  const line = document.getElementById('goal-line');
+  const bar = document.getElementById('goal-bar');
+  if (!g) { line.textContent = 'No Smile goal yet. Pick one thing Mum or Dad approve.'; bar.style.width='0%'; return; }
+  const t = Number(g.target_amount||0);
+  const pct = t>0 ? Math.min(100, 100*smile/t) : 0;
+  bar.style.width = pct+'%';
+  const left = t - smile;
+  line.textContent = left<=0
+    ? `${g.title} ${dollars(t)} — you are there. Nice.`
+    : `${g.title} ${dollars(t)} — ${dollars(left)} to go. Smile has ${dollars(smile)}.`;
+}
+async function saveGoal() {
+  const title = document.getElementById('goal-title').value.trim();
+  const target_amount = document.getElementById('goal-amt').value;
+  const r = await fetch('/api/kids/goals', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title, target_amount})});
+  const data = await r.json();
+  const msg = document.getElementById('goal-msg');
+  msg.className = 'msg '+(r.ok?'ok':'no');
+  msg.textContent = r.ok ? 'Smile goal set.' : (data.error||'Could not save');
+  if (r.ok) load();
+}
+function renderWants() {
+  const hold = document.getElementById('wants');
+  hold.innerHTML = (me.wants||[]).map(w => `<div class="want"><strong>${w.want}</strong><br><span class="muted">Decide ${w.decide_on} · ${w.status}</span></div>`).join('') || '<p class="muted" style="margin-top:12px">Nothing on the list yet.</p>';
+}
+async function saveWant() {
+  const want = document.getElementById('want').value.trim();
+  const r = await fetch('/api/kids/wants', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({want})});
+  const data = await r.json();
+  const msg = document.getElementById('want-msg');
+  msg.className = 'msg '+(r.ok?'ok':'no');
+  msg.textContent = data.message || data.error || '';
+  if (r.ok) { document.getElementById('want').value=''; load(); }
+}
+load();
+</script>
+</body>
+</html>

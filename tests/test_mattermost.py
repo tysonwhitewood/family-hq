@@ -31,7 +31,7 @@ class FakeMattermost(BaseHTTPRequestHandler):
             return self._reply(200, {"status": "OK"})
         if self.path == "/api/v4/users/me":
             return self._reply(200, {"id": "botid", "username": "familyhq"})
-        if self.path.startswith("/api/v4/channels/chan/posts"):
+        if "/api/v4/channels/" in self.path and "/posts" in self.path:
             return self._reply(200, {"order": ["p2", "p1"], "posts": {
                 "p1": {"id": "p1", "user_id": "u1", "message": "gst 9262", "create_at": 100, "file_ids": [], "root_id": "", "type": ""},
                 "p2": {"id": "p2", "user_id": "u2", "message": "", "create_at": 200, "file_ids": ["f1"], "root_id": "", "type": ""},
@@ -97,6 +97,18 @@ class MattermostClientTests(unittest.TestCase):
         self.assertEqual((method, path), ("POST", "/api/v4/posts"))
         self.assertEqual(headers["Authorization"], "Bearer tok")
         self.assertEqual(body, {"channel_id": "chan", "message": "hello"})
+
+    def test_post_to_a_named_channel_does_not_use_the_default(self):
+        client = mattermost.MattermostClient(self.base, token="tok", channel_id="chan")
+        client.post("hi maia", channel_id="kids-maia")
+        _, path, _, body = FakeMattermost.requests[0]
+        self.assertEqual(path, "/api/v4/posts")
+        self.assertEqual(body, {"channel_id": "kids-maia", "message": "hi maia"})
+
+    def test_named_channel_post_without_token_raises(self):
+        client = mattermost.MattermostClient(self.base, webhook_url=f"{self.base}/hooks/abc")
+        with self.assertRaises(mattermost.MattermostError):
+            client.post("hi", channel_id="kids-maia")
 
     def test_post_falls_back_to_webhook_without_token(self):
         client = mattermost.MattermostClient(self.base, webhook_url=f"{self.base}/hooks/abc")

@@ -12,6 +12,7 @@ import openpyxl
 
 import conversation
 import holdings as hold
+import kids
 import mattermost
 import obligations as ob
 import reminders
@@ -52,14 +53,24 @@ login_manager.login_view = 'login'
 
 
 class _User(UserMixin):
-    def __init__(self, id):
+    def __init__(self, id, role='adult', kid_key=None):
         self.id = id
+        self.role = role
+        self.kid_key = kid_key
+
+    @property
+    def is_kid(self):
+        return self.role == 'kid'
 
 
 @login_manager.user_loader
 def load_user(user_id):
     if user_id == USERNAME:
-        return _User(user_id)
+        return _User(user_id, 'adult')
+    if str(user_id).startswith('kid:'):
+        key = user_id.split(':', 1)[1]
+        if kids.child_by_key(kids.kids_settings(load_config()), key):
+            return _User(user_id, 'kid', key)
     return None
 
 
@@ -140,22 +151,44 @@ def login():
 
 @app.route('/logout')
 def logout():
+    was_kid = bool(getattr(current_user, 'is_kid', False)) if current_user.is_authenticated else False
     logout_user()
-    return redirect('/login')
+    return redirect('/kids/login' if was_kid else '/login')
 
 
 @app.before_request
 def require_auth():
     public = {'/health', '/login', '/logout', '/manifest.json', '/icon-192.png', '/icon-512.png',
-              '/apple-touch-icon.png', '/icon-180.png', '/sw.js', '/offline.html'}
+              '/apple-touch-icon.png', '/icon-180.png', '/sw.js', '/offline.html',
+              '/kids/login', '/kids/manifest.json'}
     if request.path in public:
         return
     if request.path.startswith('/static/'):
         return
-    if not current_user.is_authenticated:
-        if request.path.startswith('/api/'):
+    path = request.path
+    kids_path = path.startswith('/kids') or path.startswith('/api/kids')
+    role = getattr(current_user, 'role', None) if current_user.is_authenticated else None
+    if kids_path:
+        admin_kids = path.startswith('/api/kids/admin')
+        if admin_kids:
+            if role != 'adult':
+                if path.startswith('/api/'):
+                    return jsonify({'error': 'Authentication required'}), 401
+                return redirect(url_for('login', next=path))
+            return
+        if role in ('kid', 'adult'):
+            return
+        if path.startswith('/api/'):
             return jsonify({'error': 'Authentication required'}), 401
-        return redirect(url_for('login', next=request.path))
+        return redirect('/kids/login')
+    if role == 'kid':
+        if path.startswith('/api/'):
+            return jsonify({'error': 'Kids HQ cannot open that page'}), 403
+        return redirect('/kids')
+    if not current_user.is_authenticated:
+        if path.startswith('/api/'):
+            return jsonify({'error': 'Authentication required'}), 401
+        return redirect(url_for('login', next=path))
 
 
 # ── LLM helper (Claude via the Anthropic SDK) ────────────────────────────────
@@ -515,6 +548,54 @@ def init_db():
                 updated_at TEXT NOT NULL,
                 UNIQUE (account_key, name COLLATE NOCASE)
             );
+            CREATE TABLE IF NOT EXISTS kid_balances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_key TEXT NOT NULL,
+                as_of TEXT NOT NULL,
+                splurge REAL NOT NULL DEFAULT 0,
+                smile REAL NOT NULL DEFAULT 0,
+                give REAL NOT NULL DEFAULT 0,
+                grow REAL NOT NULL DEFAULT 0,
+                source TEXT NOT NULL,
+                raw TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS kid_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_key TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                jar TEXT,
+                amount REAL NOT NULL,
+                note TEXT,
+                paid_in_kit INTEGER NOT NULL DEFAULT 0,
+                principle_id TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS kid_principles (
+                child_key TEXT NOT NULL,
+                principle_id TEXT NOT NULL,
+                earned REAL NOT NULL DEFAULT 0,
+                paid_in_kit INTEGER NOT NULL DEFAULT 0,
+                completed_at TEXT NOT NULL,
+                PRIMARY KEY (child_key, principle_id)
+            );
+            CREATE TABLE IF NOT EXISTS kid_goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_key TEXT NOT NULL,
+                title TEXT NOT NULL,
+                target_amount REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                achieved_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS kid_wants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_key TEXT NOT NULL,
+                want TEXT NOT NULL,
+                asked_at TEXT NOT NULL,
+                decide_on TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'sleeping'
+            );
 
         ''')
         for column, definition in [
@@ -864,6 +945,112 @@ def save_config(cfg):
         json.dump(cfg, f, indent=2)
 
 
+def kids_config() -> dict:
+    settings = kids.kids_settings(load_config())
+    family = (os.environ.get('MATTERMOST_CHANNEL_ID') or '').strip()
+    if family:
+        settings['family_finance_channel_id'] = family
+    return settings
+
+
+def _now_brisbane() -> datetime:
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo('Australia/Brisbane'))
+
+
+def _kid_latest_jars(db, child: dict) -> dict:
+    row = db.execute(
+        'SELECT splurge, smile, give, grow FROM kid_balances WHERE child_key=? ORDER BY id DESC LIMIT 1',
+        (child['key'],),
+    ).fetchone()
+    return kids.jars_from_row(dict(row) if row else None, child)
+
+
+def _kid_write_jars(db, child: dict, jars: dict, source: str, raw: str | None = None):
+    now = _now_brisbane().isoformat(timespec='seconds')
+    full = kids.empty_jars()
+    full.update(jars)
+    db.execute(
+        'INSERT INTO kid_balances (child_key, as_of, splurge, smile, give, grow, source, raw, created_at) '
+        'VALUES (?,?,?,?,?,?,?,?,?)',
+        (child['key'], now[:10], full['splurge'], full['smile'], full['give'], full['grow'], source, raw, now),
+    )
+    return full
+
+
+def _kid_ledger(db, child_key: str, kind: str, amount: float, note: str, jar: str | None = None,
+                paid_in_kit: int = 0, principle_id: str | None = None):
+    now = _now_brisbane().isoformat(timespec='seconds')
+    db.execute(
+        'INSERT INTO kid_ledger (child_key, kind, jar, amount, note, paid_in_kit, principle_id, created_at) '
+        'VALUES (?,?,?,?,?,?,?,?)',
+        (child_key, kind, jar, amount, note, paid_in_kit, principle_id, now),
+    )
+
+
+def _kid_pay_queue(db, child_key: str | None = None) -> list[dict]:
+    sql = "SELECT id, child_key, kind, jar, amount, note, principle_id, created_at FROM kid_ledger WHERE paid_in_kit=0 AND kind IN ('seed','bonus','lesson')"
+    args = []
+    if child_key:
+        sql += ' AND child_key=?'
+        args.append(child_key)
+    sql += ' ORDER BY id'
+    return [dict(r) for r in db.execute(sql, args)]
+
+
+def _kid_active_goal(db, child_key: str) -> dict | None:
+    row = db.execute(
+        "SELECT id, title, target_amount, status FROM kid_goals WHERE child_key=? AND status='active' ORDER BY id DESC LIMIT 1",
+        (child_key,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _kid_completed_ids(db, child_key: str) -> set[str]:
+    return {r['principle_id'] for r in db.execute(
+        'SELECT principle_id FROM kid_principles WHERE child_key=?', (child_key,)
+    )}
+
+
+def _kid_snapshot(child: dict) -> dict:
+    with get_db() as db:
+        jars = _kid_latest_jars(db, child)
+        completed = sorted(_kid_completed_ids(db, child['key']))
+        goal = _kid_active_goal(db, child['key'])
+        wants = [dict(r) for r in db.execute(
+            "SELECT id, want, asked_at, decide_on, status FROM kid_wants WHERE child_key=? ORDER BY id DESC LIMIT 20",
+            (child['key'],),
+        )]
+        queue = _kid_pay_queue(db, child['key'])
+        bonus = kids.family_bonus(
+            jars['smile'], jars['grow'],
+            kids_config().get('bonus_rate_weekly', 0.01),
+            kids_config().get('bonus_cap', 2.0),
+        )
+    nxt = kids.next_principle(child, completed)
+    principles = []
+    for item in kids.principles_for(child):
+        public = {k: item[k] for k in ('id', 'title', 'lesson', 'game', 'question', 'options') if k in item}
+        public['done'] = item['id'] in completed
+        principles.append(public)
+    return {
+        'child': {
+            'key': child['key'], 'name': child['name'], 'age': child['age'],
+            'jars': kids.child_jars(child), 'split': child.get('split'),
+            'split_locked': bool(child.get('split_locked')),
+            'pin_set': bool(child.get('pin_hash')),
+        },
+        'jars': jars,
+        'goal': goal,
+        'wants': wants,
+        'pay_queue': queue,
+        'bonus_if_sunday': bonus,
+        'next_principle': ({k: nxt[k] for k in ('id', 'title', 'lesson', 'game', 'question', 'options')} if nxt else None),
+        'principles': principles,
+        'help': kids.compose_kid_help(),
+    }
+
+
 def obligation_settings() -> dict:
     """Engine settings: documented defaults overlaid by the `obligations` key in config.json."""
     import obligations as _obligations
@@ -1040,6 +1227,122 @@ def dashboard():
 @app.route('/manifest.json')
 def manifest():
     return send_file(ROOT / 'manifest.json', mimetype='application/manifest+json')
+
+
+@app.route('/kids/manifest.json')
+def kids_manifest():
+    path = ROOT / 'kids' / 'manifest.json'
+    if path.exists():
+        return send_file(path, mimetype='application/manifest+json')
+    return jsonify({'name': 'Kids HQ', 'start_url': '/kids', 'display': 'standalone'}), 200
+
+
+_KIDS_LOGIN = """<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Kids HQ">
+  <meta name="theme-color" content="#1B4332">
+  <link rel="manifest" href="/kids/manifest.json">
+  <title>Kids HQ — Sign in</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; background: #0f2419; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           color: #fff; padding: 24px 16px 40px; }
+    h1 { text-align: center; font-size: 28px; margin: 12px 0 4px; }
+    .sub { text-align: center; color: #D4A017; margin-bottom: 28px; font-size: 15px; }
+    .faces { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin-bottom: 28px; }
+    .face { background: #1B4332; border: 3px solid transparent; border-radius: 20px; padding: 18px 16px; width: 140px;
+            text-align: center; cursor: pointer; color: #fff; }
+    .face.sel { border-color: #D4A017; }
+    .emoji { font-size: 48px; display: block; margin-bottom: 8px; }
+    .error { background: #FEF2F2; color: #DC2626; padding: 10px 14px; border-radius: 8px; margin: 0 auto 16px;
+             max-width: 360px; text-align: center; }
+    .pin { display: flex; gap: 10px; justify-content: center; margin-bottom: 16px; }
+    .dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #D4A017; }
+    .dot.on { background: #D4A017; }
+    .pad { display: grid; grid-template-columns: repeat(3, 72px); gap: 12px; justify-content: center; }
+    .pad button { height: 72px; border: none; border-radius: 16px; font-size: 26px; font-weight: 700;
+                  background: #1B4332; color: #fff; }
+    .hint { text-align: center; color: rgba(255,255,255,.5); margin-top: 20px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Kids HQ</h1>
+  <p class="sub">Whitewood jars · Splurge · Smile · Give</p>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="post" id="f">
+    <input type="hidden" name="child" id="child" value="{{ child or '' }}">
+    <input type="hidden" name="pin" id="pin" value="">
+    <div class="faces">
+      {% for c in children %}
+      <button type="button" class="face {% if child==c.key %}sel{% endif %}" data-key="{{ c.key }}" onclick="pick(this)">
+        <span class="emoji">{{ c.emoji }}</span>{{ c.name }}
+      </button>
+      {% endfor %}
+    </div>
+    <div class="pin">{% for i in range(4) %}<div class="dot" id="d{{ i }}"></div>{% endfor %}</div>
+    <div class="pad">
+      {% for n in ['1','2','3','4','5','6','7','8','9','','0','←'] %}
+        {% if n %}<button type="button" onclick="tap('{{ n }}')">{{ n }}</button>{% else %}<span></span>{% endif %}
+      {% endfor %}
+    </div>
+  </form>
+  <p class="hint">Ask Mum or Dad if your PIN is not set yet.</p>
+  <script>
+    let pin = '';
+    function pick(el) {
+      document.querySelectorAll('.face').forEach(f => f.classList.remove('sel'));
+      el.classList.add('sel');
+      document.getElementById('child').value = el.dataset.key;
+    }
+    function tap(n) {
+      if (n === '←') pin = pin.slice(0, -1);
+      else if (pin.length < 4) pin += n;
+      for (let i = 0; i < 4; i++) document.getElementById('d'+i).classList.toggle('on', i < pin.length);
+      document.getElementById('pin').value = pin;
+      if (pin.length === 4 && document.getElementById('child').value) document.getElementById('f').submit();
+    }
+  </script>
+</body>
+</html>"""
+
+
+@app.route('/kids/login', methods=['GET', 'POST'])
+@limiter.limit('20 per minute')
+def kids_login():
+    settings = kids_config()
+    faces = []
+    for child, emoji in zip(settings['children'], ('🌟', '📚', '🐥')):
+        faces.append({'key': child['key'], 'name': child['name'], 'emoji': emoji})
+    error = None
+    chosen = request.form.get('child', '') if request.method == 'POST' else ''
+    if request.method == 'POST':
+        child = kids.child_by_key(settings, request.form.get('child', ''))
+        pin = request.form.get('pin', '')
+        if child is None:
+            error = 'Pick your face first.'
+        elif not child.get('pin_hash'):
+            error = 'Ask Mum or Dad to set your PIN on Family HQ.'
+        elif not kids.pin_ok(pin, child.get('pin_hash') or ''):
+            error = 'That PIN did not match. Try again.'
+        else:
+            login_user(_User(f"kid:{child['key']}", 'kid', child['key']), remember=True)
+            return redirect('/kids')
+    return render_template_string(_KIDS_LOGIN, children=faces, error=error, child=chosen)
+
+
+@app.route('/kids')
+@app.route('/kids/')
+def kids_home():
+    if not current_user.is_authenticated:
+        return redirect('/kids/login')
+    html_path = ROOT / 'kids' / 'page.html'
+    if html_path.exists():
+        return send_file(html_path)
+    return '<h1>Kids HQ — kids/page.html not found</h1>', 404
 
 @app.route('/icon-192.png')
 @app.route('/icon-512.png')
@@ -3251,6 +3554,269 @@ init_db()
 
 # ── Obligations & reminders ──────────────────────────────────────────────────
 
+def _require_child_for_request() -> tuple[dict | None, tuple | None]:
+    """Kid session uses their key; adult may pass child=."""
+    settings = kids_config()
+    if getattr(current_user, 'is_kid', False):
+        child = kids.child_by_key(settings, current_user.kid_key)
+        if child is None:
+            return None, (jsonify({'error': 'Unknown child'}), 400)
+        return child, None
+    key = request.args.get('child') or (request.get_json(silent=True) or {}).get('child') or request.form.get('child')
+    child = kids.child_by_key(settings, key or '')
+    if child is None:
+        return None, (jsonify({'error': 'child is required'}), 400)
+    return child, None
+
+
+@app.route('/api/kids/me')
+def api_kids_me():
+    if getattr(current_user, 'is_kid', False):
+        child = kids.child_by_key(kids_config(), current_user.kid_key)
+        if child is None:
+            return jsonify({'error': 'Unknown child'}), 400
+        return jsonify(_kid_snapshot(child))
+    if getattr(current_user, 'role', None) != 'adult':
+        return jsonify({'error': 'Authentication required'}), 401
+    key = request.args.get('child')
+    if not key:
+        return jsonify({
+            'children': [{'key': c['key'], 'name': c['name'], 'age': c['age'], 'pin_set': bool(c.get('pin_hash'))}
+                         for c in kids_config()['children']]
+        })
+    child = kids.child_by_key(kids_config(), key)
+    if child is None:
+        return jsonify({'error': 'Unknown child'}), 404
+    return jsonify(_kid_snapshot(child))
+
+
+@app.route('/api/kids/principles/<pid>/complete', methods=['POST'])
+def api_kids_complete(pid):
+    child, err = _require_child_for_request()
+    if err:
+        return err
+    if getattr(current_user, 'is_kid', False) and current_user.kid_key != child['key']:
+        return jsonify({'error': 'That is not your journal'}), 403
+    item = kids.principle_by_id(pid)
+    if item is None or not kids.in_age_band(int(child['age']), item['ages']):
+        return jsonify({'error': 'That principle is not on your list'}), 400
+    data = request.get_json(silent=True) or {}
+    if int(data.get('answer', -1)) != int(item['answer']):
+        return jsonify({'ok': False, 'correct': False, 'message': 'Not yet — have another go. No rush.'})
+    now = _now_brisbane().isoformat(timespec='seconds')
+    pay = kids.lesson_pay_for(child)
+    with get_db() as db:
+        existing = db.execute(
+            'SELECT earned FROM kid_principles WHERE child_key=? AND principle_id=?',
+            (child['key'], pid),
+        ).fetchone()
+        if existing:
+            return jsonify({'ok': True, 'correct': True, 'earned': 0, 'message': 'Already done — play again for fun, no extra pay.'})
+        db.execute(
+            'INSERT INTO kid_principles (child_key, principle_id, earned, paid_in_kit, completed_at) VALUES (?,?,?,?,?)',
+            (child['key'], pid, pay, 0, now),
+        )
+        parts = kids.split_pay(pay, child)
+        jars = kids.credit_jars(_kid_latest_jars(db, child), parts)
+        _kid_write_jars(db, child, jars, 'lesson', pid)
+        _kid_ledger(db, child['key'], 'lesson', pay, f'First time: {item["title"]}', jar=None, paid_in_kit=0, principle_id=pid)
+    return jsonify({
+        'ok': True, 'correct': True, 'earned': pay, 'split': parts,
+        'message': f'Got it. {kids.dollars(pay)} extra-job style pay — Mum or Dad will put it in Kit.',
+    })
+
+
+@app.route('/api/kids/goals', methods=['POST'])
+def api_kids_goal():
+    child, err = _require_child_for_request()
+    if err:
+        return err
+    data = request.get_json(force=True) or {}
+    title = str(data.get('title') or '').strip()
+    try:
+        target = kids.round_cents(data.get('target_amount') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'target_amount must be a number'}), 400
+    if not title or target <= 0:
+        return jsonify({'error': 'A Smile goal needs a name and a price Mum or Dad approve.'}), 400
+    if getattr(current_user, 'is_kid', False) and current_user.kid_key != child['key']:
+        return jsonify({'error': 'That is not your journal'}), 403
+    now = _now_brisbane().isoformat(timespec='seconds')
+    with get_db() as db:
+        db.execute("UPDATE kid_goals SET status='dropped' WHERE child_key=? AND status='active'", (child['key'],))
+        db.execute(
+            'INSERT INTO kid_goals (child_key, title, target_amount, status, created_at) VALUES (?,?,?,?,?)',
+            (child['key'], title, target, 'active', now),
+        )
+    return jsonify({'ok': True, 'goal': {'title': title, 'target_amount': target}})
+
+
+@app.route('/api/kids/wants', methods=['POST'])
+def api_kids_want():
+    child, err = _require_child_for_request()
+    if err:
+        return err
+    data = request.get_json(force=True) or {}
+    want = str(data.get('want') or '').strip()
+    if not want:
+        return jsonify({'error': 'What do you want? Write it down and sleep on it.'}), 400
+    today = _now_brisbane().date()
+    decide = kids.decide_on_date(today)
+    now = _now_brisbane().isoformat(timespec='seconds')
+    with get_db() as db:
+        db.execute(
+            'INSERT INTO kid_wants (child_key, want, asked_at, decide_on, status) VALUES (?,?,?,?,?)',
+            (child['key'], want, now, decide.isoformat(), 'sleeping'),
+        )
+    return jsonify({
+        'ok': True,
+        'decide_on': decide.isoformat(),
+        'message': f'Sleep on it until {decide.day} {decide.strftime("%B")}. Nagging does not turn a no into a yes.',
+    })
+
+
+@app.route('/api/kids/admin/summary')
+def api_kids_admin_summary():
+    settings = kids_config()
+    out = []
+    with get_db() as db:
+        for child in settings['children']:
+            snap = _kid_snapshot(child)
+            snap['child']['mattermost_channel_id'] = child.get('mattermost_channel_id') or ''
+            snap['child']['mattermost_username'] = child.get('mattermost_username') or ''
+            out.append(snap)
+        queue = _kid_pay_queue(db)
+    return jsonify({
+        'children': out,
+        'pay_queue': queue,
+        'parent_digest': kids.compose_parent_digest(queue, settings['children']),
+        'settings': {
+            'bonus_rate_weekly': settings.get('bonus_rate_weekly'),
+            'bonus_cap': settings.get('bonus_cap'),
+            'money_meal_weekday': settings.get('money_meal_weekday'),
+            'money_meal_hour': settings.get('money_meal_hour'),
+            'timezone': settings.get('timezone'),
+        },
+    })
+
+
+@app.route('/api/kids/admin/pin', methods=['POST'])
+def api_kids_admin_pin():
+    data = request.get_json(force=True) or {}
+    child = kids.child_by_key(kids_config(), data.get('child') or '')
+    if child is None:
+        return jsonify({'error': 'Unknown child'}), 400
+    try:
+        hashed = kids.hash_pin(str(data.get('pin') or ''))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    cfg = load_config()
+    block = cfg.setdefault('kids', {})
+    children = list(block.get('children') or [])
+    found = False
+    for row in children:
+        if row.get('key') == child['key']:
+            row['pin_hash'] = hashed
+            found = True
+    if not found:
+        children.append({'key': child['key'], 'pin_hash': hashed})
+    block['children'] = children
+    save_config(cfg)
+    return jsonify({'ok': True, 'child': child['key']})
+
+
+@app.route('/api/kids/admin/jars', methods=['POST'])
+def api_kids_admin_jars():
+    data = request.get_json(force=True) or {}
+    child = kids.child_by_key(kids_config(), data.get('child') or '')
+    if child is None:
+        return jsonify({'error': 'Unknown child'}), 400
+    jars = kids.empty_jars()
+    for jar in kids.JARS:
+        if jar in data:
+            try:
+                jars[jar] = kids.round_cents(data[jar])
+            except (TypeError, ValueError):
+                return jsonify({'error': f'{jar} must be a number'}), 400
+    with get_db() as db:
+        stored = _kid_write_jars(db, child, jars, data.get('source') or 'typed', json.dumps(data))
+        _kid_ledger(db, child['key'], 'jars_sync', stored['smile'] + stored['grow'] + stored['splurge'] + stored['give'],
+                    'Kit / typed jars', paid_in_kit=1)
+    return jsonify({'ok': True, 'jars': stored})
+
+
+@app.route('/api/kids/admin/seed', methods=['POST'])
+def api_kids_admin_seed():
+    data = request.get_json(force=True) or {}
+    child = kids.child_by_key(kids_config(), data.get('child') or '')
+    if child is None:
+        return jsonify({'error': 'Unknown child'}), 400
+    amount = kids.round_cents(child.get('seed') or 100)
+    jar = child.get('seed_jar') or 'smile'
+    with get_db() as db:
+        already = db.execute(
+            "SELECT 1 FROM kid_ledger WHERE child_key=? AND kind='seed' LIMIT 1", (child['key'],)
+        ).fetchone()
+        if already:
+            return jsonify({'error': 'Seed already recorded for this child'}), 409
+        jars = _kid_latest_jars(db, child)
+        jars[jar] = kids.round_cents(jars[jar] + amount)
+        _kid_write_jars(db, child, jars, 'seed')
+        _kid_ledger(db, child['key'], 'seed', amount, f'{kids.dollars(amount)} Youthsaver seed', jar=jar, paid_in_kit=0)
+    return jsonify({'ok': True, 'jars': jars, 'amount': amount, 'jar': jar})
+
+
+@app.route('/api/kids/admin/paid', methods=['POST'])
+def api_kids_admin_paid():
+    data = request.get_json(force=True) or {}
+    with get_db() as db:
+        if data.get('id'):
+            db.execute('UPDATE kid_ledger SET paid_in_kit=1 WHERE id=? AND paid_in_kit=0', (int(data['id']),))
+        elif data.get('child'):
+            db.execute(
+                "UPDATE kid_ledger SET paid_in_kit=1 WHERE child_key=? AND paid_in_kit=0 AND kind IN ('seed','bonus','lesson')",
+                (data['child'],),
+            )
+        else:
+            return jsonify({'error': 'id or child is required'}), 400
+    return jsonify({'ok': True})
+
+
+@app.route('/api/kids/admin/want', methods=['POST'])
+def api_kids_admin_want():
+    data = request.get_json(force=True) or {}
+    status = data.get('status')
+    if status not in ('yes', 'no', 'bought'):
+        return jsonify({'error': 'status must be yes, no or bought'}), 400
+    with get_db() as db:
+        db.execute('UPDATE kid_wants SET status=? WHERE id=?', (status, int(data.get('id') or 0)))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/kids/admin/preview', methods=['POST'])
+def api_kids_admin_preview():
+    settings = kids_config()
+    bodies = []
+    with get_db() as db:
+        queue = _kid_pay_queue(db)
+        for child in settings['children']:
+            jars = _kid_latest_jars(db, child)
+            bonus = kids.family_bonus(
+                jars['smile'], jars['grow'], settings.get('bonus_rate_weekly', 0.01), settings.get('bonus_cap', 2.0),
+            )
+            goal = _kid_active_goal(db, child['key'])
+            nxt = kids.next_principle(child, _kid_completed_ids(db, child['key']))
+            bodies.append({
+                'child': child['key'],
+                'channel_ok': kids.posting_allowed(
+                    child.get('mattermost_channel_id') or '', child, settings.get('family_finance_channel_id') or '',
+                ),
+                'body': kids.compose_money_meal(child, jars, bonus, goal, nxt, queue),
+            })
+        digest = kids.compose_parent_digest(queue, settings['children'])
+    return jsonify({'children': bodies, 'parent_digest': digest})
+
+
 def mattermost_client():
     """Mattermost client from environment variables, or None when disabled/unconfigured."""
     cfg = load_config().get('mattermost') or {}
@@ -3288,7 +3854,8 @@ def reminder_service():
     settings['allowed_users'] = list((load_config().get('mattermost') or {}).get('allowed_users') or [])
     return reminders.ReminderService(get_db, mattermost_client(), settings, birthdays_fn=load_birthdays,
                                      llm=llm_chat if llm_available() else None,
-                                     price_fn=fetch_share_price, account_adder=add_account_from_chat)
+                                     price_fn=fetch_share_price, account_adder=add_account_from_chat,
+                                     kids_settings=kids_config())
 
 
 def _account_keys() -> set[str]:

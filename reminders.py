@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 import conversation
 import holdings as hold
+import kids
 import obligations as ob
 from mattermost import MattermostError
 
@@ -34,7 +35,7 @@ def _rows(cursor) -> list[dict]:
 
 class ReminderService:
     def __init__(self, get_db, client, settings: dict, now_fn=None, birthdays_fn=None, llm=None,
-                 price_fn=None, account_adder=None):
+                 price_fn=None, account_adder=None, kids_settings: dict | None = None):
         self.get_db = get_db
         self.birthdays_fn = birthdays_fn
         self.llm = llm
@@ -42,6 +43,7 @@ class ReminderService:
         self.account_adder = account_adder
         self.client = client
         self.settings = settings
+        self.kids_settings = kids_settings or kids.kids_settings({})
         self.tz = ZoneInfo(settings.get('timezone', ob.DEFAULT_SETTINGS['timezone']))
         self._now_fn = now_fn
 
@@ -218,12 +220,17 @@ class ReminderService:
                     'obligation_id': propvesting[0]['id'], 'occurrence_id': None,
                     'body': ob.compose_propvesting_check(),
                 })
+        with self._db() as db:
+            setup_already_today = bool(db.execute(
+                "SELECT 1 FROM reminder_log WHERE kind='setup_question' AND sent_at LIKE ?",
+                (today.isoformat() + '%',),
+            ).fetchone())
         for item in sorted((o for o in data['obligations'] if o['status'] == 'pending_confirmation'), key=lambda o: o['id']):
             created = date.fromisoformat(str(item.get('created_at') or today.isoformat())[:10])
             if (today - created).days > SETUP_QUESTION_DAYS:
                 continue
             key = f'setup_question:{item["id"]}'
-            if key in sent or any(m['dedupe_key'].startswith('setup_question:') for m in messages):
+            if key in sent or setup_already_today or any(m['dedupe_key'].startswith('setup_question:') for m in messages):
                 continue
             messages.append({'kind': 'setup_question', 'dedupe_key': key, 'obligation_id': item['id'],
                              'occurrence_id': None, 'body': ob.compose_setup_question(item)})
@@ -442,6 +449,211 @@ class ReminderService:
         self.set_state('mm_last_poll_at', self.now().isoformat()[:19])
         return result
 
+    def _kid_jars(self, db, child: dict) -> dict:
+        row = db.execute(
+            'SELECT splurge, smile, give, grow FROM kid_balances WHERE child_key=? ORDER BY id DESC LIMIT 1',
+            (child['key'],),
+        ).fetchone()
+        return kids.jars_from_row(dict(row) if row else None, child)
+
+    def _kid_write_jars(self, db, child: dict, jars: dict, source: str):
+        now = self.now().isoformat()[:19]
+        full = kids.empty_jars()
+        full.update(jars)
+        db.execute(
+            'INSERT INTO kid_balances (child_key, as_of, splurge, smile, give, grow, source, raw, created_at) '
+            'VALUES (?,?,?,?,?,?,?,?,?)',
+            (child['key'], now[:10], full['splurge'], full['smile'], full['give'], full['grow'], source, None, now),
+        )
+
+    def run_kids_money_meal(self, today: date | None = None, dry_run: bool = False) -> dict:
+        """Sunday Money Meal: family bonus, child recap, parent Kit digest. Never posts to Family Finance for a child."""
+        today = today or self.today()
+        settings = self.kids_settings or {}
+        family_chan = str(
+            settings.get('family_finance_channel_id')
+            or (getattr(self.client, 'channel_id', None) if self.client else None)
+            or ''
+        )
+        result = {'sent': [], 'skipped': [], 'bodies': [], 'reason': None, 'parent_digest': None}
+        if not settings.get('enabled', True):
+            result['reason'] = 'nothing new'
+            return result
+        children = list(settings.get('children') or [])
+        queue_after = []
+        now = self.now().isoformat()[:19]
+        sent_keys = self._sent_keys()
+        with self._db() as db:
+            for child in children:
+                key = f"kids_meal:{child['key']}:{today.isoformat()}"
+                if key in sent_keys:
+                    result['skipped'].append(key)
+                    continue
+                jars = self._kid_jars(db, child)
+                bonus_key = f"kids_bonus:{child['key']}:{today.isoformat()}"
+                bonus = 0.0 if bonus_key in sent_keys else kids.family_bonus(
+                    jars['smile'], jars['grow'],
+                    float(settings.get('bonus_rate_weekly') or 0.01),
+                    float(settings.get('bonus_cap') or 2.0),
+                )
+                display_jars = dict(jars)
+                if bonus > 0 and bonus_key not in sent_keys:
+                    jar = kids.bonus_jar(child)
+                    display_jars[jar] = kids.round_cents(display_jars[jar] + bonus)
+                    if not dry_run:
+                        self._kid_write_jars(db, child, display_jars, 'bonus')
+                        db.execute(
+                            'INSERT INTO kid_ledger (child_key, kind, jar, amount, note, paid_in_kit, principle_id, created_at) '
+                            'VALUES (?,?,?,?,?,?,?,?)',
+                            (child['key'], 'bonus', jar, bonus, 'family bonus', 0, None, now),
+                        )
+                        db.execute(
+                            'INSERT OR IGNORE INTO reminder_log (kind, dedupe_key, obligation_id, occurrence_id, '
+                            'mattermost_post_id, body, sent_at) VALUES (?,?,?,?,?,?,?)',
+                            ('kids_bonus', bonus_key, None, None, None, f'{child["name"]} {kids.dollars(bonus)}', now),
+                        )
+                jars = display_jars
+                goal = db.execute(
+                    "SELECT title, target_amount FROM kid_goals WHERE child_key=? AND status='active' ORDER BY id DESC LIMIT 1",
+                    (child['key'],),
+                ).fetchone()
+                completed = {r['principle_id'] for r in db.execute(
+                    'SELECT principle_id FROM kid_principles WHERE child_key=?', (child['key'],)
+                )}
+                nxt = kids.next_principle(child, completed)
+                queue = [dict(r) for r in db.execute(
+                    "SELECT child_key, kind, amount, note FROM kid_ledger WHERE paid_in_kit=0 AND kind IN ('seed','bonus','lesson') AND child_key=?",
+                    (child['key'],),
+                )]
+                body = kids.compose_money_meal(child, jars, bonus, dict(goal) if goal else None, nxt, queue)
+                result['bodies'].append({'child': child['key'], 'body': body})
+                channel = str(child.get('mattermost_channel_id') or '').strip()
+                if not kids.posting_allowed(channel, child, family_chan):
+                    result['skipped'].append(key + ':channel')
+                    continue
+                if dry_run:
+                    result['sent'].append(key)
+                    continue
+                if self.in_quiet_hours(self.now()):
+                    result['reason'] = 'quiet hours'
+                    return result
+                if self.client is None or not getattr(self.client, 'can_post', False):
+                    result['reason'] = 'Mattermost not configured'
+                    return result
+                try:
+                    post_id = self.client.post(body, channel_id=channel)
+                except MattermostError as exc:
+                    result['reason'] = f'Mattermost error: {exc}'
+                    return result
+                db.execute(
+                    'INSERT OR IGNORE INTO reminder_log (kind, dedupe_key, obligation_id, occurrence_id, '
+                    'mattermost_post_id, body, sent_at) VALUES (?,?,?,?,?,?,?)',
+                    ('kids_meal', key, None, None, post_id, body, now),
+                )
+                result['sent'].append(key)
+            queue_after = [dict(r) for r in db.execute(
+                "SELECT child_key, kind, amount, note FROM kid_ledger WHERE paid_in_kit=0 AND kind IN ('seed','bonus','lesson') ORDER BY id"
+            )]
+        digest = kids.compose_parent_digest(queue_after, children)
+        result['parent_digest'] = digest
+        digest_key = f'kids_parent_digest:{today.isoformat()}'
+        if digest_key not in sent_keys and not dry_run and self.client is not None and getattr(self.client, 'can_post', False):
+            if not self.in_quiet_hours(self.now()):
+                try:
+                    post_id = self.client.post(digest)
+                    with self._db() as db:
+                        db.execute(
+                            'INSERT OR IGNORE INTO reminder_log (kind, dedupe_key, obligation_id, occurrence_id, '
+                            'mattermost_post_id, body, sent_at) VALUES (?,?,?,?,?,?,?)',
+                            ('kids_parent_digest', digest_key, None, None, post_id, digest, now),
+                        )
+                    result['sent'].append(digest_key)
+                except MattermostError as exc:
+                    result['reason'] = f'Mattermost error: {exc}'
+                    return result
+        if not result['reason']:
+            result['reason'] = 'nothing new' if not result['sent'] else None
+        return result
+
+    def poll_kids(self, today: date | None = None) -> dict:
+        """Read each child's Mattermost channel. Never treats Family Finance as a kids channel."""
+        today = today or self.today()
+        result = {'processed': 0, 'replied': 0, 'reason': None}
+        settings = self.kids_settings or {}
+        if self.client is None or not getattr(self.client, 'can_read', False):
+            result['reason'] = 'bot token not configured'
+            return result
+        family_chan = str(
+            settings.get('family_finance_channel_id')
+            or getattr(self.client, 'channel_id', None)
+            or ''
+        )
+        adult_allowed = {u.lower() for u in (self.settings.get('allowed_users') or [])}
+        for child in settings.get('children') or []:
+            channel = str(child.get('mattermost_channel_id') or '').strip()
+            if not kids.posting_allowed(channel, child, family_chan):
+                continue
+            state_key = f"kids_mm_{child['key']}"
+            watermark = self.get_state(state_key)
+            now_ms = int(self.now().timestamp() * 1000)
+            if watermark is None:
+                self.set_state(state_key, str(now_ms))
+                continue
+            try:
+                posts = self.client.posts_since(int(watermark), channel_id=channel)
+                bot_id = self.client.me()['id']
+                names = self.client.users_by_ids({p['user_id'] for p in posts})
+            except MattermostError as exc:
+                result['reason'] = f'Mattermost error: {exc}'
+                return result
+            kid_user = str(child.get('mattermost_username') or '').strip().lower()
+            newest = int(watermark)
+            sent = self._sent_keys()
+            for post in posts:
+                newest = max(newest, int(post.get('create_at') or 0))
+                key = f"kids_reply:{post['id']}"
+                if post['user_id'] == bot_id or post.get('type') or key in sent:
+                    continue
+                username = (names.get(post['user_id']) or '').lower()
+                text = str(post.get('message') or '').strip()
+                reply = None
+                if kid_user and username == kid_user:
+                    cmd = kids.parse_kid_command(text)
+                    if cmd:
+                        reply = self._answer_kid(child, cmd)
+                elif username in adult_allowed:
+                    parsed = kids.parse_parent_jars(text, child)
+                    if parsed:
+                        with self._db() as db:
+                            self._kid_write_jars(db, child, parsed['jars'], 'typed')
+                        reply = f"Saved {child['name']}'s jars from Kit."
+                if not reply:
+                    continue
+                result['processed'] += 1
+                try:
+                    post_id = self.client.post(reply, channel_id=channel)
+                except MattermostError as exc:
+                    result['reason'] = f'Mattermost error: {exc}'
+                    return result
+                self._log_sent([{'kind': 'kids_reply', 'dedupe_key': key, 'body': reply}],
+                               post_id, self.now().isoformat()[:19])
+                result['replied'] += 1
+            self.set_state(state_key, str(newest))
+        return result
+
+    def _answer_kid(self, child: dict, cmd: dict) -> str:
+        if cmd['action'] == 'help':
+            return kids.compose_kid_help()
+        with self._db() as db:
+            jars = self._kid_jars(db, child)
+            if cmd['action'] == 'jars':
+                return kids.compose_jars_line(child, jars)
+            goal = db.execute(
+                "SELECT title, target_amount FROM kid_goals WHERE child_key=? AND status='active' ORDER BY id DESC LIMIT 1",
+                (child['key'],),
+            ).fetchone()
+        return kids.compose_goal_line(dict(goal) if goal else None, jars.get('smile') or 0)
+
 
 RETRY_REASONS = ('Mattermost not configured', 'quiet hours')
 
@@ -476,6 +688,17 @@ def scheduler_tick(service: ReminderService, now: datetime) -> list[str]:
         else:
             print(f'[reminders] weekly run not marked done, will retry: {outcome.get("reason")}', flush=True)
         ran.append('weekly')
+    kids_cfg = getattr(service, 'kids_settings', None) or {}
+    meal_day = int(kids_cfg.get('money_meal_weekday', 6))
+    meal_hour = int(kids_cfg.get('money_meal_hour', 16))
+    has_kid_channel = any(str(c.get('mattermost_channel_id') or '').strip() for c in kids_cfg.get('children') or [])
+    if kids_cfg.get('enabled', True) and has_kid_channel and now.weekday() == meal_day and now.hour >= meal_hour and service.get_state('last_kids_meal_run') != today:
+        outcome = service.run_kids_money_meal(now.date())
+        if _delivered(outcome):
+            service.set_state('last_kids_meal_run', today)
+        else:
+            print(f'[reminders] kids meal not marked done, will retry: {outcome.get("reason")}', flush=True)
+        ran.append('kids_meal')
     if service.client is not None and getattr(service.client, 'can_read', False):
         tick = int(service.get_state('mm_poll_tick') or 0) + 1
         service.set_state('mm_poll_tick', str(tick))
@@ -484,6 +707,9 @@ def scheduler_tick(service: ReminderService, now: datetime) -> list[str]:
             outcome = service.poll_once(now.date())
             if outcome.get('processed') or outcome.get('reason') not in (None, 'watermark initialised'):
                 ran.append('poll')
+            kids_poll = service.poll_kids(now.date())
+            if kids_poll.get('processed') or (kids_poll.get('reason') or '').startswith('Mattermost error'):
+                ran.append('kids_poll')
     return ran
 
 

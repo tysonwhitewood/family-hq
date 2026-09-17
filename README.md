@@ -108,6 +108,28 @@ meaning nobody's posts are acted on), `enabled` (default `true`).
 |---|---|---|---|
 | `anthropic_model` | `claude-sonnet-5` | any current Claude model id, e.g. `claude-opus-5` | Model used for chat, briefings, savings tips, screenshot reading and channel answers. Absent: the default. |
 
+## Kids HQ
+
+Maia, Annaliese and TJ have their own door at `/kids` (Add to Home Screen as **Kids HQ**). The kids code and iPad page live in the `kids/` folder. Adult Family HQ has a **Kids HQ** page to set PINs, record the $100 Youthsaver seed, type Kit jar balances, and tick “paid in Kit”.
+
+Kit is the wallet (card, extra jobs, Youthsaver). Kids HQ is the school. Family jobs are unpaid. Extra jobs earn money, split Splurge / Smile / Give (Maia also has Grow). No automatic pocket money.
+
+Sunday 4pm Brisbane: a Money Meal recap to each child’s Mattermost channel, plus a parent digest of amounts to put in Kit. Family bonus is 1% a week on Smile + Grow, capped at $2 per child. The bot will not post a child’s recap to the Family Finance channel.
+
+### Settings (`data/config.json` → `kids`)
+
+| Key | Default | Meaning / when absent |
+|---|---|---|
+| `enabled` | `true` | `false` skips the Sunday kids job |
+| `timezone` | `Australia/Brisbane` | Money Meal clock |
+| `money_meal_weekday` | `6` (Sunday) | 0 = Monday |
+| `money_meal_hour` | `16` | Hour of the Money Meal |
+| `bonus_rate_weekly` | `0.01` | Family bonus on Smile + Grow |
+| `bonus_cap` | `2.0` | Max family bonus per child per week, dollars |
+| `children` | Maia, Annaliese, TJ | Each: `key`, `name`, `age`, `pin_hash` (set in the app, never type a PIN into git), `mattermost_username`, `mattermost_channel_id`. Empty channel id: that child is skipped. Channel id must not be Family Finance. |
+
+Create three private Mattermost channels, put the bot in each, paste the channel ids into config, set PINs on the adult Kids page, then Add to Home Screen from Safari on each iPad: `https://family.edencommercial.au/kids`.
+
 Every AI call goes through Claude with `ANTHROPIC_API_KEY`. Without the key the app still runs:
 reminders, balances and typed commands all work; chat, briefings, screenshot reading and free-form
 channel answers reply that AI is not configured.

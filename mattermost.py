@@ -55,14 +55,17 @@ class MattermostClient:
         except MattermostError:
             return False
 
-    def post(self, message: str) -> str | None:
-        """Post `message` to the channel. Returns the post id (bot) or None (webhook)."""
-        if self.can_read:
+    def post(self, message: str, channel_id: str | None = None) -> str | None:
+        """Post `message` to `channel_id` or the default channel. Returns the post id (bot) or None (webhook)."""
+        target = (channel_id or self.channel_id or '').strip() or None
+        if self.token and target:
             response = self._request(
                 'POST', f'{self.base_url}/api/v4/posts', headers=self._headers(),
-                json={'channel_id': self.channel_id, 'message': message},
+                json={'channel_id': target, 'message': message},
             )
             return response.json().get('id')
+        if channel_id:
+            raise MattermostError('Posting to a named channel needs a bot token')
         if self.webhook_url:
             self._request('POST', self.webhook_url, json={'text': message})
             return None
@@ -80,10 +83,13 @@ class MattermostClient:
             self._me = self._request('GET', f'{self.base_url}/api/v4/users/me', headers=self._headers()).json()
         return self._me
 
-    def posts_since(self, since_ms: int) -> list[dict]:
+    def posts_since(self, since_ms: int, channel_id: str | None = None) -> list[dict]:
         """Posts in the channel created or edited after `since_ms`, oldest first."""
         self._require_bot()
-        data = self._request('GET', f'{self.base_url}/api/v4/channels/{self.channel_id}/posts',
+        target = (channel_id or self.channel_id or '').strip()
+        if not target:
+            raise MattermostError('This call needs a channel id')
+        data = self._request('GET', f'{self.base_url}/api/v4/channels/{target}/posts',
                              headers=self._headers(), params={'since': int(since_ms)}).json()
         posts = [data['posts'][pid] for pid in data.get('order', []) if pid in data.get('posts', {})]
         keep = ('id', 'user_id', 'message', 'create_at', 'file_ids', 'root_id', 'type')

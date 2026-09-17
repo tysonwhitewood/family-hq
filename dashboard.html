@@ -568,6 +568,9 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     <div class="nav-item" onclick="showPage('homeschool',this)">
       <span class="nav-icon">🏫</span> Homeschool
     </div>
+    <div class="nav-item" onclick="showPage('kids',this);loadKids()">
+      <span class="nav-icon">🫙</span> Kids HQ
+    </div>
     <div class="nav-item" onclick="showPage('wishlist',this);loadWishlist()">
       <span class="nav-icon">🛒</span> Wishlist
     </div>
@@ -822,6 +825,24 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
         <div id="hs-chat-response" style="font-size:13px;color:#374151;line-height:1.7;min-height:40px"></div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- KIDS HQ -->
+<div class="page" id="page-kids">
+  <div class="topbar"><div class="topbar-title">🫙 Kids HQ</div>
+    <a href="/kids" style="margin-left:auto;font-size:13px;color:#1B4332">Open kids login →</a>
+  </div>
+  <div class="page-body">
+    <p class="page-sub" style="margin-bottom:16px">Barefoot jars. Kit is the wallet. Extra jobs earn money; family jobs do not. Sunday Money Meal 4pm Brisbane.</p>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">Pay into Kit</div>
+        <button onclick="kidsPreview()" style="background:#1B4332;color:#fff;border:none;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Preview Money Meal</button>
+      </div>
+      <div id="kids-queue" style="padding:12px 16px;font-size:13px">Loading…</div>
+    </div>
+    <div id="kids-children"></div>
+    <pre id="kids-preview" style="white-space:pre-wrap;background:#F0F4F0;padding:14px;border-radius:10px;font-size:13px;display:none;margin-top:16px"></pre>
   </div>
 </div>
 
@@ -1618,6 +1639,9 @@ details[open] > .bdgt-collapsible-header::before { content: '▾'; }
     </div>
     <div class="mnav-item" onclick="showPage('obligations',this);loadObligations()" data-page="obligations">
       <span class="micon">🧾</span><span>Owed</span>
+    </div>
+    <div class="mnav-item" onclick="showPage('kids',this);loadKids()" data-page="kids">
+      <span class="micon">🫙</span><span>Kids</span>
     </div>
   </div>
 </nav>
@@ -4434,6 +4458,78 @@ function bdgtRenderCashSection(section, options={}) {
     ${warnings}
     ${months}
   </div>`;
+}
+
+async function loadKids() {
+  const r = await fetch('/api/kids/admin/summary');
+  const data = await r.json();
+  const q = document.getElementById('kids-queue');
+  if (!data.pay_queue || !data.pay_queue.length) q.textContent = 'Nothing waiting to go into Kit.';
+  else {
+    q.innerHTML = data.pay_queue.map(i =>
+      `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #eee">
+        <span>${i.child_key}: $${Number(i.amount).toFixed(2)} — ${i.note||i.kind}</span>
+        <button onclick="kidsPaid(${i.id})" style="background:#1B4332;color:#fff;border:none;border-radius:6px;padding:4px 10px;cursor:pointer">Paid in Kit</button>
+      </div>`
+    ).join('');
+  }
+  const hold = document.getElementById('kids-children');
+  hold.innerHTML = (data.children||[]).map(c => {
+    const ch = c.child;
+    const j = c.jars||{};
+    return `<div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">${ch.name} (${ch.age})</div>
+        <span style="font-size:12px;color:#6b7280">${ch.pin_set?'PIN set':'PIN not set'}</span>
+      </div>
+      <div style="padding:12px 16px;font-size:13px">
+        <div>Splurge $${Number(j.splurge||0).toFixed(2)} · Smile $${Number(j.smile||0).toFixed(2)} · Give $${Number(j.give||0).toFixed(2)}${ch.jars.includes('grow')?' · Grow $'+Number(j.grow||0).toFixed(2):''}</div>
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <input id="pin-${ch.key}" placeholder="New 4-digit PIN" maxlength="4" style="width:140px;padding:6px 8px">
+          <button onclick="kidsPin('${ch.key}')">Set PIN</button>
+          <button onclick="kidsSeed('${ch.key}')">Record $100 seed</button>
+        </div>
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">
+          ${(ch.jars||[]).map(jar => `${jar} <input id="jar-${ch.key}-${jar}" type="number" step="0.01" value="${Number(j[jar]||0).toFixed(2)}" style="width:90px;padding:6px">`).join(' ')}
+          <button onclick="kidsJars('${ch.key}')">Save jars from Kit</button>
+        </div>
+        <div style="margin-top:8px;color:#6b7280">Channel: ${ch.mattermost_channel_id||'not set in config'} · Goal: ${c.goal?c.goal.title+' $'+c.goal.target_amount:'none'}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function kidsPin(key) {
+  const pin = document.getElementById('pin-'+key).value;
+  const r = await fetch('/api/kids/admin/pin', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({child:key, pin})});
+  const d = await r.json();
+  alert(r.ok ? 'PIN saved' : (d.error||'Could not save PIN'));
+  if (r.ok) loadKids();
+}
+async function kidsSeed(key) {
+  const r = await fetch('/api/kids/admin/seed', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({child:key})});
+  const d = await r.json();
+  alert(r.ok ? 'Seed recorded — still put $100 in Youthsaver' : (d.error||'Already recorded?'));
+  loadKids();
+}
+async function kidsJars(key) {
+  const body = {child: key, source: 'typed'};
+  ['splurge','smile','give','grow'].forEach(j => {
+    const el = document.getElementById('jar-'+key+'-'+j);
+    if (el) body[j] = el.value;
+  });
+  const r = await fetch('/api/kids/admin/jars', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  alert(r.ok ? 'Jars saved' : 'Could not save jars');
+  loadKids();
+}
+async function kidsPaid(id) {
+  await fetch('/api/kids/admin/paid', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
+  loadKids();
+}
+async function kidsPreview() {
+  const r = await fetch('/api/kids/admin/preview', {method:'POST'});
+  const d = await r.json();
+  const el = document.getElementById('kids-preview');
+  el.style.display = 'block';
+  el.textContent = (d.children||[]).map(c => (c.channel_ok?'':'[will not send — set a kids channel, not Family Finance]\n')+c.body).join('\n\n——\n\n') + '\n\n'+d.parent_digest;
 }
 
 function renderCashFlow(cashFlow) {

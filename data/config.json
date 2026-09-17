@@ -182,6 +182,40 @@
       "mum"
     ]
   },
+  "kids": {
+    "enabled": true,
+    "timezone": "Australia/Brisbane",
+    "money_meal_weekday": 6,
+    "money_meal_hour": 16,
+    "bonus_rate_weekly": 0.01,
+    "bonus_cap": 2.0,
+    "children": [
+      {
+        "key": "maia",
+        "name": "Maia",
+        "age": 12,
+        "pin_hash": "",
+        "mattermost_username": "",
+        "mattermost_channel_id": ""
+      },
+      {
+        "key": "annaliese",
+        "name": "Annaliese",
+        "age": 8,
+        "pin_hash": "",
+        "mattermost_username": "",
+        "mattermost_channel_id": ""
+      },
+      {
+        "key": "tj",
+        "name": "TJ",
+        "age": 6,
+        "pin_hash": "",
+        "mattermost_username": "",
+        "mattermost_channel_id": ""
+      }
+    ]
+  },
   "ai": {
     "anthropic_model": "claude-sonnet-5"
   }

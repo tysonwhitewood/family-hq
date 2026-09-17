@@ -21,6 +21,7 @@ BRISBANE = ZoneInfo("Australia/Brisbane")
 class FakeClient:
     def __init__(self, fail=False, can_read=False):
         self.posts = []
+        self.posted_channels = []
         self.fail = fail
         self.can_post = True
         self.can_read = can_read
@@ -29,18 +30,20 @@ class FakeClient:
         self.reactions = []
         self.files = {}
         self.read_fail = False
+        self.channel_id = None
 
-    def post(self, message):
+    def post(self, message, channel_id=None):
         if self.fail:
             import mattermost
             raise mattermost.MattermostError("down")
         self.posts.append(message)
+        self.posted_channels.append(channel_id)
         return f"post{len(self.posts)}"
 
     def me(self):
         return {"id": "botid", "username": "familyhq"}
 
-    def posts_since(self, since_ms):
+    def posts_since(self, since_ms, channel_id=None):
         if self.read_fail:
             import mattermost
             raise mattermost.MattermostError("read failed")
